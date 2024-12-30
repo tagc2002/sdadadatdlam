@@ -1,0 +1,7 @@
+*.log
+__pycache__
+Include
+Lib
+Scripts
+.env
+pyvenv.cfg
