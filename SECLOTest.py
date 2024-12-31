@@ -15,4 +15,4 @@ logging.getLogger().addHandler(logging.StreamHandler())
 
 citation = SECLOCitation(cred, 3576469)
 items = citation.getItems()
-citation.setItems(items, datetime.now()).createNewCitation()
+citation.setItems(items, datetime.now())

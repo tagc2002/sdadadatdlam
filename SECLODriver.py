@@ -1,10 +1,12 @@
 #selenium webdriver-manager python_dotenv
+from enum import Enum
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import InvalidElementStateException
@@ -17,6 +19,7 @@ from SECLOExceptions import RecNotAccessibleException
 from SECLOExceptions import InvalidCaseStateException
 from SECLOExceptions import ValidationException
 from datetime import datetime
+from typing import Self
 
 import logging
 logger = logging.getLogger(__name__)
@@ -44,7 +47,6 @@ class SECLOLoginCredentials:
 class SECLOAccessor:
     def __init__(self, credentials: SECLOLoginCredentials):
         self.driver = createWebdriver()
-        token = False
         try:
             logger.debug('Getting login page.')
             self.driver.get(f'https://{credentials.user}:{credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia'
@@ -65,9 +67,8 @@ class SECLOAccessor:
         except NoSuchElementException as e:
             logger.debug('Notification popup not found')
 
-        token = True
         logger.info(self.driver.find_element(By.ID, "ctl00_lblConciliador").text)
-        self.portalVersion = self.driver.find_element(By.ID, "ctl00_LblAppVersion").text
+        self.portalVersion = self.driver.find_element(By.ID, "ctl00_LblAppVersion").text.split()[1]
 
         if (self.portalVersion != portalVersionSupported):
             logger.warning(f'Current portal version is {self.portalVersion}, but driver supports up to {portalVersionSupported}. Some features might be unexpectedly broken.')
@@ -87,42 +88,101 @@ class SECLOAccessor:
         except NoSuchElementException as e:
             logger.warning('Unknown error, most likely local. idk, man.')
 
+class SECLONotification(Enum):
+    TELEGRAM = 'T'
+    AFIP = 'A'
+    PERSONAL = 'P'
+    DONOTSEND = 'N'
+    ELECTRONIC = 'E'
+    CEDULE = 'C'
+
 class CitationResult:
-    def __init__(self, rowItem: WebElement):
-            try:
-                if (rowItem.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].get_attribute("disabled") is None):
+    def __init__(self, rowItem: WebElement, isEmployee: bool = True):
+            if (isEmployee):
+                try:
+                    if (rowItem.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].get_attribute("disabled") is None):
+                        self.enabled = True
+                    else:
+                        self.enabled = False
+                except NoSuchElementException as e:
+                    logger.warning('could not access properties for agreement selector switch.')
                     self.enabled = True
-                else:
-                    self.enabled = False
-            except NoSuchElementException as e:
-                logger.warning('could not access properties for agreement selector switch.')
-                self.enabled = True
-            self.amount = rowItem.find_elements(By.TAG_NAME, 'td')[4].text.lstrip()
-            if len(self.amount) == 0:
-                self.amount = None
-            self.employee = rowItem.find_elements(By.TAG_NAME, 'td')[0].text
+                self.amount = rowItem.find_elements(By.TAG_NAME, 'td')[4].text.lstrip()
+                if len(self.amount) == 0:
+                    self.amount = None
+                self.person = rowItem.find_elements(By.TAG_NAME, 'td')[0].text
+            else:
+                self.person = rowItem.find_elements(By.TAG_NAME, 'td')[1].text
+            self.notify = False
+            self.absent = False
+            self.notificationMethod = SECLONotification.TELEGRAM
             logger.debug(f'Created instance of CitationResult with {str(self)}')
 
     def __eq__(self, other):
         if not isinstance(other, CitationResult):
             return NotImplemented
-        return self.employee == other.employee
+        return self.person == other.person and (hasattr(self, 'amount') == hasattr(other, 'amount'))
     
     def __str__(self):
-        if (self.amount is str):
-            return f'employee: {self.employee}\t enabled: {self.enabled}\t agreement: True\t amount: {self.amount}'
-        return f'employee: {self.employee}\t enabled: {self.enabled}\t agreement: False'
+        if hasattr(self, 'amount'):
+            if (self.amount is str):
+                return f'person: {self.person}\t enabled: {self.enabled}\t agreement: True\t amount: {self.amount}\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
+            return f'person: {self.person}\t enabled: {self.enabled}\t agreement: False\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
+        else: 
+            return f'person: {self.person}\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
     
     def __hash__(self):
-        return hash(self.employee)
+        return hash(self.person, self.amount)
+    
+    def getPerson(self: Self) -> str:
+        return self.person
+    
+    def isEmployee(self: Self) -> bool:
+        return hasattr(self, 'amount')
+    
+    def getResult(self: Self) -> tuple[bool, float | None]:
+        if hasattr(self, 'amount'):
+            return (isinstance(self.amount, str), self.amount)
+        else:
+            raise InvalidElementStateException("Can't get result for an employer")
+    
+    def setResult(self: Self, agreement: bool, amount: float | None = None):
+        if self.isEmployee():
+            if agreement:
+                if (isinstance(amount, None)):
+                    raise InvalidElementStateException("An agreement must have a specified amount")
+                elif (amount <= 0):
+                    raise InvalidElementStateException("Amount must be positive.")
+                else:
+                    self.amount = f'{amount:.2f}'
+            else:
+                if (not isinstance(amount, None)):
+                    raise InvalidElementStateException("Can't give an amount for a non-agreement result")
+                else:
+                    self.amount = None
+        else:
+            raise InvalidElementStateException("Can only set result for employee.")
+        
+    def setNotification(self: Self, notify: bool, absent: bool = False, method: SECLONotification | None = None):
+        if notify:
+            self.notify = True
+            self.absent = absent
+            if (isinstance(method, SECLONotification)):
+                self.notificationMethod = method
+            else:
+                raise InvalidElementStateException("Must provide a notification method to notify.")
+        else:
+            self.notify = False
+            self.absent = absent
 
 class SECLOCitation(SECLOAccessor):
-    def __init__(self, credentials: SECLOLoginCredentials, recid: int):
+    def __init__(self, credentials: SECLOLoginCredentials, recid: int, date: datetime):
         super().__init__(credentials)
         logger.debug(f'Created SECLOCitation with recid {str(recid)}')
         self.recid = recid
+        self.date = date
 
-    def __loadCitationResultScreen(self):
+    def __loadCitationResultScreen(self: Self) -> None:
         try:
             logger.debug(f'Accessing citation result window')
             self.driver.find_element(By.ID, 'ctl00_btnAudiencia').click()
@@ -150,18 +210,21 @@ class SECLOCitation(SECLOAccessor):
             else:
                 logger.warning(f'Attempting to close a partial conciliation. This feature has not been implemented yet. Use this case to code it: {self.recid}')
                 logger.debug(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos').get_attribute('disabled'))
-                raise NotImplementedError  
+                self.multiple = True
+                self.combSelectorLength = len(Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos')).options)
+                self.combSelectorIndex = 0
 
-    # Gets the current list of employees registered in this claim
-    # Modify this list with the results and send it to setItems 
-    def getItems(self):
+    # Gets the current list of employees and employers registered in this claim
+    # Modify this list with the results and new notification if needed and send it to setItems 
+    def getItems(self: Self) -> set[CitationResult]:
         logger.debug('Performing Citation getItems')
         self.__loadCitationResultScreen()
         self.fields = []
         try:
             table = self.driver.find_element(By.ID, 'ctl00_Center_grdAcuerdos_grdAcuerdos')
             for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
-                self.fields.append(CitationResult(row))
+                self.fields.append(CitationResult(row, True))
+                self.fields.append(CitationResult(row, False))
             self.fields = set(self.fields)
             logger.debug(f'Found the following employees in this citation: {self.fields}')
             return self.fields
@@ -169,13 +232,27 @@ class SECLOCitation(SECLOAccessor):
             logger.error(f'Something happenned loading the result fields.\n{e}')
             raise InvalidCaseStateException
 
+    def __rowPopulatedCheck(self: Self, row: WebElement) -> bool:
+        return (not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked") 
+                and not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute("checked"))
+
     # Receives a list of results per employee and presentation date, and sets the first form accordingly
     # Also advances to the second form, so that you can call for a new citation or close the case
-    def setItems(self, items: CitationResult, date: datetime):
+    def setItems(self: Self, items: set[CitationResult]) -> Self:
         logger.debug('Performing Citation getItems')
         self.__loadCitationResultScreen()
+        self.items = items
+
+        if self.multiple:
+            if self.combSelectorIndex == self.combSelectorLength:
+                return self.__advanceResultForm()
+            else:
+                Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos')).select_by_index(self.combSelectorIndex)
+                self.combSelectorIndex += 1             
         try:
             for entry in set(items):
+                if not entry.isEmployee():
+                    continue
                 loop = True
                 while loop:
                     loop = False
@@ -183,8 +260,7 @@ class SECLOCitation(SECLOAccessor):
                     table = self.driver.find_element(By.ID, 'ctl00_Center_grdAcuerdos_grdAcuerdos')
                     for i, row in enumerate(table.find_elements(By.CLASS_NAME, 'grdRowStyle')):
                         if (CitationResult(row) == entry 
-                            and not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked") 
-                            and not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute("checked")
+                            and self.__rowPopulatedCheck(row)
                             and entry.enabled and CitationResult(row).enabled
                         ):
                             logger.debug(f'Row {i} matches entry {entry} and is unselected, applying...')
@@ -205,33 +281,156 @@ class SECLOCitation(SECLOAccessor):
         except Exception:
             self.__errorHandling()
         for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
-            if(not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked") 
-            and not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute("checked")):
+            if(self.__rowPopulatedCheck(row)):
                 raise InvalidElementStateException('Incomplete selection')
+        return self.__advanceResultForm()
+    
+    def __fillDateInput(self: Self, inputID: str, date: datetime):
+        logger.info(self.date.strftime('%d%m%Y'))
+        datefield = self.driver.find_element(By.ID, inputID)
+        for i in range(0, 10):
+            datefield.send_keys(Keys.ARROW_LEFT)
+        datefield.send_keys(date.strftime('%d%m%Y'))   
+                 
+    def __advanceResultForm(self: Self):
         try:
-            logger.info(date.strftime('%d%m%Y'))
-            datefield = self.driver.find_element(By.ID, "ctl00_Center_txtFecha_txtFecha")
-            for i in range(0, 10):
-                datefield.send_keys(Keys.ARROW_LEFT)
-            datefield.send_keys(date.strftime('%d%m%Y'))            
+            self.__fillDateInput("ctl00_Center_txtFecha_txtFecha", self.date)          
             self.driver.find_element(By.ID, 'ctl00_Center_btnSeguir4').click()
         except Exception as e:
             logger.error(f'error submitting form \n{e}')
             raise e
+        self.__validationErrorChecker()
+        return self
+
+    
+    def __validationErrorChecker(self: Self):
         try:
-            error = self.driver.find_element(By.CLASS_NAME, 'ctl00_Center_ValidationSummary5').text
+            del self.error
+            self.error = self.driver.find_element(By.CLASS_NAME, 'ctl00_Center_lblError').text
         except NoSuchElementException as e:
             pass
         except Exception as e:
             logger.warning(f'Unknown error encountered checking for errors\n{e}')
         else:
-            raise ValidationException(error)
-        return self
+            raise ValidationException(self.error)
+        try:
+            del self.error
+            self.error = self.driver.find_element(By.CLASS_NAME, 'ctl00_Center_ValidationSummary5').text
+        except NoSuchElementException as e:
+            pass
+        except Exception as e:
+            logger.warning(f'Unknown error encountered checking for errors\n{e}')
+        else:
+            raise ValidationException(self.error)
     
-    def createNewCitation(self):        
+    def createNewCitation(self: Self, date: datetime) -> Self:    
+        absentCitation = False
+        for item in self.items:
+            if item.absent:
+                absentCitation = True
+        if absentCitation:
+            self.driver.find_element(By.ID, 'ctl00_Center_btnNuevaIncomparecencia').click()
+        else:
+            self.driver.find_element(By.ID, 'ctl00_Center_btnNuevaAudiencia').click()
+        
+        self.__fillDateInput('ctl00$Center$txtFecha$txtFecha', date)
+        Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbHoras')).select_by_visible_text(f'{date.hour:02}')
+        Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbMinutos')).select_by_visible_text(f'{(date.minute - date.minute % 5):02}')
+      
+        for row in self.driver.find_element(By.ID, 'ctl00_Center_grdTrabajadores').find_elements(By.CLASS_NAME, 'grdRowStyle'):
+            for entry in self.items:
+                if row.find_elements(By.TAG_NAME, 'td')[0] in entry.getPerson() and row.find_elements(By.TAG_NAME, 'td')[1] in entry.getPerson():
+                    if (entry.absent):
+                        row.find_elements(By.TAG_NAME, 'td')[2].find_element(By.TAG_NAME, 'input').click()
+                    if (entry.notify):
+                        if absentCitation:
+                            row.find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').click()
+                        Select(row.find_elements(By.TAG_NAME, 'td')[4 if absentCitation else 2].find_element(By.TAG_NAME, 'select')).select_by_value(entry.notificationMethod.value)
+                    break
+        for row in self.driver.find_element(By.ID, 'ctl00_Center_grdEmpleadores').find_elements(By.CLASS_NAME, 'grdRowStyle'):
+            for entry in self.items:
+                if row.find_elements(By.TAG_NAME, 'td')[0] in entry.getPerson():
+                    if (entry.absent):
+                        row.find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').click()
+                    if (entry.notify):
+                        if absentCitation:
+                            row.find_elements(By.TAG_NAME, 'td')[2].find_element(By.TAG_NAME, 'input').click()
+                        Select(row.find_elements(By.TAG_NAME, 'td')[3 if absentCitation else 1].find_element(By.TAG_NAME, 'select')).select_by_value(entry.notificationMethod.value)
+       
+        self.driver.find_element(By.ID, 'ctl00_Center_btnGrabar').click()
+        self.__validationErrorChecker()
+        
+        #TODO validate citation result
         return self
-    
-    def closeCase(self):
+
+    def closeCase(self: Self) -> Self:
         self.driver.find_element(By.ID, 'ctl00_Center_btnGrabarTotal').click()
         WebDriverWait(self.driver, 10).until(EC.alert_is_present())
         alert = self.driver.switch_to.alert.accept()
+        if (self.multiple and self.combSelectorIndex < self.combSelectorLength):
+            return self.setItems(self.items).closeCase()
+        else:
+            return self
+
+class SECLOFileManager(SECLOAccessor):
+    def __init__(self: Self, credentials: SECLOLoginCredentials, recid: int):
+        super().__init__(credentials)
+        self.recid = recid
+        self.__getFiles()
+
+    ## populates internal object storage with the current files in rec
+    ## idc about congruency, this is a throwaway object that expires quickly
+    def __getFiles(self: Self):
+        self.driver.get(f'https://conciliadores.trabajo.gob.ar/Documentacion_Adjunta.aspx?RecId={self.recid}')
+        files = []
+        for row in self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle'):
+            files.append((
+                row.find_elements(By.TAG_NAME, 'td')[0].text,
+                row.find_elements(By.TAG_NAME, 'td')[1].text,
+                self.__shitDateToDatetime(
+                    row.find_elements(By.TAG_NAME, 'td')[2].text
+                )
+            ))
+        self.fileList = files
+
+    def getFiles(self: Self):
+        return self.fileList[:]
+    
+    def getFile(self: Self, index: int):
+        if index >= len(self.fileList) or index < 0:
+            raise IndexError("Requesting a file beyond bounds")
+        self.getFiles()
+        self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle')[index].find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').click
+
+    ## receives a date in a weird ugly format like 30/dic./2024
+    ## and returns a proper datetime object for it
+    ## my god i hate this
+    def __shitDateToDatetime(self: Self, date: str) -> datetime:
+        day = int(date.split('/')[0])
+        month = date.split('/')[1]
+        year = int(date.split('/')[2])
+        if 'ene' in month:
+            month = 1
+        elif 'feb' in month:
+            month = 2
+        elif 'mar' in month:
+            month = 3
+        elif 'abr' in month:
+            month = 4
+        elif 'may' in month:
+            month = 5
+        elif 'jun' in month:
+            month = 6
+        elif 'jul' in month:
+            month = 7
+        elif 'ago' in month:
+            month = 8
+        elif 'sep' in month:
+            month = 9
+        elif 'oct' in month:
+            month = 10        
+        elif 'nov' in month:
+            month = 11
+        elif 'dic' in month:
+            month = 12
+        return datetime(day = day, month = month, year = year)
