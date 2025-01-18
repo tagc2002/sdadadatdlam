@@ -18,26 +18,16 @@ from SECLOExceptions import UnknownReportedException
 from SECLOExceptions import RecNotAccessibleException
 from SECLOExceptions import InvalidCaseStateException
 from SECLOExceptions import ValidationException
+from SECLOExceptions import InvalidParameterException
+
 from datetime import datetime
 from typing import Self
+import os
 
 import logging
 logger = logging.getLogger(__name__)
 
 portalVersionSupported = '8.4.10.0'
-
-def createWebdriver():
-    chrome_options = Options()
-    chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
-    #chrome_options.add_argument('headless')
-    chrome_options.add_experimental_option("detach", True)
-    logger.debug('Creating chrome webdriver manager instance')
-    chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
-    #chrome_service.creation_flags = CREATE_NO_WINDOW
-    logger.debug('instantiating chrome driver')
-    driver = webdriver.Chrome(service = chrome_service, options = chrome_options)
-    logger.debug('Chrome loaded successfully')
-    return driver
 
 class SECLOLoginCredentials:
     def __init__(self, user: str, password: str):
@@ -45,26 +35,52 @@ class SECLOLoginCredentials:
         self.password = password
 
 class SECLOAccessor:
+    '''
+    Handles the creation of the webdriver instance and auth token generation
+    Other classes are meant to inherit from this.
+    Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
+    '''
+
     def __init__(self, credentials: SECLOLoginCredentials):
-        self.driver = createWebdriver()
-        try:
-            logger.debug('Getting login page.')
-            self.driver.get(f'https://{credentials.user}:{credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia'
-                '?wa=wsignin1.0' + \
-                '&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f' + \
-                '&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f' + \
-                '&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust'
-            )
-            self.driver.find_element(By.ID, "ctl00_Center_btnAceptar").click()
-            logger.debug('Logged in.')
-        except Exception as e:
-            logger.error(f'(Time: {datetime.datetime.now()}): Token aquisition error, {str(e)}')
+        '''
+        Creates a new chrome instance and authorizes login.
         
-        WebDriverWait(self.driver,1)
+        Parameters:
+            credentials (SECLOLoginCredentials): Wrapper object containing login info.
+        Returns:
+            SECLOAccessor: Instance of chrome webdriver already logged in and ready for operations
+        '''
+
+        chrome_options = Options()
+        chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
+        #chrome_options.add_argument('headless')
+        chrome_options.add_experimental_option("detach", True)
+        chrome_options.add_experimental_option("prefs", {
+            "download.default_directory": os.getcwd().join("/temp")
+        })
+
+        logger.debug('Creating chrome webdriver service manager instance')
+        chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
+        #chrome_service.creation_flags = CREATE_NO_WINDOW
+
+        logger.debug('instantiating chrome driver')
+        self.driver = webdriver.Chrome(service = chrome_service, options = chrome_options)
+        logger.debug('Chrome loaded successfully')
+
+        logger.debug('Getting login page.')
+        self.driver.get(f'https://{credentials.user}:{credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia' + \
+            '?wa=wsignin1.0' + \
+            '&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f' + \
+            '&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f' + \
+            '&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust'
+        )
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptar'))).click()
+        logger.debug('Logged in.')
+        
         try:
-            self.driver.find_element(By.CLASS_NAME, "ColCerrar").click()
+            WebDriverWait(self.driver,5).until(EC.element_to_be_clickable((By.CLASS_NAME, 'ColCerrar'))).click()
             logger.debug('Closed notification panel.')
-        except NoSuchElementException as e:
+        except TimeoutException as e:
             logger.debug('Notification popup not found')
 
         logger.info(self.driver.find_element(By.ID, "ctl00_lblConciliador").text)
@@ -74,8 +90,13 @@ class SECLOAccessor:
             logger.warning(f'Current portal version is {self.portalVersion}, but driver supports up to {portalVersionSupported}. Some features might be unexpectedly broken.')
         else: 
             logger.debug(self.portalVersion)
-    
+
     def __errorHandling(self):
+        '''
+        Function to handle redirects to /Error.aspx page.
+        There's not much to be done other than display some boilerplate error message.
+        But if its an auth problem the caller can choose to try again, so we inform this using an exception.
+        '''
         try:
             if('Error.aspx' in self.driver.current_url):
                 error = self.driver.find_element(By.ID, 'lblError').text
@@ -372,6 +393,14 @@ class SECLOCitation(SECLOAccessor):
         else:
             return self
 
+class SECLOFileType(Enum):
+    PODER = ('18', False)
+    DNI = ('20', False)
+    OTHER = ('21', True)
+    CREDENTIAL = ('33', False)
+    AUTH = ('34', False)
+    SIGNED = ('36', False)
+
 class SECLOFileManager(SECLOAccessor):
     def __init__(self: Self, credentials: SECLOLoginCredentials, recid: int):
         super().__init__(credentials)
@@ -394,13 +423,37 @@ class SECLOFileManager(SECLOAccessor):
         self.fileList = files
 
     def getFiles(self: Self):
+        '''
+        Gets a list of all the registered files currently uploaded to this rec.
+        Returns: 
+            Tuple[str, str, datetime]: (type, description, date)
+        '''
         return self.fileList[:]
     
     def getFile(self: Self, index: int):
         if index >= len(self.fileList) or index < 0:
             raise IndexError("Requesting a file beyond bounds")
         self.getFiles()
-        self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle')[index].find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').click
+        logger.debug("Downloading file")
+        download = self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle')[index].find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input')
+        logger.info(download.get_attribute("title"))
+        download.click()
+
+    def uploadFile(self: Self, file, filetype: SECLOFileType, description: str | None = None):
+        self.driver.get(f'https://conciliadores.trabajo.gob.ar/Documentacion_ParaAdjuntar.aspx?RecId={self.recid}')
+
+        Select(WebDriverWait(self.driver, 3).until(EC.element_to_be_clickable((By.ID, 'Tipo_Documentacion')))).select_by_value(filetype.value[0])
+        if filetype.value[1] == True:
+            if description is None:
+                raise InvalidParameterException("Description cannot be null for this type of file")
+            WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, 'txtDescripcion'))).send_keys(description)
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Archivo'))).send_keys(file)
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'btnAgregar'))).click()
+
+        # Save button (why tf is it unlabeled?? This is some lousy website coding)
+        ##WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Button1'))).click()
+        ##self.__getFiles()
+        return
 
     ## receives a date in a weird ugly format like 30/dic./2024
     ## and returns a proper datetime object for it

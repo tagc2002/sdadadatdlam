@@ -18,3 +18,7 @@ class InvalidCaseStateException(Exception):
 #Error class to raise when a validation has been violated in the fucking web app
 class ValidationException(Exception):
     pass
+
+#Error class to raise when a parameter violates expected input
+class InvalidParameterException(Exception):
+    pass
