@@ -14,4 +14,16 @@ logging.basicConfig(filename="sdadadatdlam-webdata.log", level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
 
 files = SECLOFileManager(cred, 3576469)
-files.uploadFile(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'blank.pdf')), SECLOFileType.OTHER, 'Pindonga y cuchuflito')
+files.uploadRecord('bepis', True)
+##files.uploadFile(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'blank.pdf')), SECLOFileType.OTHER, 'Pindonga y cuchuflito')
+
+
+##Stuff to do
+##CITATION MANAGEMENT       Done
+##FILE MANAGEMENT           Done
+##RECORD UPLOAD             Done
+##CALENDAR PARSING
+##DATA PICKUP
+##  CLAIM
+##  NOTIFICATIONS
+##INVOICE PICKUP

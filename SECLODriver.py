@@ -439,7 +439,7 @@ class SECLOFileManager(SECLOAccessor):
         logger.info(download.get_attribute("title"))
         download.click()
 
-    def uploadFile(self: Self, file, filetype: SECLOFileType, description: str | None = None):
+    def uploadFile(self: Self, file: str, filetype: SECLOFileType, description: str | None = None):
         self.driver.get(f'https://conciliadores.trabajo.gob.ar/Documentacion_ParaAdjuntar.aspx?RecId={self.recid}')
 
         Select(WebDriverWait(self.driver, 3).until(EC.element_to_be_clickable((By.ID, 'Tipo_Documentacion')))).select_by_value(filetype.value[0])
@@ -451,8 +451,44 @@ class SECLOFileManager(SECLOAccessor):
         WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'btnAgregar'))).click()
 
         # Save button (why tf is it unlabeled?? This is some lousy website coding)
-        ##WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Button1'))).click()
-        ##self.__getFiles()
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Button1'))).click()
+        self.__getFiles()
+        return
+    
+    def uploadRecord(self: Self, file: str, agreement: bool):
+        self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')        
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
+        self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.NAME, 'ctl00$Busqueda$txtNro'))).send_keys(Keys.ENTER)
+        recNumber = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, 'ctl00_Busqueda_txtCReclamo'))).text.strip()
+        
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnActa'))).click()
+        loadNextPage = WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnBuscar')))
+        if agreement:
+            self.driver.find_element(By.ID, 'ctl00_Center_radTipo_0').click()
+        else:
+            self.driver.find_element(By.ID, 'ctl00_Center_radTipo_1').click()
+        loadNextPage.click()
+        table = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_grdReclamos')))
+        try:
+            list = table.find_elements(By.ID, 'grdRowStyle')
+        except NoSuchElementException:
+            raise InvalidElementStateException("There are no elements available to upload records here. That sucks, man.")
+        
+        found = False
+        for row in list:
+            if row.find_elements(By.TAG_NAME, 'td')[0].text.strip() == recNumber:
+                #TODO verify if record has already been uploaded
+                #I need the site to have a pending case to upload, so later
+                row.find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').send_keys(file)
+                found = True
+                break
+        
+        if not found:
+            raise InvalidElementStateException("Given claim does not have record uploading enabled right now.")
+        self.driver.find_element(By.ID, 'ctl00_Center_btnGenerar').click()
+        WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+        self.driver.switch_to.alert.accept()
         return
 
     ## receives a date in a weird ugly format like 30/dic./2024
