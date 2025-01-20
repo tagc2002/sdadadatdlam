@@ -41,7 +41,7 @@ class SECLOAccessor:
     Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
     '''
 
-    def __init__(self, credentials: SECLOLoginCredentials):
+    def __init__(self, credentials: SECLOLoginCredentials, recid: int):
         '''
         Creates a new chrome instance and authorizes login.
         
@@ -91,6 +91,8 @@ class SECLOAccessor:
         else: 
             logger.debug(self.portalVersion)
 
+        self.recid = recid
+
     def __errorHandling(self):
         '''
         Function to handle redirects to /Error.aspx page.
@@ -109,6 +111,11 @@ class SECLOAccessor:
         except NoSuchElementException as e:
             logger.warning('Unknown error, most likely local. idk, man.')
 
+    def _loadRec(self: Self):
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
+        self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
+        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.NAME, 'ctl00$Busqueda$txtNro'))).send_keys(Keys.ENTER)
+
 class SECLONotification(Enum):
     TELEGRAM = 'T'
     AFIP = 'A'
@@ -116,6 +123,20 @@ class SECLONotification(Enum):
     DONOTSEND = 'N'
     ELECTRONIC = 'E'
     CEDULE = 'C'
+
+    def NotificationShortToEnum(notif: str):
+        if (notif == 'Tel'):
+            return SECLONotification.TELEGRAM
+        if (notif == 'Per'):
+            return SECLONotification.PERSONAL        
+        if (notif == 'Afip'):
+            return SECLONotification.AFIP
+        if ('Electr' in notif):
+            return SECLONotification.ELECTRONIC
+        if ('No env' in notif):
+            return SECLONotification.ELECTRONIC
+        if (notif == 'Ced'):
+            return SECLONotification.CEDULE
 
 class CitationResult:
     def __init__(self, rowItem: WebElement, isEmployee: bool = True):
@@ -198,22 +219,15 @@ class CitationResult:
 
 class SECLOCitation(SECLOAccessor):
     def __init__(self, credentials: SECLOLoginCredentials, recid: int, date: datetime):
-        super().__init__(credentials)
+        super().__init__(credentials, recid)
         logger.debug(f'Created SECLOCitation with recid {str(recid)}')
-        self.recid = recid
         self.date = date
 
     def __loadCitationResultScreen(self: Self) -> None:
         try:
             logger.debug(f'Accessing citation result window')
             self.driver.find_element(By.ID, 'ctl00_btnAudiencia').click()
-            self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
-            try:
-                WebDriverWait(self.driver, 2).until(False)
-            except:
-                pass
-            logger.debug(f'Getting form for case {self.recid}')
-            self.driver.find_element(By.NAME, 'ctl00$Busqueda$txtNro').send_keys(Keys.ENTER)
+            self._loadRec()
         except TimeoutException:
             logger.error(f'Timeout accessing SECLO systems. Check connection.')
         except Exception as e:
@@ -403,8 +417,7 @@ class SECLOFileType(Enum):
 
 class SECLOFileManager(SECLOAccessor):
     def __init__(self: Self, credentials: SECLOLoginCredentials, recid: int):
-        super().__init__(credentials)
-        self.recid = recid
+        super().__init__(credentials, recid)
         self.__getFiles()
 
     ## populates internal object storage with the current files in rec
@@ -457,9 +470,7 @@ class SECLOFileManager(SECLOAccessor):
     
     def uploadRecord(self: Self, file: str, agreement: bool):
         self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')        
-        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
-        self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
-        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.NAME, 'ctl00$Busqueda$txtNro'))).send_keys(Keys.ENTER)
+        self._loadRec()
         recNumber = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, 'ctl00_Busqueda_txtCReclamo'))).text.strip()
         
         WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnActa'))).click()
@@ -523,3 +534,29 @@ class SECLOFileManager(SECLOAccessor):
         elif 'dic' in month:
             month = 12
         return datetime(day = day, month = month, year = year)
+
+class SECLORecData(SECLOAccessor):
+
+    def getNotificationData(self: Self):
+        self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
+        self._loadRec()
+
+        results = []
+        table = WebDriverWait(self.driver, 3).until(EC.presence_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
+        for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
+            results.append({
+                'id': row.find_elements(By.TAG_NAME, 'td')[0].text,
+                'person': row.find_elements(By.TAG_NAME, 'td')[1].text,
+                'citationType': row.find_elements(By.TAG_NAME, 'td')[2].text,
+                'employer': True if row.find_elements(By.TAG_NAME, 'td')[3].text == 'Emp' else False,
+                'notificationType': SECLONotification.NotificationShortToEnum(row.find_elements(By.TAG_NAME, 'td')[4].text),
+                'generatedDate': datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[5].text, '%d/%m/%Y'),
+                'notifiedDate': None if len(row.find_elements(By.TAG_NAME, 'td')[6].text) == 0 
+                                else datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[6].text, '%d/%m/%Y'),
+                'notificationCode': row.find_elements(By.TAG_NAME, 'td')[7].text,
+                'notificationStatus': row.find_elements(By.TAG_NAME, 'td')[8].text,
+                'afipRead': row.find_elements(By.TAG_NAME, 'td')[9].text,
+                'citationDate': datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[10].text, '%d/%m/%Y %H:%M'),
+                'citationStatus': row.find_elements(By.TAG_NAME, 'td')[11].text,
+            })
+        return results
