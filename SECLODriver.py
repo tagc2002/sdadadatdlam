@@ -560,3 +560,312 @@ class SECLORecData(SECLOAccessor):
                 'citationStatus': row.find_elements(By.TAG_NAME, 'td')[11].text,
             })
         return results
+    
+    def getClaimData(self: Self):
+        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
+        self._loadRec()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
+
+        #CLAIM
+        logger.info(self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_lblReclamo_GDEID').text)
+        logger.info(self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtFecha').get_attribute('value'))
+        claimData = SECLOClaimData(
+            recid = self.recid,
+            gdeID = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_lblReclamo_GDEID').text,
+            initDate = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtFecha').get_attribute('value'),
+            legalStuff = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtComentario').get_attribute('value'),
+            initWorker = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked')
+        )
+
+        for row in self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_chkObjetoReclamo').find_elements(By.TAG_NAME, 'td'):
+            if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
+                claimData.addClaimObject(row.find_element(By.TAG_NAME, 'label').text)
+        
+        #EMPLOYEES
+        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstTrabajadores').find_elements(By.TAG_NAME, 'li'))
+        i = 0
+        while i < listLen:
+            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstTrabajadores'))).find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a').click()
+            cuil = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl00_cuit_txtC')))
+            if len(cuil.text) > 0:
+                cuil.click()
+                cuil.send_keys(Keys.TAB)
+                WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value')) > 0)
+                employee = SECLOEmployeeData(
+                    name = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value'),
+                    DNI = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS').get_attribute('value'),
+                    CUIL = cuil.get_attribute('value')
+                )
+            else:
+                #TODO use requests library to ensure this shit
+                employee = SECLOEmployeeData(
+                    name = f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNombre_txt').get_attribute('value')}',
+                    DNI = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS').get_attribute('value'),
+                    CUIL = cuil.get_attribute('value')
+                )
+            employee.addAddress(
+                SECLOAddressData(
+                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value'),
+                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCalle').get_attribute('value'),
+                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtNumero').get_attribute('value'),
+                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPiso').get_attribute('value'),
+                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtDepart').get_attribute('value'),
+                    CPA=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCPA').get_attribute('value'),
+                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtAdicional').get_attribute('value')
+                )
+            )
+            employee.addBirthDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecNacimiento_txt').get_attribute('value'))
+            employee.addClaimAmount(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtImporte_txt').get_attribute('value'))
+            employee.addEndDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecEgreso_txt').get_attribute('value'))
+            employee.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtEmail_txt').get_attribute('value'))
+            employee.addMobilePhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCodArea_Numerico').get_attribute('value'), self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCel_Numerico').get_attribute('value'))
+            employee.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtTelefono_txt').get_attribute('value'))
+            employee.addStartDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecIngreso_txt').get_attribute('value'))
+            employee.addType(CCT = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtConvenioNum_txt').get_attribute('value'), category = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCategoria_txt').get_attribute('value'))
+            employee.addWage(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtRemuneracion_txt').get_attribute('value'))
+            claimData.addEmployee(employee)
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl00_btnAgregar'))).click()
+            i += 1
+
+        #EMPLOYERS
+        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstEmpleadores').find_elements(By.TAG_NAME, 'li'))
+        i = 0
+        while i < listLen:
+            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstEmpleadores'))).find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a').click()
+            WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl01_cuit_txtRS')))
+            employer = SECLOEmployerData(
+                name=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value'),
+                DNI=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtNroDocumento_txt').get_attribute('value'),
+                CUIL=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value')
+            )
+            employer.addAddress(
+                SECLOAddressData(
+                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtProvincia').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPartido').get_attribute('value'),
+                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCalle').get_attribute('value'),
+                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtNumero').get_attribute('value'),
+                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPiso').get_attribute('value'),
+                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtDepart').get_attribute('value'),
+                    CPA=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCPA').get_attribute('value'),
+                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtAdicional').get_attribute('value')
+                )
+            )
+            employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
+            for item in self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb').find_elements(By.TAG_NAME, 'option'):
+                if item.get_attribute('selected'):
+                    employer.addPersonType(item.text)
+            employer.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
+            claimData.addEmployer(employer)
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_btnAgregar'))).click()
+            i += 1
+        
+        #LAWYERS
+        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstReprentantes').find_elements(By.TAG_NAME, 'li'))
+        i = 0
+        while i < listLen:
+            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstReprentantes'))).find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a').click()
+            folio = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt')))
+            foliovalue = folio.get_property('value')
+            folio.send_keys(Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE)
+            folio.send_keys(str(foliovalue))
+            folio.send_keys(Keys.TAB)
+            WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value')) > 0)
+            lawyer = SECLOLawyerData(
+                name=f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text} {self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtApellido_lbl').text}',
+                DNI=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNroDocumento_lbl').text,
+            )
+            streetnumber = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtNumero')
+            streetnumbervalue = streetnumber.get_attribute('value')
+            streetnumber.send_keys(Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + '0' + Keys.TAB)
+            streetnumber.send_keys(Keys.ARROW_RIGHT + Keys.BACKSPACE + str(streetnumbervalue))
+            streetnumber.send_keys(Keys.TAB)
+            WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCPA').get_attribute('value')) > 0)
+            lawyer.addAddress(
+                SECLOAddressData(
+                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtProvincia').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value'),
+                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCalle').get_attribute('value'),
+                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtNumero').get_attribute('value'),
+                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPiso').get_attribute('value'),
+                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtDepart').get_attribute('value'),
+                    CPA=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCPA').get_attribute('value'),
+                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtAdicional').get_attribute('value')
+                )
+            )
+            for row in self.driver.find_element(By.ID, 'ctl00_Center_ctl02_lstAsignados').find_elements(By.TAG_NAME, 'td'):
+                if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
+                    name = row.get_attribute('value')
+            lawyer.addRepresented(
+                isEmployee=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_chkRepresentantes_0').get_attribute('checked'), 
+                name=name
+            )
+            lawyer.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTelefono_txt').get_attribute('value'))
+            lawyer.addMobilePhone(prefix=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCodArea_Numerico').get_attribute('value'), phone=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCel_Numerico').get_attribute('value'))
+            lawyer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtEmail_txt').get_attribute('value'))
+            lawyer.addTF(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTomo_txt').get_attribute('value'), self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtFolio_txt').get_attribute('value'))
+            claimData.addLawyer(lawyer)
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl02_btnAgregar'))).click()
+            i += 1       
+        
+        #OTHERS
+        try:
+            listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstDerechohabientes').find_elements(By.TAG_NAME, 'li'))
+        except NoSuchElementException:
+            pass
+        else:
+            i = 0
+            while i < listLen:
+                WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstDerechohabientes'))).find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a').click()
+                WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl03_txtNombre_txt')))
+                other = SECLOOtherData(
+                    name=f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNombre_txt').get_attribute('value')}',
+                    DNI=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNroDocumento_txt').get_attribute('value'),
+                )
+                other.addAddress(
+                    SECLOAddressData(
+                        province=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtProvincia').get_attribute('value'),
+                        county=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPartido').get_attribute('value'),
+                        borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                        street=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCalle').get_attribute('value'),
+                        number=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtNumero').get_attribute('value'),
+                        floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPiso').get_attribute('value'),
+                        apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtDepart').get_attribute('value'),
+                        CPA=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCPA').get_attribute('value'),
+                        bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtAdicional').get_attribute('value')
+                    )
+                )
+                other.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtEmail_txt').get_attribute('value'))
+                other.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtTelefono_txt').get_attribute('value'))
+                other.addMobilePhone(prefix=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCodArea_Numerico').get_attribute('value'), phone=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCel_Numerico').get_attribute('value'))
+                claimData.addOther(other)
+                i += 1
+
+        return claimData
+
+class SECLOAddressData():
+    def __init__(self: Self, province: str, county: str, borough: str, street: str, number: str | None = None, floor: str | None = None, apt: str | None = None, CPA: str | None = None, bonusData: str | None = None):
+        self.province = province
+        self.county = county
+        self.borough = borough
+        self.street = street
+        self.number = number
+        self.floor = floor
+        self.apt = apt
+        self.CPA = CPA
+        self.bonusData = bonusData
+        logger.critical(str(self))
+    def __str__(self: Self):
+        return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.borough}, {self.county}, {self.province}, {self.CPA}\n{self.bonusData}'
+ 
+class SECLOCommonData():
+    def __init__(self: Self, name: str, DNI: int | None = None, CUIL: str | None = None):
+        self.name = name
+        self.DNI = DNI
+        self.CUIL = CUIL
+        self.address = []
+        self.mail = ''
+        self.phone = ''
+        self.mobilePhone = ''
+    
+    def addAddress(self: Self, address: SECLOAddressData):
+        self.address.append(address)
+    def addMail(self: Self, mail: str | None = None):
+        self.mail = mail
+    def addPhone(self: Self, phone: str | None):
+        self.phone = phone
+    def addMobilePhone(self: Self, prefix: str, phone: str):
+        self.mobilePhone = (prefix, phone)
+    def __str__(self: Self):
+        base = f'Name: {self.name}\nDNI: {self.DNI}\nCUIT: {self.CUIL}\nphone: {self.phone} / {self.mobilePhone}\nmail: {self.mail}\naddress:\n'
+        for address in self.address:
+            base = base + str(address) + '\n'
+        return base
+
+class SECLOEmployeeData(SECLOCommonData):
+    def addBirthDate(self: Self, date: datetime):
+        self.birthDate = date
+    def addStartDate(self: Self, date: datetime):
+        self.startDate = date
+    def addEndDate(self: Self, date: datetime | None):
+        self.endDate = date
+    def addWage(self: Self, amount: int):
+        self.wage = amount
+    def addType(self: Self, CCT: int | None = None, category: str | None = None):
+        self.CCT = CCT
+        self.category = category
+    def addClaimAmount(self: Self, amount: int):
+        self.claimAmount = amount
+    def __str__(self: Self):
+        return f'{super().__str__()}\nBirthdate: {self.birthDate}\nWorkdates: {self.startDate} - {self.endDate}\nwage: {self.wage}\nworktype: {self.category} - {self.CCT}\nclaim: {self.claimAmount}'
+    
+class SECLOEmployerData(SECLOCommonData):
+    def addPersonType(self: Self, personType: str):
+        self.personType = personType
+    def __str__(self: Self):
+        return f'{super().__str__()}\nType: {self.personType}'
+
+class SECLOLawyerData(SECLOCommonData):
+    def addTF(self: Self, t: int, f: int):
+        self.t = t
+        self.f = f
+    def addRepresented(self: Self, isEmployee: bool, name: str):
+        #TODO chech this shit
+        pass
+    def __str__(self: Self):
+        return f'{super().__str__()}\nT {self.t} F {self.f}'
+
+class SECLOOtherData(SECLOCommonData):
+    pass
+    
+class SECLOClaimData():
+    def __init__(self: Self, recid: int, gdeID: str, initDate: str, legalStuff: str, initWorker: bool):
+        self.recid = recid
+        self.gdeID = gdeID
+        self.initDate = datetime.strptime(initDate, '%d/%m/%Y'),
+        self.legalStuff = legalStuff
+        self.initWorker = initWorker
+        self.claims = []
+        self.employees = []
+        self.employers = []
+        self.lawyers = []
+        self.others = []
+
+    def addClaimObject(self: Self, claim: str):
+        self.claims.append(claim)
+
+    def addEmployee(self: Self, employee: SECLOEmployeeData):
+        self.employees.append(employee)
+    
+    def addEmployer(self: Self, employer: SECLOEmployerData):
+        self.employers.append(employer)
+
+    def addLawyer(self: Self, lawyer: SECLOLawyerData):
+        self.lawyers.append(lawyer)
+
+    def addOther(self: Self, other: SECLOOtherData):
+        self.others.append(other)
+
+    def __str__(self: Self):
+        base = f'CLAIM:\n\nrecID {self.recid}\nGDE {self.gdeID}\ninit: {str(self.initDate)}\nlegal stuff: {self.legalStuff}\nclaims:\n{self.claims}'
+        base = base + '\n\nemployees:\n'
+        for employee in self.employees:
+            base = base + f'{str(employee)}\n'
+
+        base = base + '\nemployers:\n'
+        for employer in self.employers:
+            base = base + f'{str(employer)}\n'   
+
+        base = base + '\nlaywers:\n'
+        for lawyer in self.lawyers:
+            base = base + f'{str(lawyer)}\n' 
+
+        if len(self.others) > 0:
+            base = base + '\others:\n'
+            for other in self.others:
+                base = base + f'{str(other)}\n'
+        
+        return base
