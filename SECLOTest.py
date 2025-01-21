@@ -1,6 +1,7 @@
 from datetime import datetime
+import re
 import SECLOProgressReporting as pr
-from SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser
+from SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser
 import logging
 
 import os
@@ -24,13 +25,28 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #print(SECLOInvoiceParser(cred).listInvoices())
 #print(SECLOInvoiceParser(cred).getDetails(834))
 
+#print(SECLOCalendarParser(cred).getCalendar())
+
+#citation = SECLOCitation(cred, 3570278, datetime.now())
+#items = citation.getItems()
+#newitems = []
+#for item in items:
+#    if item.isEmployee():
+#        item.setResult(True, 2000000)
+#    print(item)
+#citation.setItems(items).closeCase()
+
+#SECLOFileManager(cred, 3570278).uploadRecord("H:\\My Drive\\133050230 Acuerdo firmado.pdf", True)
+
+
 ##Stuff to do
 ##CITATION MANAGEMENT       Done
 ##FILE MANAGEMENT           Done
 ##RECORD UPLOAD             Done
-##CALENDAR PARSING          
-##DATA PICKUP               
+##CALENDAR PARSING          PENDING
+##DATA PICKUP               CLOSE ENOUGH
 ##  CLAIM                   Done
 ##  NOTIFICATIONS           Done
 ##  CLAIM EDIT (?)          
 ##INVOICE PICKUP            Done
+

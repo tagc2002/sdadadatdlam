@@ -1,6 +1,7 @@
 #selenium webdriver-manager python_dotenv
 from enum import Enum
 from decimal import Decimal
+import re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -135,7 +136,7 @@ class SECLONotification(Enum):
         if ('Electr' in notif):
             return SECLONotification.ELECTRONIC
         if ('No env' in notif):
-            return SECLONotification.ELECTRONIC
+            return SECLONotification.DONOTSEND
         if (notif == 'Ced'):
             return SECLONotification.CEDULE
 
@@ -150,7 +151,8 @@ class CitationResult:
                 except NoSuchElementException as e:
                     logger.warning('could not access properties for agreement selector switch.')
                     self.enabled = True
-                self.amount = rowItem.find_elements(By.TAG_NAME, 'td')[4].text.lstrip()
+                self.amount = rowItem.find_elements(By.XPATH, './*')[4].find_element(By.TAG_NAME, 'input').text.lstrip()
+                logger.debug(f'Amount string "{self.amount}"')
                 if len(self.amount) == 0:
                     self.amount = None
                 self.person = rowItem.find_elements(By.TAG_NAME, 'td')[0].text
@@ -168,14 +170,17 @@ class CitationResult:
     
     def __str__(self):
         if hasattr(self, 'amount'):
-            if (self.amount is str):
-                return f'person: {self.person}\t enabled: {self.enabled}\t agreement: True\t amount: {self.amount}\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
-            return f'person: {self.person}\t enabled: {self.enabled}\t agreement: False\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
+            if (self.amount is not None):
+                return f'person: {self.person}\t enabled: {self.enabled}\t agreement: True\t amount: {self.amount}\t {"absent\t " if self.absent else ""}{"Notify (" + self.notificationMethod.name + ")" if self.notify else "Don't notify"}'
+            return f'person: {self.person}\t enabled: {self.enabled}\t agreement: False\t {"absent\t " if self.absent else ""}{"Notify (" + self.notificationMethod.name + ")" if self.notify else "Don't notify"}'
         else: 
-            return f'person: {self.person}\t {"absent\t " if self.absent else ""}{"Notify (" + self.citation + ")" if self.notify else "Don't notify"}'
+            return f'person: {self.person}\t {"absent\t " if self.absent else ""}{"Notify (" + self.notificationMethod.name + ")" if self.notify else "Don't notify"}'
     
     def __hash__(self):
-        return hash(self.person, self.amount)
+        if hasattr(self, 'amount'):
+            return hash((self.person, self.amount))
+        else:
+            return hash(self.person)
     
     def getPerson(self: Self) -> str:
         return self.person
@@ -192,14 +197,14 @@ class CitationResult:
     def setResult(self: Self, agreement: bool, amount: float | None = None):
         if self.isEmployee():
             if agreement:
-                if (isinstance(amount, None)):
+                if amount is None:
                     raise InvalidElementStateException("An agreement must have a specified amount")
-                elif (amount <= 0):
+                elif amount <= 0:
                     raise InvalidElementStateException("Amount must be positive.")
                 else:
                     self.amount = f'{amount:.2f}'
             else:
-                if (not isinstance(amount, None)):
+                if amount is not None:
                     raise InvalidElementStateException("Can't give an amount for a non-agreement result")
                 else:
                     self.amount = None
@@ -221,12 +226,13 @@ class CitationResult:
 class SECLOCitation(SECLOAccessor):
     def __init__(self, credentials: SECLOLoginCredentials, recid: int, date: datetime):
         super().__init__(credentials, recid)
-        logger.debug(f'Created SECLOCitation with recid {str(recid)}')
+        logger.info(f'Created SECLOCitation with recid {str(recid)}')
         self.date = date
+        self.error = None
 
     def __loadCitationResultScreen(self: Self) -> None:
         try:
-            logger.debug(f'Accessing citation result window')
+            logger.info(f'Accessing citation result window')
             self.driver.find_element(By.ID, 'ctl00_btnAudiencia').click()
             self._loadRec()
         except TimeoutException:
@@ -237,15 +243,15 @@ class SECLOCitation(SECLOAccessor):
             if ('Registrar Resultado Audiencia' not in self.driver.find_element(By.ID, 'ctl00_Center_tb').find_elements(By.CLASS_NAME, 'appBoxMenuTitle')[1].text):
                 raise RecNotAccessibleException
         except Exception as e:
-            logger.critical(f'Could not access result form for rec {self.recid}. Maybe its closed.')
+            logger.debug(f'Could not access result form for rec {self.recid}. Maybe its closed.')
             raise RecNotAccessibleException
         else: 
             if (self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos').get_attribute('disabled')):
-                logger.debug('Claim object comb selector is disabled. This is good.')
+                logger.info('Claim object comb selector is disabled. This is good.')
                 self.multiple = False
             else:
                 logger.warning(f'Attempting to close a partial conciliation. This feature has not been implemented yet. Use this case to code it: {self.recid}')
-                logger.debug(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos').get_attribute('disabled'))
+                logger.info(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos').get_attribute('disabled'))
                 self.multiple = True
                 self.combSelectorLength = len(Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos')).options)
                 self.combSelectorIndex = 0
@@ -253,7 +259,7 @@ class SECLOCitation(SECLOAccessor):
     # Gets the current list of employees and employers registered in this claim
     # Modify this list with the results and new notification if needed and send it to setItems 
     def getItems(self: Self) -> set[CitationResult]:
-        logger.debug('Performing Citation getItems')
+        logger.info('Performing Citation getItems')
         self.__loadCitationResultScreen()
         self.fields = []
         try:
@@ -262,7 +268,9 @@ class SECLOCitation(SECLOAccessor):
                 self.fields.append(CitationResult(row, True))
                 self.fields.append(CitationResult(row, False))
             self.fields = set(self.fields)
-            logger.debug(f'Found the following employees in this citation: {self.fields}')
+            logger.info(f'Found the following employees in this citation:')
+            for field in self.fields:
+                logger.info(field)
             return self.fields
         except Exception as e:
             logger.error(f'Something happenned loading the result fields.\n{e}')
@@ -275,7 +283,7 @@ class SECLOCitation(SECLOAccessor):
     # Receives a list of results per employee and presentation date, and sets the first form accordingly
     # Also advances to the second form, so that you can call for a new citation or close the case
     def setItems(self: Self, items: set[CitationResult]) -> Self:
-        logger.debug('Performing Citation getItems')
+        logger.info('Performing Citation getItems')
         self.__loadCitationResultScreen()
         self.items = items
 
@@ -292,25 +300,33 @@ class SECLOCitation(SECLOAccessor):
                 loop = True
                 while loop:
                     loop = False
-                    logger.debug('Getting table contents')
+                    logger.info('Getting table contents')
                     table = self.driver.find_element(By.ID, 'ctl00_Center_grdAcuerdos_grdAcuerdos')
                     for i, row in enumerate(table.find_elements(By.CLASS_NAME, 'grdRowStyle')):
                         if (CitationResult(row) == entry 
                             and self.__rowPopulatedCheck(row)
                             and entry.enabled and CitationResult(row).enabled
+
                         ):
-                            logger.debug(f'Row {i} matches entry {entry} and is unselected, applying...')
-                            logger.debug(f'({row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute("checked")} {row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked")})')
-                            if (entry.amount is str):
+                            logger.info(f'Row {i} matches entry {entry} and is unselected, applying...')
+                            logger.info(f'({row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute("checked")} {row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked")})')
+                            if (entry.amount):
                                 #set agreement
-                                logger.debug(f'Agreement for {entry}')
+                                logger.info(f'Agreement for {entry}')
                                 row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'label').click()
-                                row.find_elements(By.TAG_NAME, 'td')[4].find_element(By.TAG_NAME, 'input').send_keys(entry.amount)
+                                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSeguir4')))
                                 loop = True
-                                break
+                                for row2 in self.driver.find_element(By.ID, 'ctl00_Center_grdAcuerdos_grdAcuerdos').find_elements(By.CLASS_NAME, 'grdRowStyle'):
+                                    if (row2.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[0].find_element(By.TAG_NAME, 'input').get_attribute('checked') and 
+                                        len(row2.find_elements(By.TAG_NAME, 'td')[4].find_element(By.TAG_NAME, 'input').text) == 0
+                                        ):
+                                            row2.find_elements(By.XPATH, './*')[4].find_element(By.TAG_NAME, 'input').send_keys(entry.amount.replace('.',','))
+                                            break
+                                else:
+                                    raise InvalidCaseStateException("Couldn't find amount input for last case result")
                             else:
                                 #set non-agreement
-                                logger.debug(f'Non-agreement for {entry}')
+                                logger.info(f'Non-agreement for {entry}')
                                 row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').click()
                                 loop = True
                                 break
@@ -341,7 +357,6 @@ class SECLOCitation(SECLOAccessor):
     
     def __validationErrorChecker(self: Self):
         try:
-            del self.error
             self.error = self.driver.find_element(By.CLASS_NAME, 'ctl00_Center_lblError').text
         except NoSuchElementException as e:
             pass
@@ -470,10 +485,10 @@ class SECLOFileManager(SECLOAccessor):
         return
     
     def uploadRecord(self: Self, file: str, agreement: bool):
-        self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')        
-        self._loadRec()
-        recNumber = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, 'ctl00_Busqueda_txtCReclamo'))).text.strip()
-        
+        self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={self.recid}')        
+        recNumber = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text.strip()
+        logger.info(recNumber)
+        self.driver.get('https://conciliadores.trabajo.gob.ar/Novedades.aspx')
         WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnActa'))).click()
         loadNextPage = WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnBuscar')))
         if agreement:
@@ -483,20 +498,17 @@ class SECLOFileManager(SECLOAccessor):
         loadNextPage.click()
         table = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_grdReclamos')))
         try:
-            list = table.find_elements(By.ID, 'grdRowStyle')
+            list = table.find_elements(By.CLASS_NAME, 'grdRowStyle')
         except NoSuchElementException:
             raise InvalidElementStateException("There are no elements available to upload records here. That sucks, man.")
-        
-        found = False
         for row in list:
             if row.find_elements(By.TAG_NAME, 'td')[0].text.strip() == recNumber:
                 #TODO verify if record has already been uploaded
                 #I need the site to have a pending case to upload, so later
                 row.find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').send_keys(file)
                 found = True
-                break
-        
-        if not found:
+                break  
+        else:
             raise InvalidElementStateException("Given claim does not have record uploading enabled right now.")
         self.driver.find_element(By.ID, 'ctl00_Center_btnGenerar').click()
         WebDriverWait(self.driver, 10).until(EC.alert_is_present())
@@ -758,7 +770,6 @@ class SECLOAddressData():
         self.apt = apt
         self.CPA = CPA
         self.bonusData = bonusData
-        logger.critical(str(self))
     def __str__(self: Self):
         return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.borough}, {self.county}, {self.province}, {self.CPA}\n{self.bonusData}'
  
@@ -898,3 +909,31 @@ class SECLOInvoiceParser(SECLOAccessor):
                 'total': Decimal(self.driver.find_element(By.ID, 'ctl00_Center_lblTotal').text.split()[1].replace(',','.')), 
                 'detail': result
             }
+
+class SECLOCalendarParser(SECLOAccessor):
+    def getCalendar(self: Self):
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
+
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
+
+        #Loop through weeks
+        IDs = []
+        for i in range(0, 20):
+            WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
+            table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
+            #loop through days
+            for day in table.find_elements(By.TAG_NAME, 'table')[1].find_elements(By.TAG_NAME, 'tr')[0].find_elements(By.TAG_NAME, 'td'):
+                #loop through cases in day
+                try:
+                    for case in day.find_element(By.TAG_NAME, 'div').find_elements(By.TAG_NAME, 'div'):
+                        foundID = str(case.get_attribute('onclick'))
+                        if foundID:
+                            foundID = re.search(r'PK:\d+', foundID)
+                            if foundID:
+                                IDs.append(foundID.group(0)[3:])
+                except NoSuchElementException():
+                    logger.info(f'Week {i} no cases found')
+                    continue
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
+        return IDs
