@@ -15,6 +15,16 @@ class ProgressReport():
             self.message = message
             self.checked = False
     
+    def increaseProgress(self, step):
+        with mutex:
+            self.progress += 1/self.steps
+            self.checked = False
+    
+    def setMessage(self, message):
+        with mutex:
+            self.message = message
+            self.checked = False
+    
     def getProgress(self):
         with mutex:
             if (self.checked):

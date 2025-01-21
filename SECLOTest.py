@@ -1,6 +1,6 @@
 from datetime import datetime
 import SECLOProgressReporting as pr
-from SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData
+from SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser
 import logging
 
 import os
@@ -17,9 +17,12 @@ logging.getLogger().addHandler(logging.StreamHandler())
 ##files.uploadRecord('bepis', True)
 ##files.uploadFile(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'blank.pdf')), SECLOFileType.OTHER, 'Pindonga y cuchuflito')
 ##print(SECLORecData(cred, 3578980).getNotificationData())
-3559053
+#3559053
 
-print(SECLORecData(cred, 3559053).getClaimData())
+#print(SECLORecData(cred, 3559053).getClaimData())
+
+#print(SECLOInvoiceParser(cred).listInvoices())
+#print(SECLOInvoiceParser(cred).getDetails(834))
 
 ##Stuff to do
 ##CITATION MANAGEMENT       Done
@@ -30,4 +33,4 @@ print(SECLORecData(cred, 3559053).getClaimData())
 ##  CLAIM                   Done
 ##  NOTIFICATIONS           Done
 ##  CLAIM EDIT (?)          
-##INVOICE PICKUP            
+##INVOICE PICKUP            Done

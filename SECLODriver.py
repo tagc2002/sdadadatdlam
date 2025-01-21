@@ -1,5 +1,6 @@
 #selenium webdriver-manager python_dotenv
 from enum import Enum
+from decimal import Decimal
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -41,7 +42,7 @@ class SECLOAccessor:
     Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
     '''
 
-    def __init__(self, credentials: SECLOLoginCredentials, recid: int):
+    def __init__(self, credentials: SECLOLoginCredentials, recid: int | None = None):
         '''
         Creates a new chrome instance and authorizes login.
         
@@ -864,8 +865,36 @@ class SECLOClaimData():
             base = base + f'{str(lawyer)}\n' 
 
         if len(self.others) > 0:
-            base = base + '\others:\n'
+            base = base + '\nothers:\n'
             for other in self.others:
                 base = base + f'{str(other)}\n'
         
         return base
+    
+class SECLOInvoiceParser(SECLOAccessor):
+    def listInvoices(self: Self):
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkConsultaLiquidacion'))).click()
+        invoices = []
+        for option in WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_cmbLiquidaciones'))).find_elements(By.TAG_NAME, 'option'):
+            invoices.append({'id': int(option.get_attribute('value')), 'date':datetime.strptime(option.text.split()[0], "%d/%m/%Y")})
+        return invoices
+    
+    def getDetails(self: Self, invoice: int):
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkConsultaLiquidacion'))).click()
+        Select(WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_cmbLiquidaciones')))).select_by_value(str(invoice))
+        self.driver.find_element(By.ID, 'ctl00_Center_btnBuscar').click()
+
+        result = []
+        table = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_grdMovimientos')))
+        for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
+            result.append(
+                {
+                    'gdeID': row.find_elements(By.TAG_NAME, 'td')[2].text,
+                    'amount': Decimal(row.find_elements(By.TAG_NAME, 'td')[4].text[2:-1].replace('.','').replace(',','.')),
+                    'date': datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[5].text, "%d/%m/%Y")
+                 }
+                )
+        return {
+                'total': Decimal(self.driver.find_element(By.ID, 'ctl00_Center_lblTotal').text.split()[1].replace(',','.')), 
+                'detail': result
+            }
