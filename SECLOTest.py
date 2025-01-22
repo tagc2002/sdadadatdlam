@@ -25,7 +25,14 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #print(SECLOInvoiceParser(cred).listInvoices())
 #print(SECLOInvoiceParser(cred).getDetails(834))
 
-#print(SECLOCalendarParser(cred).getCalendar())
+calendar = SECLOCalendarParser(cred).getCalendar()
+for entry in calendar:
+    print(entry['gdeID'])
+    print(entry['initDate'])
+    print(entry['audID'])
+    print(entry['citationDate'])
+    print(SECLORecData(cred).setRecIDfromGDEID(entry['gdeID']).getClaimData())
+
 
 #citation = SECLOCitation(cred, 3570278, datetime.now())
 #items = citation.getItems()
@@ -41,9 +48,12 @@ logging.getLogger().addHandler(logging.StreamHandler())
 
 ##Stuff to do
 ##CITATION MANAGEMENT       Done
+##  NEW DATES               Done
+##  CLOSE CASE              Done
+##  REOPEN CASE             Done
 ##FILE MANAGEMENT           Done
 ##RECORD UPLOAD             Done
-##CALENDAR PARSING          PENDING
+##CALENDAR PARSING          Done
 ##DATA PICKUP               CLOSE ENOUGH
 ##  CLAIM                   Done
 ##  NOTIFICATIONS           Done

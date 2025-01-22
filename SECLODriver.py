@@ -95,7 +95,7 @@ class SECLOAccessor:
 
         self.recid = recid
 
-    def __errorHandling(self):
+    def _errorHandling(self):
         '''
         Function to handle redirects to /Error.aspx page.
         There's not much to be done other than display some boilerplate error message.
@@ -256,6 +256,28 @@ class SECLOCitation(SECLOAccessor):
                 self.combSelectorLength = len(Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbObjetos')).options)
                 self.combSelectorIndex = 0
 
+    def reopenCase(self: Self):
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkReabrir'))).click()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
+        self._loadRec()
+        try:
+            self.driver.find_element(By.ID, 'ctl00_Busqueda_grdReclamos')
+        except NoSuchElementException:
+            pass
+        else:
+            raise InvalidCaseStateException("Case not found, probably its still open")
+        reopenButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnReabrir')))
+        try:
+            error = self.driver.find_element(By.ID, 'ctl00_Center_lblmensaje')
+        except NoSuchElementException:
+            pass
+        else:
+            raise InvalidCaseStateException(error)
+        reopenButton.click()
+        WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+        alert = self.driver.switch_to.alert.accept()
+        return self
+
     # Gets the current list of employees and employers registered in this claim
     # Modify this list with the results and new notification if needed and send it to setItems 
     def getItems(self: Self) -> set[CitationResult]:
@@ -331,7 +353,7 @@ class SECLOCitation(SECLOAccessor):
                                 loop = True
                                 break
         except Exception:
-            self.__errorHandling()
+            self._errorHandling()
         for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
             if(self.__rowPopulatedCheck(row)):
                 raise InvalidElementStateException('Incomplete selection')
@@ -549,6 +571,21 @@ class SECLOFileManager(SECLOAccessor):
         return datetime(day = day, month = month, year = year)
 
 class SECLORecData(SECLOAccessor):
+    def setRecIDfromGDEID(self: Self, gdeID: str):
+        self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
+        gdeYear = gdeID.split('-')[1]
+        gdeFile = gdeID.split('-')[2]
+        logger.info(gdeYear)
+        logger.info(gdeFile)
+        findButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
+        self.driver.find_element(By.ID, 'ctl00_Busqueda_txtNro').send_keys(gdeFile)
+        self.driver.find_element(By.ID, 'ctl00_Busqueda_txtAnio').send_keys(Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+gdeYear)
+        findButton.click()
+        WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
+        recID = self.driver.find_element(By.ID, 'ctl00_Top_hdnReclamoId').get_attribute('value')
+        self.recid = recID
+        logger.info(self.recid)
+        return self
 
     def getNotificationData(self: Self):
         self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
@@ -580,12 +617,8 @@ class SECLORecData(SECLOAccessor):
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
 
         #CLAIM
-        logger.info(self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_lblReclamo_GDEID').text)
-        logger.info(self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtFecha').get_attribute('value'))
         claimData = SECLOClaimData(
             recid = self.recid,
-            gdeID = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_lblReclamo_GDEID').text,
-            initDate = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtFecha').get_attribute('value'),
             legalStuff = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtComentario').get_attribute('value'),
             initWorker = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked')
         )
@@ -757,6 +790,12 @@ class SECLORecData(SECLOAccessor):
                 claimData.addOther(other)
                 i += 1
 
+        #END
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkFinalizar'))).click()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptarRec'))).click()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSi'))).click()
+        WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+        alert = self.driver.switch_to.alert.accept()
         return claimData
 
 class SECLOAddressData():
@@ -834,10 +873,8 @@ class SECLOOtherData(SECLOCommonData):
     pass
     
 class SECLOClaimData():
-    def __init__(self: Self, recid: int, gdeID: str, initDate: str, legalStuff: str, initWorker: bool):
+    def __init__(self: Self, recid: int, legalStuff: str, initWorker: bool):
         self.recid = recid
-        self.gdeID = gdeID
-        self.initDate = datetime.strptime(initDate, '%d/%m/%Y'),
         self.legalStuff = legalStuff
         self.initWorker = initWorker
         self.claims = []
@@ -862,7 +899,7 @@ class SECLOClaimData():
         self.others.append(other)
 
     def __str__(self: Self):
-        base = f'CLAIM:\n\nrecID {self.recid}\nGDE {self.gdeID}\ninit: {str(self.initDate)}\nlegal stuff: {self.legalStuff}\nclaims:\n{self.claims}'
+        base = f'CLAIM:\n\nrecID {self.recid}\nlegal stuff: {self.legalStuff}\nclaims:\n{self.claims}'
         base = base + '\n\nemployees:\n'
         for employee in self.employees:
             base = base + f'{str(employee)}\n'
@@ -925,15 +962,24 @@ class SECLOCalendarParser(SECLOAccessor):
             #loop through days
             for day in table.find_elements(By.TAG_NAME, 'table')[1].find_elements(By.TAG_NAME, 'tr')[0].find_elements(By.TAG_NAME, 'td'):
                 #loop through cases in day
-                try:
-                    for case in day.find_element(By.TAG_NAME, 'div').find_elements(By.TAG_NAME, 'div'):
-                        foundID = str(case.get_attribute('onclick'))
+                for case in day.find_element(By.TAG_NAME, 'div').find_elements(By.TAG_NAME, 'div'):
+                    foundID = str(case.get_attribute('onclick'))
+                    if foundID:
+                        foundID = re.search(r'PK:\d+', foundID)
                         if foundID:
-                            foundID = re.search(r'PK:\d+', foundID)
-                            if foundID:
-                                IDs.append(foundID.group(0)[3:])
-                except NoSuchElementException():
-                    logger.info(f'Week {i} no cases found')
-                    continue
+                            IDs.append(foundID.group(0)[3:])
             WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
-        return IDs
+        
+        calendarCitations = []
+        for item in IDs:
+            self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?AudId={item}&esPortal=1')
+            gdeIDText = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
+            initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
+            initDateTimeText = initDatetimeText.split()[0] + ' ' + initDatetimeText.split()[1].split(':')[0] + ':' + initDatetimeText.split()[1].split(':')[1]
+            calendarCitations.append(
+                {'gdeID': gdeIDText,
+                 'citationDate': datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
+                 'initDate': datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
+                 'audID': item
+                }), 
+        return calendarCitations
