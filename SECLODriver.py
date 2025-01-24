@@ -2,6 +2,7 @@
 from enum import Enum
 from decimal import Decimal
 import re
+import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -55,7 +56,7 @@ class SECLOAccessor:
 
         chrome_options = Options()
         chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
-        #chrome_options.add_argument('headless')
+        chrome_options.add_argument('headless')
         chrome_options.add_experimental_option("detach", True)
         chrome_options.add_experimental_option("prefs", {
             "download.default_directory": os.getcwd().join("/temp")
@@ -652,8 +653,8 @@ class SECLORecData(SECLOAccessor):
             employee.addAddress(
                 SECLOAddressData(
                     province=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value'),
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value'),
-                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value'),
                     street=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCalle').get_attribute('value'),
                     number=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtNumero').get_attribute('value'),
                     floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPiso').get_attribute('value'),
@@ -689,8 +690,8 @@ class SECLORecData(SECLOAccessor):
             employer.addAddress(
                 SECLOAddressData(
                     province=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtProvincia').get_attribute('value'),
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPartido').get_attribute('value'),
-                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPartido').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtLocalidad').get_attribute('value'),
                     street=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCalle').get_attribute('value'),
                     number=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtNumero').get_attribute('value'),
                     floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPiso').get_attribute('value'),
@@ -732,8 +733,8 @@ class SECLORecData(SECLOAccessor):
             lawyer.addAddress(
                 SECLOAddressData(
                     province=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtProvincia').get_attribute('value'),
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value'),
-                    borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value'),
+                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtLocalidad').get_attribute('value'),
                     street=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCalle').get_attribute('value'),
                     number=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtNumero').get_attribute('value'),
                     floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPiso').get_attribute('value'),
@@ -774,8 +775,8 @@ class SECLORecData(SECLOAccessor):
                 other.addAddress(
                     SECLOAddressData(
                         province=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtProvincia').get_attribute('value'),
-                        county=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPartido').get_attribute('value'),
-                        borough=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtLocalidad').get_attribute('value'),
+                        district=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPartido').get_attribute('value'),
+                        county=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtLocalidad').get_attribute('value'),
                         street=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCalle').get_attribute('value'),
                         number=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtNumero').get_attribute('value'),
                         floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPiso').get_attribute('value'),
@@ -799,10 +800,10 @@ class SECLORecData(SECLOAccessor):
         return claimData
 
 class SECLOAddressData():
-    def __init__(self: Self, province: str, county: str, borough: str, street: str, number: str | None = None, floor: str | None = None, apt: str | None = None, CPA: str | None = None, bonusData: str | None = None):
+    def __init__(self: Self, province: str, district: str, county: str, street: str, number: str | None = None, floor: str | None = None, apt: str | None = None, CPA: str | None = None, bonusData: str | None = None):
         self.province = province
+        self.district = district
         self.county = county
-        self.borough = borough
         self.street = street
         self.number = number
         self.floor = floor
@@ -810,7 +811,7 @@ class SECLOAddressData():
         self.CPA = CPA
         self.bonusData = bonusData
     def __str__(self: Self):
-        return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.borough}, {self.county}, {self.province}, {self.CPA}\n{self.bonusData}'
+        return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.county}, {self.district}, {self.province}, {self.CPA}\n{self.bonusData}'
  
 class SECLOCommonData():
     def __init__(self: Self, name: str, DNI: int | None = None, CUIL: str | None = None):
@@ -983,3 +984,56 @@ class SECLOCalendarParser(SECLOAccessor):
                  'audID': item
                 }), 
         return calendarCitations
+
+class SECLOClaimValidationData(SECLOAccessor):
+    def _createRequest(self: Self, endpoint: str, data: str):
+        cookies = {}
+        cookies['FedAuth'] = self.driver.get_cookie('FedAuth')['value']
+        cookies['FedAuth1'] = self.driver.get_cookie('FedAuth1')['value']
+        cookies['ASP.NET_SessionId'] = self.driver.get_cookie('ASP.NET_SessionId')['value']
+        cookies['TS01503a54'] = self.driver.get_cookie('TS01503a54')['value']
+        ua = self.driver.execute_script("return navigator.userAgent")
+        headers= {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Accept-Language': 'es-419,es-US;q=0.9,es;q=0.8',
+            'Connection': 'keep-alive',
+            'Content-Type': 'application/json; charset=UTF-8',
+            'Host': 'conciliadores.trabajo.gob.ar',
+            'Origin': 'https://conciliadores.trabajo.gob.ar',
+            'Refererer': 'https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': ua,
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        print(cookies)
+        req = requests.Request('POST', endpoint, data=data, headers=headers, cookies=cookies)
+        req = req.prepare()
+        print('{}\n{}\r\n{}\r\n\r\n{}'.format(
+            '-----------START-----------',
+            req.method + ' ' + req.url,
+            '\r\n'.join('{}: {}'.format(k, v) for k, v in req.headers.items()),
+            req.body,
+        ))
+        return requests.Session().send(req).json()
+
+    def validateCUIT(self: Self, cuit: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCuit.aspx/GetDatosCOmpletosxCuit', '{\'dato\': \'' + cuit + '\'}')
+    
+    def validateDNI(self: Self, DNI: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioDocumento.aspx/getDatosxDenominacion', '{\'dato\': \'' + DNI + '\', \'tipo\': \'E\'}')
+    
+    def validateDistrict(self: Self, province: str, district: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetPartidos', '{\'dato\': \'' + district + '\', \'prov\': \'' + province + '\'}')
+
+    def validateCounty(self: Self, province: str, district: str, county: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetLocalidades', '{\'dato\': \'' + county + '\', \'prov\': \'' + province + '\', \'part\': \'' + district + '\'}')
+    
+    def validateStreet(self: Self, province: str, district: str, county: str, street: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetCalles', '{\'dato\': \'' + street + '\', \'prov\': \'' + province + '\', \'part\': \'' + district + '\', \'localidad\': \'' + county + '\'}')
+    
+    def validateCPA(self: Self, province: str, district: str, county: str, street: str, number: str):
+        return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/getCPA', '{\'prov\': \'' + province + '\', \'part\': \'' + district + '\', \'localidad\': \'' + county + '\', \'calle\': \'' + street + '\', \'numero\': \'' + number + '\'}')
+    
