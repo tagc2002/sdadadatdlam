@@ -1,1 +1,9 @@
-SDADADATDLAM-webdata is a python package designed to interact with the SECLO webapp and translate those interactions to simple endpoints to be used in a wrapper app
+SDADADATDLAM (Sistema De Administracion De Audiencias De Alta Tecnologia De La Anciana Maligna) is a full-stack (Python backend + Next.js frontend) web app designed to manage SECLO citations automatically. It features:
+    Calendar generation from SECLO DB.
+    Automatic citation and result record generation.
+    Documentation management and auto uploading to SECLO DB.
+    Invitations and communication.
+    Case-wide search.
+    Automatic invoice generation.
+    And more.
+

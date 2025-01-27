@@ -16,12 +16,12 @@ from selenium.common.exceptions import InvalidElementStateException
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.remote.webelement import WebElement
 from webdriver_manager.chrome import ChromeDriverManager
-from SECLOExceptions import UnauthorizedAccessException
-from SECLOExceptions import UnknownReportedException
-from SECLOExceptions import RecNotAccessibleException
-from SECLOExceptions import InvalidCaseStateException
-from SECLOExceptions import ValidationException
-from SECLOExceptions import InvalidParameterException
+from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException
+from backend.repositories.SECLO.SECLOExceptions import UnknownReportedException
+from backend.repositories.SECLO.SECLOExceptions import RecNotAccessibleException
+from backend.repositories.SECLO.SECLOExceptions import InvalidCaseStateException
+from backend.repositories.SECLO.SECLOExceptions import ValidationException
+from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
 
 from datetime import datetime
 from typing import Self
@@ -56,7 +56,7 @@ class SECLOAccessor:
 
         chrome_options = Options()
         chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
-        chrome_options.add_argument('headless')
+        #chrome_options.add_argument('headless')
         chrome_options.add_experimental_option("detach", True)
         chrome_options.add_experimental_option("prefs", {
             "download.default_directory": os.getcwd().join("/temp")
@@ -613,6 +613,7 @@ class SECLORecData(SECLOAccessor):
         return results
     
     def getClaimData(self: Self):
+        #TODO DO NOT RELY ON API RESPONSES, THEY FUCK THEM UP REGULARLY
         WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
         self._loadRec()
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))

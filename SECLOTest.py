@@ -1,7 +1,7 @@
 from datetime import datetime
 import re
-import SECLOProgressReporting as pr
-from SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser, SECLOClaimValidationData
+import backend.repositories.SECLO.SECLOProgressReporting as pr
+from backend.repositories.SECLO.SECLODriver import SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser, SECLOClaimValidationData
 import logging
 
 import os
@@ -26,12 +26,14 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #print(SECLOInvoiceParser(cred).getDetails(834))
 
 #calendar = SECLOCalendarParser(cred).getCalendar()
-##for entry in calendar:
+#for entry in calendar:
 #    print(entry['gdeID'])
 #    print(entry['initDate'])
 #    print(entry['audID'])
 #    print(entry['citationDate'])
 #    print(SECLORecData(cred).setRecIDfromGDEID(entry['gdeID']).getClaimData())
+print(SECLORecData(cred,3572853).getClaimData())
+
 
 #citation = SECLOCitation(cred, 3570278, datetime.now())
 #items = citation.getItems()
@@ -44,13 +46,13 @@ logging.getLogger().addHandler(logging.StreamHandler())
 
 #SECLOFileManager(cred, 3570278).uploadRecord("H:\\My Drive\\133050230 Acuerdo firmado.pdf", True)
 
-val = SECLOClaimValidationData(cred)
+#val = SECLOClaimValidationData(cred)
 #print(val.validateCUIT('27-40317985-5'))
 #print(val.validateDNI('44513576'))
-print(val.validateDistrict('CAPITAL FEDERAL', ''))
-print(val.validateCounty('CAPITAL FEDERAL', 'CAPITAL FEDERAL', ''))
-print(val.validateStreet('CAPITAL FEDERAL', 'CAPITAL FEDERAL', 'CABA', 'Cerrito'))
-print(val.validateCPA('CAPITAL FEDERAL', 'CAPITAL FEDERAL', 'CABA', 'Cerrito', '628'))
+#print(val.validateDistrict('CAPITAL FEDERAL', ''))
+#print(val.validateCounty('CAPITAL FEDERAL', 'CAPITAL FEDERAL', ''))
+#print(val.validateStreet('CAPITAL FEDERAL', 'CAPITAL FEDERAL', 'CABA', 'Cerrito'))
+#print(val.validateCPA('CAPITAL FEDERAL', 'CAPITAL FEDERAL', 'CABA', 'Cerrito', '628'))
 
 ##Stuff to do
 ##CITATION MANAGEMENT       Done
