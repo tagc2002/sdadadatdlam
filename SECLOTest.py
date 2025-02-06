@@ -3,6 +3,7 @@ import re
 from typing import List
 import backend.repositories.SECLO.SECLOProgressReporting as pr
 from backend.repositories.SECLO.SECLODriver import CitationResult, SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser, SECLOClaimValidationData
+from backend.repositories.SECLO.SECLODataClasses import SECLOClaimData
 
 import logging
 from threading import Thread
@@ -44,9 +45,9 @@ logging.getLogger().addHandler(logging.StreamHandler())
 # closeAmount = 1600000
 # file = "H:\\My Drive\\08534066 Acuerdo firmado.pdf"
 progress = pr.ProgressReport()
-citation = SECLOCitation(cred, 3574262, datetime.now(), progress)
-items:List[CitationResult] = []
-thread = Thread(target = citation.getItems, args = [items])
+data = SECLORecData(cred, 3574262, progress)
+items:List[SECLOClaimData] = []
+thread = Thread(target = data.getClaimData, args = [items])
 thread.start()
 while(progress.getCompletion() == False):
     ans = progress.getProgress()
@@ -54,21 +55,22 @@ while(progress.getCompletion() == False):
         print(ans)
 print('OUT')
 thread.join()
-for item in items:
-    if item.isEmployee():
-        item.setResult(False)
-    print(item)
-thread = Thread(target = citation.closeCase, args = [items])
-progress.setProgress(0, "")
 
-thread.start()
-while(progress.getCompletion() == False):
-    ans = progress.getProgress()
-    if ans != None:
-        print(ans)
+# for item in items:
+#     if item.isEmployee():
+#         item.setResult(False)
+#     print(item)
+# thread = Thread(target = citation.closeCase, args = [items])
+# progress.setProgress(0, "")
 
-print('OUT')
-thread.join()
+# thread.start()
+# while(progress.getCompletion() == False):
+#     ans = progress.getProgress()
+#     if ans != None:
+#         print(ans)
+
+# print('OUT')
+# thread.join()
 
 # filemanager = SECLOFileManager(cred, 0).setRecIDfromGDEID(gdeID)
 # filemanager.uploadFile("H:\\My Drive\\08534066 DNI Trabajadora.pdf", SECLOFileType.DNI)
