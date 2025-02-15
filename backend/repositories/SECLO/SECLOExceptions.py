@@ -22,3 +22,7 @@ class ValidationException(Exception):
 #Error class to raise when a parameter violates expected input
 class InvalidParameterException(Exception):
     pass
+
+#Error class to raise when a file download attempt has timed out
+class FileDownloadTimeoutException(Exception):
+    pass

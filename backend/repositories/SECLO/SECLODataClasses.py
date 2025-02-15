@@ -1,11 +1,12 @@
 
 from datetime import datetime
-from typing import Self
+from typing import Any, Self
 from enum import Enum
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
+import re
 
 import logging
 logger = logging.getLogger(__name__)
@@ -137,9 +138,10 @@ class SECLOAddressData():
         self.bonusData = bonusData
     def __str__(self: Self):
         return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.county}, {self.district}, {self.province}, {self.CPA} {self.bonusData}'
+    
  
 class SECLOCommonData():
-    def __init__(self: Self, name: str, DNI: int | None = None, CUIL: str | None = None, validated: bool = False):
+    def __init__(self: Self, name: str, DNI: int | None = None, CUIL: int | None = None, validated: bool = False):
         self.name = name
         self.DNI = DNI
         self.CUIL = CUIL
@@ -162,6 +164,22 @@ class SECLOCommonData():
         for address in self.address:
             base = base + str(address) + '\n'
         return base
+    def __eq__(self: Self, other: Any) -> bool:
+        '''
+        Only matches names, not addresses. That is up to the implementer.
+        '''
+        if isinstance(other, SECLOCommonData):
+            if self.DNI == other.DNI and self.DNI > 0:
+                return True
+            if self.CUIT == other.CUIT and self.CUIT > 0:
+                return True
+            if len(self.name.split()) == len(other.name.split()):
+                for term in self.name.split():
+                    if term.upper() not in other.name.upper():
+                        return False
+            return True
+        else:
+            NotImplemented
 
 class SECLOEmployeeData(SECLOCommonData):
     def addBirthDate(self: Self, date: datetime):

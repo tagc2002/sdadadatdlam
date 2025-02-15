@@ -1,36 +1,30 @@
 #selenium webdriver-manager python_dotenv
 from enum import Enum
 from decimal import Decimal
+from pathlib import Path
 import re
+from time import sleep
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
-from selenium.common.exceptions import InvalidElementStateException
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchElementException, InvalidElementStateException, TimeoutException
 from selenium.webdriver.remote.webelement import WebElement
 from webdriver_manager.chrome import ChromeDriverManager
-from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException
-from backend.repositories.SECLO.SECLOExceptions import UnknownReportedException
-from backend.repositories.SECLO.SECLOExceptions import RecNotAccessibleException
-from backend.repositories.SECLO.SECLOExceptions import InvalidCaseStateException
-from backend.repositories.SECLO.SECLOExceptions import ValidationException
-from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
+from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from backend.repositories.SECLO.SECLOProgressReporting import ProgressReport
 from backend.repositories.SECLO.SECLODataClasses import SECLOAddressData, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotification, SECLOOtherData, CitationResult
 
 from datetime import datetime
-from typing import List, Self
+from typing import List, Self, Tuple
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override = True)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -39,7 +33,9 @@ logging.getLogger('selenium').setLevel(logging.CRITICAL)
 
 portalVersionSupported = '8.4.11.0'
 
-DEBUGMODE = True
+downloadpath = Path('./temp')
+downloadpath = downloadpath.resolve()
+DEBUGMODE = False
 if DEBUGMODE:
     logger.critical("\nWARNING!\n DEBUG mode enabled. Any requested changes will not be submitted.")
 
@@ -53,18 +49,16 @@ class SECLOAccessor:
     Handles the creation of the webdriver instance and auth token generation
     Other classes are meant to inherit from this.
     Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
+    
+    Parameters:
+        credentials: Wrapper object containing login info.
+        recid: claim ID to bind accessor to. Optional, but if none, must later be populated by setRecIDfromGDEID.
+        progressReport: an instance of ProgressReport to display progress for long calls. 
+    Returns:
+        SECLOAccessor: Instance of chrome webdriver already logged in and ready for operations
     '''
 
     def __init__(self, credentials: SECLOLoginCredentials, recid: int | None = None, progressReport: ProgressReport | None = ProgressReport()):
-        '''
-        Creates a new chrome instance and authorizes login.
-        
-        Parameters:
-            credentials (SECLOLoginCredentials): Wrapper object containing login info.
-        Returns:
-            SECLOAccessor: Instance of chrome webdriver already logged in and ready for operations
-        '''
-
         chrome_options = Options()
         chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
         if os.getenv('HEADLESS', 'TRUE') == 'TRUE':
@@ -76,8 +70,9 @@ class SECLOAccessor:
             logger.info("Detatch flag set true")
         
         chrome_options.add_experimental_option("prefs", {
-            "download.default_directory": os.getcwd().join("/temp")
+            "download.default_directory": str(downloadpath)
         })
+        logger.info(f'Download path set to {downloadpath}')
 
         logger.debug('Creating chrome webdriver service manager instance')
         chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
@@ -88,17 +83,19 @@ class SECLOAccessor:
         logger.debug('Chrome loaded successfully')
 
         logger.debug('Getting login page.')
-        self.driver.get(f'https://{credentials.user}:{credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia' + \
-            '?wa=wsignin1.0' + \
-            '&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f' + \
-            '&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f' + \
-            '&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust'
-        )
-        try:
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptar'))).click()
-        except (TimeoutException, NoSuchElementException):
-            if 'adfs' in self.driver.current_url:
-                raise UnauthorizedAccessException("Password is wrong or server entered inactive hours")
+        for i in range(0,3):
+            self.driver.get(f'https://{credentials.user}:{credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia' + \
+                '?wa=wsignin1.0' + \
+                '&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f' + \
+                '&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f' + \
+                '&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust'
+            )
+            try:
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptar'))).click()
+                break
+            except (TimeoutException, NoSuchElementException):
+                if 'adfs' in self.driver.current_url:
+                    raise UnauthorizedAccessException("Password is wrong or server entered inactive hours")
         logger.debug('Logged in.')
         
         try:
@@ -128,15 +125,13 @@ class SECLOAccessor:
             if('Error.aspx' in self.driver.current_url):
                 error = self.driver.find_element(By.ID, 'lblError').text
                 if ('No tiene permisos para acceder a esta' in error):
-                    logger.error('SECLO Authorization error. Try initiating the request again, the token probably expired.')
-                    raise UnauthorizedAccessException
+                    raise UnauthorizedAccessException('SECLO Authorization error. Try initiating the request again, the token probably expired.')
                 else:
-                    logger.error('Unknown SECLO server error. Try initiating the request again.')
-                    raise UnknownReportedException
+                    raise UnknownReportedException('Unknown SECLO server error. Try initiating the request again.')
         except NoSuchElementException as e:
-            logger.warning('Unknown error, most likely local. idk, man.')
+            raise InvalidElementStateException('Unknown error, most likely local. idk, man.')
 
-    def _loadRec(self: Self) -> None:
+    def _loadRec(self: Self):
         '''
         Receives an instance of a case searchbox and populates the hiddenRecID field to access the case.
         This method usually does not fail. Searching normally has failed a few times before.
@@ -149,12 +144,12 @@ class SECLOAccessor:
         self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
         WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.NAME, 'ctl00$Busqueda$txtNro'))).send_keys(Keys.ENTER)
 
-    def setRecIDfromGDEID(self: Self, gdeID: str):
+    def setRecIDfromGDEID(self: Self, gdeID: str) -> Self:
         '''
         Sets the current RecID to the corresponding key for the given gdeID.
 
         Parameters:
-            gdeID (str): The given gdeID to find a case. eg: "EX-2020-00000000-bullshit"
+            gdeID: The given gdeID to find a case. eg: "EX-2020-00000000-bullshit"
         '''
 
         self.progress.setSteps(1)
@@ -163,6 +158,8 @@ class SECLOAccessor:
         self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
         gdeYear = gdeID.split('-')[1]
         gdeFile = gdeID.split('-')[2]
+        logger.debug(f'gdeYear: {gdeYear}')
+        logger.debug(f'gdeFileNumber: {gdeFile}')
         findButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
         self.driver.find_element(By.ID, 'ctl00_Busqueda_txtNro').send_keys(gdeFile)
         self.driver.find_element(By.ID, 'ctl00_Busqueda_txtAnio').send_keys(Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+gdeYear)
@@ -172,24 +169,24 @@ class SECLOAccessor:
         self.recid = recID
         self.progress.setCompletion("Done")
         logger.info(f'recID found, set to {self.recid}')
+        return self
 
 class SECLOCitation(SECLOAccessor):
     '''
     A browser driver class to register citation results on the SECLO site. 
     Used for creating a new citation or closing a case with or without agreement.
     Most methods return self for easy chaining.
-    eg. citation= SECLOCitation().setRecIDfromGDEID().getItems()
+    eg. citation= SECLOCitation().setRecIDfromGDEID().reopenCase().getItems()
         citation.closeCase()
         citation.createNewCitation()
+    
+    Parameters:
+        credentials(SECLOLoginCredentials): The credential instance to authorize the requests.
+        recid (int | None): The recID to set for this instance. Can be set to None if it will be later set by gdeID, but it cant be none when actually loading.
+        date (datetime): The presentation date to set for the result form. Current date by default.
+        progress: Instance of ProgressReport to report progress on blocking functions. 
     '''
     def __init__(self, credentials: SECLOLoginCredentials, recid: int | None = None, date: datetime = datetime.now(), progress: ProgressReport | None = ProgressReport()):
-        '''
-        Creates the instance.
-        Parameters:
-            credentials(SECLOLoginCredentials): The credential instance to authorize the requests.
-            recid (int | None): The recID to set for this instance. Can be set to None if it will be later set by gdeID, but it cant be none when actually loading.
-            date (datetime): The presentation date to set for the result form. Current date by default.
-        '''
         super().__init__(credentials, recid, progressReport = progress)
         logger.info(f'Created SECLOCitation with recid {str(recid)}{". Must set manually using gdeID before proceeding, lest you risk an exception" if recid == None or recid == 0 else ''}')
         
@@ -216,9 +213,9 @@ class SECLOCitation(SECLOAccessor):
         except Exception as e:
             raise RecNotAccessibleException(f'Could not access result form for rec {self.recid}. Maybe its closed.')
 
-    def reopenCase(self: Self):
+    def reopenCase(self: Self) -> Self:
         '''
-        Reopens a given case. Does not verify if its closed, thats the responsibility of the caller. 
+        Reopens a given case. Does not verify if its closed, thats the responsibility of the caller.
         '''
         logger.debug(f'Attempting to reopen case {self.recid}')
         self.progress.setSteps(2)
@@ -234,23 +231,31 @@ class SECLOCitation(SECLOAccessor):
         else:
             raise InvalidCaseStateException("Case not found, probably its still open")
         reopenButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnReabrir')))
+        logger.debug("Reopen button found")
         try:
             error = self.driver.find_element(By.ID, 'ctl00_Center_lblmensaje')
         except NoSuchElementException:
             pass
         else:
             raise InvalidCaseStateException(error)
-        reopenButton.click()
-        WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-        alert = self.driver.switch_to.alert.accept()
+        if not DEBUGMODE:
+            reopenButton.click()
+            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+            self.driver.switch_to.alert.accept()
+        else:
+            logger.critical("DEBUG MODE WON'T SUBMIT REOPENING REQUEST")
         self.progress.setCompletion("Done reopening")
+        return self
 
-    def getItems(self: Self, items: List[CitationResult]):
+    def getItems(self: Self) -> List[CitationResult]:
         '''
         Gets the current list of employees and employers registered in this claim.
         Modify this list with the results and new notification if needed and send it to setItems.
-        Parameters:
-            items (set[CitationResult]): Empty list, which will be populated with involved entities. This is done to allow returning it from a thread from a thread Must set agreement info on workers, and notification info on all if new citation.
+
+        Returns:
+            set[CitationResult]: A set containing all the involved parts in the case. 
+                This set must later be populated by the caller with result and notification 
+                information and fed to closeCase() or createNewCitation().
         '''
         self.progress.setSteps(2)
         logger.info('Performing Citation getItems')
@@ -258,6 +263,8 @@ class SECLOCitation(SECLOAccessor):
         self.__loadCitationResultScreen()
         self.fields = []
         self.fieldsLen = 0
+        logger.debug('Case attained')
+
         self.progress.increaseProgress(1, "Loading items")
         try:
             table = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_grdAcuerdos_grdAcuerdos')))
@@ -270,11 +277,12 @@ class SECLOCitation(SECLOAccessor):
             for field in self.fields:
                 logger.debug(field)
             self.progress.setCompletion("Done getting items.")
+            items = []
             for item in self.fields:
                 items.append(item)
+            return items
         except Exception as e:
-            logger.error(f'Something happenned loading the result fields.\n{e}')
-            raise InvalidCaseStateException
+            raise InvalidCaseStateException(f'Something happenned loading the result fields.\n{e}')
 
     def __rowPopulatedCheck(self: Self, row: WebElement) -> bool:
         return (not row.find_elements(By.TAG_NAME, 'td')[2].find_elements(By.TAG_NAME, 'td')[1].find_element(By.TAG_NAME, 'input').get_attribute("checked") 
@@ -286,9 +294,11 @@ class SECLOCitation(SECLOAccessor):
         
         if self.multiple:
             if self.combSelectorIndex == self.combSelectorLength:
+                logger.debug("Done setting items.")
                 return self.__advanceResultForm()
             else:
                 Select(WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_cmbObjetos')))).select_by_index(self.combSelectorIndex)
+                logger.debug(f'Selected comb level entry {self.combSelectorIndex + 1} of {self.combSelectorLength}')
                 self.combSelectorIndex += 1     
         self.progress.setSteps(1 + ((1 if ignoreMultipleComb or not self.multiple else self.combSelectorLength) * (self.fieldsLen + 1)))     
         try:
@@ -391,7 +401,6 @@ class SECLOCitation(SECLOAccessor):
             self.driver.find_element(By.ID, 'ctl00_Center_btnNuevaIncomparecencia').click()
         else:
             self.driver.find_element(By.ID, 'ctl00_Center_btnNuevaAudiencia').click()
-        
         self.__fillDateInput('ctl00$Center$txtFecha$txtFecha', date)
         Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbHoras')).select_by_visible_text(f'{date.hour:02}')
         Select(self.driver.find_element(By.ID, 'ctl00_Center_cmbMinutos')).select_by_visible_text(f'{(date.minute - date.minute % 5):02}')
@@ -415,13 +424,14 @@ class SECLOCitation(SECLOAccessor):
                         if absentCitation:
                             row.find_elements(By.TAG_NAME, 'td')[2].find_element(By.TAG_NAME, 'input').click()
                         Select(row.find_elements(By.TAG_NAME, 'td')[3 if absentCitation else 1].find_element(By.TAG_NAME, 'select')).select_by_value(entry.notificationMethod.value)
-       
-        self.driver.find_element(By.ID, 'ctl00_Center_btnGrabar').click()
-        self.__validationErrorChecker()
+
+        if not DEBUGMODE:
+            self.driver.find_element(By.ID, 'ctl00_Center_btnGrabar').click()
+            self.__validationErrorChecker()
+        else:
+            logger.critical("DEBUG MODE WON'T PERSIST NEW CITATION. However, this citation will be marked as 'completed' rather than 'pending', to allow verifying this last stage")
         self.progress.setCompletion("Done new citation request")
         self.driver.quit()
-        #TODO validate citation result
-        return
 
     def closeCase(self: Self, items: set[CitationResult]):
         '''
@@ -446,6 +456,8 @@ class SECLOCitation(SECLOAccessor):
                 self.driver.find_element(By.ID, 'ctl00_Center_btnGrabarTotal').click()
                 WebDriverWait(self.driver, 10).until(EC.alert_is_present())
                 self.driver.switch_to.alert.accept()
+            else: 
+                logger.critical("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
         self.progress.setCompletion("Done closing claim")
         self.driver.quit()
 
@@ -458,15 +470,21 @@ class SECLOFileType(Enum):
     SIGNED = ('36', False)
 
 class SECLOFileManager(SECLOAccessor):
-    '''A class to handle file management, including querying and downloading already present files, uploading new ones, or uploading records.'''
-    def __init__(self: Self, credentials: SECLOLoginCredentials, recid: int):
+    '''
+    A class to handle file management, including querying and downloading already present files, uploading new ones, or uploading records.
+
+    Parameters:
+        credentials: The wrapper object containing the login information.
+        recid: Tha claim number to bind to this instance.
+    '''
+    def __init__(self: Self, credentials: SECLOLoginCredentials, recid: int | None = None):
         super().__init__(credentials, recid)
         self.__getFiles()
 
     def __getFiles(self: Self):
         '''
-        populates internal object storage with the current files in rec
-        idc about congruency, this is a throwaway object that expires quickly
+        Populates internal object storage with the current files in rec.
+        idc about congruency, this is a throwaway object that expires quickly.
         '''
         self.driver.get(f'https://conciliadores.trabajo.gob.ar/Documentacion_Adjunta.aspx?RecId={self.recid}')
         files = []
@@ -478,23 +496,26 @@ class SECLOFileManager(SECLOAccessor):
                     row.find_elements(By.TAG_NAME, 'td')[2].text
                 )
             ))
+            logger.debug(files[-1])
         self.fileList = files
 
-    def getFiles(self: Self):
+    def getFiles(self: Self) -> Tuple[str, str, str]:
         '''
         Gets a list of all the registered files currently uploaded to this rec.
+        
         Returns: 
-            Tuple[str, str, datetime]: (type, description, date)
+            files (Tuple[str, str, datetime]): (type, description, date)
         '''
         return self.fileList[:]
     
-    def getFile(self: Self, index: int):
+    def getFile(self: Self, index: int) -> None:
         '''
         Request a given file from the list of uploaded file.
+
         Parameters:
             index (int): The index of the requested file
         Returns:
-            Nothing currently, but hopefully later a handle to the downloaded file.
+            Nothing currently, but hopefully later a handle to the downloaded file. It's downloaded to a temp directory so you can go look for it tho.
         '''
         if index >= len(self.fileList) or index < 0:
             raise IndexError("Requesting a file beyond bounds")
@@ -502,9 +523,18 @@ class SECLOFileManager(SECLOAccessor):
         logger.debug("Downloading file")
         download = self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle')[index].find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input')
         logger.info(download.get_attribute("title"))
+        downloadfile = downloadpath / 'Reporte.pdf'
+        downloadfile.unlink(True)
         download.click()
+        for i in range(0, 200):
+            if downloadfile.exists():
+                break
+            else:
+                sleep(0.1)
+        else:
+            raise FileDownloadTimeoutException("Timeout while trying to download file, try again later.")
 
-    def uploadFile(self: Self, file: str, filetype: SECLOFileType, description: str | None = None):
+    def uploadFile(self: Self, file: str, filetype: SECLOFileType, description: str | None = None) -> None:
         '''
         Uploads a file. Works for everything except records, which are uploaded using the uploadRecord method because its completely different for some godforsaken reason.
         Parameters:
@@ -523,10 +553,13 @@ class SECLOFileManager(SECLOAccessor):
         WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'btnAgregar'))).click()
 
         # Save button (why tf is it unlabeled?? This is some lousy website coding)
-        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Button1'))).click()
+        save = WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'Button1')))
+        save.click()
+        WebDriverWait(self.driver, 5).until(EC.staleness_of(save))
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'Button1')))
         self.__getFiles()
     
-    def uploadRecord(self: Self, file: str, agreement: bool):
+    def uploadRecord(self: Self, file: str, agreement: bool) -> None:
         '''
         Uploads a record to an already closed case.
         Parameters:
@@ -563,7 +596,6 @@ class SECLOFileManager(SECLOAccessor):
         self.driver.switch_to.alert.accept()
         WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_grdReclamos')))
         return
-
 
     def __shitDateToDatetime(self: Self, date: str) -> datetime:
         '''
@@ -605,9 +637,10 @@ class SECLORecData(SECLOAccessor):
     A class for accessing data from claims, the main data ingestion class if you may. 
     Eventually may allow modifying data as well, but the website is so shit I don't think it'll be reliable.
     '''
-    def getNotificationData(self: Self):
+    def getNotificationData(self: Self) -> List[dict]:
         '''
         Gets the associated notification information for a given case. Its up to the caller to link those to a citation or stuff like that.
+
         Returns:
             List[dict]: The list of notification entries. 
         '''
@@ -633,12 +666,13 @@ class SECLORecData(SECLOAccessor):
                 'citationStatus': row.find_elements(By.TAG_NAME, 'td')[11].text,
             })
         return results
-    
-    def getClaimData(self: Self, claimData: List[SECLOClaimData]):
+
+    def getClaimData(self: Self) -> SECLOClaimData:
         '''
         Accesses the given claims initiation data. Useful to get names, IDs, employment parameters, etc. 
-        Parameters:
-            claimData: A list used to return the claim data. List acts as a wrapper, because you'll have only a single claimData. But it's easier than having the caller create the claim object. 
+        
+        Returns:
+            SECLOClaimData: an object that contains all claim data.
         '''
         self.progress.setSteps(1)
         self.progress.setProgress(0, "Loading claim data form...")
@@ -677,7 +711,7 @@ class SECLORecData(SECLOAccessor):
             name = f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNombre_txt').get_attribute('value')}'
             self.progress.increaseProgress(1, f'Getting worker data for {name} ({i + 1} of {listLen})...')
 
-            if len(cuil.text) > 0 and seclodbOK:
+            if len(cuil.text) > 0 and seclodbOK and not cuil.get_attribute('disabled'):
                 cuil.click()
                 cuil.send_keys(Keys.TAB)
                 WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value')) > 0)
@@ -688,7 +722,7 @@ class SECLORecData(SECLOAccessor):
             employee = SECLOEmployeeData(
                 name = name,
                 DNI = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS').get_attribute('value'),
-                CUIL = cuil.get_attribute('value'),
+                CUIL = int(cuil.get_attribute('value').replace('-', '')),
                 validated = seclodbOK
             )
             employee.addAddress(
@@ -730,7 +764,7 @@ class SECLORecData(SECLOAccessor):
             employer = SECLOEmployerData(
                 name=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value'),
                 DNI=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtNroDocumento_txt').get_attribute('value'),
-                CUIL=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value'),
+                CUIL=int(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value').replace('-','')),
                 validated = seclodbOK
             )
             employer.addAddress(
@@ -848,12 +882,30 @@ class SECLORecData(SECLOAccessor):
 
         #END
         self.progress.setCompletion("Done getting data.")
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkFinalizar'))).click()
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptarRec'))).click()
-        #WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSi'))).click()
-        #WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-        #alert = self.driver.switch_to.alert.accept()
+        if seclodbOK and not DEBUGMODE:
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkFinalizar'))).click()
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptarRec'))).click()
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSi'))).click()
+            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+            self.driver.switch_to.alert.accept()
         return claimData
+    
+    def addEmployer(self: Self, CUIT: int, address: SECLOAddressData)-> Self:
+        '''
+        Ettempts to expand a claim with the given employer. This can fail in many many ways, but we can try at least.
+
+        Parameters:
+            employer (SECLOEmployerData): The employer to be added.
+        '''
+        self.progress.setSteps(1)
+        self.progress.setProgress(0, "Loading claim data form...")
+        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
+        self._loadRec()
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
+        list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstEmpleadores')))
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+        
+        return self
     
 class SECLOInvoiceParser(SECLOAccessor):
     def listInvoices(self: Self):

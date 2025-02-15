@@ -16,7 +16,7 @@ load_dotenv()
 
 cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME'), os.getenv('SECLO_PASSWORD'))
 
-logging.basicConfig(filename="sdadadatdlam-webdata.log", level=logging.INFO)
+logging.basicConfig(filename="sdadadatdlam-webdata.log", level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
 
 # files = SECLOFileManager(cred, 3576469)
@@ -41,43 +41,35 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #    print(SECLORecData(cred, 0).setRecIDfromGDEID(entry['gdeID']).getClaimData())
 
 
-# gdeID = 'EX-2025-08534066'
-# closeAmount = 1600000
-# file = "H:\\My Drive\\08534066 Acuerdo firmado.pdf"
+gdeID = 'EX-2024-133692207'
+closeAmount = 4500000
+file = "H:\\My Drive\\133692207 Acuerdo firmado.pdf"
+
 progress = pr.ProgressReport()
-data = SECLORecData(cred, 3574262, progress)
-items:List[SECLOClaimData] = []
-thread = Thread(target = data.getClaimData, args = [items])
+citationManager = SECLOCitation(credentials=cred, progress=progress).setRecIDfromGDEID(gdeID)
+items = citationManager.getItems()
+
+for item in items:
+    if item.isEmployee():
+        item.setResult(True, closeAmount)
+    print(item)
+thread = Thread(target = citationManager.closeCase, args = [items])
+progress.setProgress(0, "")
+
 thread.start()
 while(progress.getCompletion() == False):
     ans = progress.getProgress()
     if ans != None:
         print(ans)
+
 print('OUT')
 thread.join()
 
-# for item in items:
-#     if item.isEmployee():
-#         item.setResult(False)
-#     print(item)
-# thread = Thread(target = citation.closeCase, args = [items])
-# progress.setProgress(0, "")
+filemanager = SECLOFileManager(cred).setRecIDfromGDEID(gdeID)
+filemanager.uploadFile("H:\\My Drive\\133692207 Poder.pdf", SECLOFileType.PODER)
+filemanager.uploadFile("H:\\My Drive\\133692207 Credencial requerida.pdf", SECLOFileType.CREDENTIAL)
 
-# thread.start()
-# while(progress.getCompletion() == False):
-#     ans = progress.getProgress()
-#     if ans != None:
-#         print(ans)
-
-# print('OUT')
-# thread.join()
-
-# filemanager = SECLOFileManager(cred, 0).setRecIDfromGDEID(gdeID)
-# filemanager.uploadFile("H:\\My Drive\\08534066 DNI Trabajadora.pdf", SECLOFileType.DNI)
-# filemanager.uploadFile("H:\\My Drive\\08534066 DNI Empleadora.pdf", SECLOFileType.DNI)
-# filemanager.uploadFile("H:\\My Drive\\08534066 Credencial requerida.pdf", SECLOFileType.CREDENTIAL)
-
-# filemanager.uploadRecord(file, True)
+filemanager.uploadRecord(file, True)
 
 # val = SECLOClaimValidationData(cred)
 # print(val.validateCUIT('27-40317985-5'))
