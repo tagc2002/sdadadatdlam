@@ -1,40 +1,46 @@
 CREATE TABLE claim(
-    recID INT NOT NULL,
-    gdeID VARCHAR(30) NOT NULL,
+    recID INT NOT NULL PRIMARY KEY,
+    gdeID VARCHAR(30) NOT NULL UNIQUE,
     creationDate TIMESTAMP NOT NULL,
     initByEmployee BOOLEAN,
     claimType TEXT,
     legalStuff TEXT,
     isDomestic BOOLEAN,
-    calID TEXT,
-    PRIMARY KEY(recID),
-    UNIQUE(gdeID)
+    calID TEXT
 );
 CREATE TABLE citation(
-    citationID SERIAL,
+    citationID SERIAL PRIMARY KEY,
     recID INT,
-    secloAudID INT,
+    secloAudID INT UNIQUE NOT NULL,
     citationDate TIMESTAMP,
-    citationType TEXT,
+    citationType TEXT NOT NULL,
     citationStatus INT,
-    sumamry TEXT,
-    PRIMARY KEY(citationID),
-    FOREIGN KEY(recID) REFERENCES claim,
-    UNIQUE(secloAudID)
+    citationSummary TEXT,
+    notes TEXT,
+    isCalendarPrimary BOOLEAN NOT NULL,
+    meetID TEXT,
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentation(
-    docID SERIAL,
-    docName TEXT,
+    docID SERIAL PRIMARY KEY,
+    docName TEXT NOT NULL,
     docType TEXT,
     fileDriveID TEXT,
-    requestedDate TIMESTAMP,
     importedDate TIMESTAMP,
-    importedFromSECLO BOOLEAN,
-    uploadedDate TIMESTAMP,
-    PRIMARY KEY(docID),
+    importedFromSECLO BOOLEAN
+);
+CREATE TABLE bankAccount(
+    accountID SERIAL PRIMARY KEY,
+    CBU1 INT NOT NULL,
+    CBU2 INT NOT NULL,
+    bankName TEXT NOT NULL,
+    alias TEXT,
+    accountNumber BIGINT,
+    CUIT BIGINT,
+    isValidated BOOLEAN
 );
 CREATE TABLE address(
-    addressID SERIAL,
+    addressID SERIAL PRIMARY KEY,
     province TEXT,
     district TEXT,
     county TEXT,
@@ -43,185 +49,204 @@ CREATE TABLE address(
     floor TEXT,
     apt TEXT,
     CPA TEXT,
-    PRIMARY KEY(addressID)
+    extra TEXT
 );
 CREATE TABLE email(
-    emailID SERIAL,
+    emailID SERIAL PRIMARY KEY,
     email TEXT,
     registeredOn TIMESTAMP,
     registeredFrom TEXT,
-    description TEXT,
-    PRIMARY KEY(emailID)
+    description TEXT
 );
 CREATE TABLE employee(
     employeeID SERIAL,
     recID INT NOT NULL,
     employeeName TEXT NOT NULL,
-    DNI INT,
+    DNI INT NOT NULL,
     CUIL INT,
-    validated BOOLEAN,
+    isValidated BOOLEAN NOT NULL,
     birthDate TIMESTAMP,
-    CBU TEXT,
-    bank TEXT,
-    alias TEXT,
-    accountNumber TEXT,
+    bankAccount INT,
     PRIMARY KEY(employeeID),
-    FOREIGN KEY(recID) REFERENCES claim
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(bankAccount) REFERENCES bankAccount ON DELETE SET NULL ON UPDATE CASCADE
 );
 CREATE TABLE employeeAddressLink(
     employeeID INT,
     addressID INT,
     description TEXT,
     PRIMARY KEY(employeeID, addressID),
-    FOREIGN KEY(employeeID) REFERENCES employee,
-    FOREIGN KEY(addressID) REFERENCES address
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(addressID) REFERENCES address ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE employeeEmailLink(
     emailID INT,
     employeeID INT,
     PRIMARY KEY(emailID, employeeID),
-    FOREIGN KEY(employeeID) REFERENCES employee,
-    FOREIGN KEY(emailID) REFERENCES email
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(emailID) REFERENCES email ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE employer(
     employerID SERIAL,
     recID INT NOT NULL,
     employerName TEXT NOT NULL,
     CUIT INT,
-    personType INT,
+    personType INT NOT NULL,
     requiredAs INT,
     secloRegisterDate TIMESTAMP,
     mustRegisterSECLO BOOLEAN,
-    validated BOOLEAN,
+    isValidated BOOLEAN NOT NULL,
+    isDesisted BOOLEAN NOT NULL, 
     PRIMARY KEY(employerID),
-    FOREIGN KEY(recID) REFERENCES claim,
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE employerAddressLink(
     employerID INT,
     addressID INT,
     description TEXT,
     PRIMARY KEY(employerID, addressID),
-    FOREIGN KEY(employerID) REFERENCES employer,
-    FOREIGN KEY(addressID) REFERENCES address
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(addressID) REFERENCES address ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE employerEmailLink(
     emailID INT,
     employerID INT,
     PRIMARY KEY(emailID, employerID),
-    FOREIGN KEY(employerID) REFERENCES employer,
-    FOREIGN KEY(emailID) REFERENCES email
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(emailID) REFERENCES email ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE lawyer(
     lawyerID SERIAL,
     recID INT,
     laywerName TEXT,
-    lawyerTF INT,
+    T INT NOT NULL,
+    F INT NOT NULL,
     registeredOn TIMESTAMP,
     registeredFrom TEXT,
-    CBU TEXT,
-    bank TEXT,
-    alias TEXT,
-    accountNumber TEXT,
-    CUIT INT,
+    CUIT BIGINT,
     hasVAT BOOLEAN,
+    isValidated BOOLEAN NOT NULL,
+    bankAccount INT,
     PRIMARY KEY(lawyerID),
-    FOREIGN KEY(recID) REFERENCES claim
-);
-CREATE TABLE lawyerEmailLink(
-    emailID INT,
-    lawyerID INT,
-    PRIMARY KEY(emailID, lawyerID),
-    FOREIGN KEY(lawyerID) REFERENCES lawyer,
-    FOREIGN KEY(emailID) REFERENCES email
-);
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(bankAccount) REFERENCES bankAccount ON DELETE SET NULL ON UPDATE CASCADE
+); 
 CREATE TABLE lawyerToEmployee(
-    lawyerID INT,
-    employeeID INT,
-    citationID INT,
+    lawyerID INT NOT NULL,
+    employeeID INT NOT NULL,
+    citationID INT NOT NULL,
     isActualLawyer BOOLEAN,
+    clientAbsent BOOLEAN NOT NULL,
+    description TEXT,
     PRIMARY KEY(lawyerID, employeeID, citationID),
-    FOREIGN KEY(lawyerID) REFERENCES lawyer,
-    FOREIGN KEY(employeeID) REFERENCES employee,
-    FOREIGN KEY(citationID) REFERENCES citation
+    FOREIGN KEY(lawyerID) REFERENCES lawyer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE, 
+    FOREIGN KEY(citationID) REFERENCES citation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE lawyerToEmployer(
-    lawyerID INT,
-    employerID INT,
-    citationID INT,
-    isActualLawyer BOOLEAN,
-    isEmpowered BOOLEAN,
-    isSelfRepresenting BOOLEAN,
+    lawyerID INT NOT NULL,
+    employerID INT NOT NULL,
+    citationID INT NOT NULL,
+    isActualLawyer BOOLEAN NOT NULL,
+    isEmpowered BOOLEAN NOT NULL,
+    isSelfRepresenting BOOLEAN NOT NULL,
+    clientAbsent BOOLEAN NOT NULL,
     PRIMARY KEY(lawyerID, employerID, citationID),
     FOREIGN KEY(lawyerID) REFERENCES lawyer,
     FOREIGN KEY(employerID) REFERENCES employer,
     FOREIGN KEY(citationID) REFERENCES citation
 );
+CREATE TABLE lawyerEmailLink(
+    emailID INT NOT NULL,
+    lawyerID INT NOT NULL,
+    PRIMARY KEY(emailID, lawyerID),
+    FOREIGN KEY(lawyerID) REFERENCES lawyer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(emailID) REFERENCES email ON DELETE CASCADE ON UPDATE CASCADE
+);
 CREATE TABLE employerRelation(
-    masterID INT,
-    slaveID INT,
-    relationship INT,
+    masterID INT NOT NULL,
+    slaveID INT NOT NULL,
+    relationship TEXT,
     PRIMARY KEY(masterID, slaveID),
-    FOREIGN KEY(masterID) REFERENCES employer,
-    FOREIGN KEY(slaveID) REFERENCES employer,
+    FOREIGN KEY(masterID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(slaveID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentationEmployeeLink(
-    docID INT,
-    employeeID INT,
+    docID INT NOT NULL,
+    employeeID INT NOT NULL,
     description TEXT,
     isRequired BOOLEAN,
+    SECLOUploadedOn TIMESTAMP,
     PRIMARY KEY(docID, employeeID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(employeeID) REFERENCES employee
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentationEmployerLink(
     docID INT,
     employerID INT,
     description TEXT,
     isRequired BOOLEAN,
+    SECLOUploadedOn TIMESTAMP,
     PRIMARY KEY(docID, employerID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(employerID) REFERENCES employer
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentationLawyerLink(
     docID INT,
     lawyerID INT,
     description TEXT,
     isRequired BOOLEAN,
+    SECLOUploadedOn TIMESTAMP,
     PRIMARY KEY(docID, lawyerID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(lawyerID) REFERENCES lawyer
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(lawyerID) REFERENCES lawyer ON DELETE CASCADE ON UPDATE CASCADE
 );
-CREATE TABLE lawyerTelephone(
-    lawyerID INT,
-    telephone INT,
-    telephonePrefix INT,
+CREATE TABLE telephone(
+    telID SERIAL PRIMARY KEY,
+    telephone INT NOT NULL,
+    prefix INT NOT NULL,
+    description TEXT
+);
+CREATE TABLE lawyerTelephoneLink(
+    lawyerID INT NOT NULL,
+    telID INT NOT NULL,
     description TEXT,
-    PRIMARY KEY(lawyerID, telephone),
-    FOREIGN KEY(lawyerID) REFERENCES lawyer
+    PRIMARY KEY(lawyerID, telID),
+    FOREIGN KEY(lawyerID) REFERENCES lawyer ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(telID) REFERENCES telephone ON DELETE CASCADE ON UPDATE CASCADE
 );
-CREATE TABLE notification(
+CREATE TABLE secloNotification(
     notificationID SERIAL,
-    citationID INT,
-    employeeID INT,
-    employerID INT,
-    notificationType INT,
+    citationID INT NOT NULL,
+    notificationType INT NOT NULL,
     secloPostalID INT,
-    emissionDate TIMESTAMP,
+    emissionDate TIMESTAMP NOT NULL, 
     receptionDate TIMESTAMP,
     deliveryCode INT,
     deliveryDescription TEXT,
-    isAbsent BOOLEAN,
     PRIMARY KEY(notificationID),
-    FOREIGN KEY(citationID) REFERENCES citation,
-    FOREIGN KEY(employeeID) REFERENCES employee,
-    FOREIGN KEY(employerID) REFERENCES employer,
+    FOREIGN KEY(citationID) REFERENCES citation ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE secloNotificationToEmployee(
+    notificationID INT NOT NULL,
+    employeeID INT NOT NULL,
+    PRIMARY KEY(notificationID, employeeID),
+    FOREIGN KEY(notificationID) REFERENCES secloNotification ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE secloNotificationToEmployer(
+    notificationID INT NOT NULL,
+    employerID INT NOT NULL,
+    PRIMARY KEY(notificationID, employerID),
+    FOREIGN KEY(notificationID) REFERENCES secloNotification ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE agreement(
     agreementID SERIAL,
     recID INT NOT NULL,
     citationID INT NOT NULL,
     invoiceTo INT,
-    malignaHonorary DECIMAL(20,2),
+    malignaHonorary DECIMAL(20,2) NOT NULL,
     expirationRelative INTERVAL,
     presentationDate TIMESTAMP,
     isUncashable BOOLEAN,
@@ -229,26 +254,27 @@ CREATE TABLE agreement(
     claimedObjects TEXT,
     hasCertificateDelivery BOOLEAN,
     notes TEXT,
-    sentDate TIMESTAMP,
-    isDraft BOOLEAN
+    initialSentDate TIMESTAMP,
+    lastSentDate TIMESTAMP,
+    isDraft BOOLEAN,
     PRIMARY KEY(agreementID),
-    FOREIGN KEY(recID) REFERENCES claim,
-    FOREIGN KEY(invoiceTo) REFERENCES employer,
-    FOREIGN KEY(citationID) REFERENCES citation
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(invoiceTo) REFERENCES employer ON DELETE SET NULL ON UPDATE CASCADE,
+    FOREIGN KEY(citationID) REFERENCES citation ON DELETE SET NULL ON UPDATE CASCADE
 );
 CREATE TABLE agreementExtension(
     agreementID INT,
     employerID INT,
     PRIMARY KEY(agreementID, employerID),
-    FOREIGN KEY(agreementID) REFERENCES agreement,
-    FOREIGN KEY(employerID) REFERENCES employer
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE agreementDesist(
     agreementID INT,
     employerID INT,
     PRIMARY KEY(agreementID, employerID),
-    FOREIGN KEY(agreementID) REFERENCES agreement,
-    FOREIGN KEY(employerID) REFERENCES employer
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employerID) REFERENCES employer ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentationAgreementLink(
     docID INT,
@@ -256,8 +282,8 @@ CREATE TABLE documentationAgreementLink(
     description TEXT,
     isRequired BOOLEAN,
     PRIMARY KEY(docID, agreementID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(agreementID) REFERENCES agreement
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE hemiagreement(
     hemiID SERIAL,
@@ -268,12 +294,12 @@ CREATE TABLE hemiagreement(
     honoraryRelative DECIMAL(3,2),
     honoraryAbsolute DECIMAL(20,2),
     PRIMARY KEY(hemiID),
-    FOREIGN KEY(agreementID) REFERENCES agreement,
-    FOREIGN KEY(employeeID) REFERENCES employee
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(employeeID) REFERENCES employee ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE paymentInstallment(
     installmentID SERIAL,
-    hemiID INT,
+    hemiID INT NOT NULL,
     amount DECIMAL(20,2) NOT NULL,
     expirationHomo INTERVAL,
     expirationRelative INTERVAL,
@@ -281,26 +307,20 @@ CREATE TABLE paymentInstallment(
     wasPaidBefore BOOLEAN,
     customPaymentMethod TEXT,
     PRIMARY KEY(installmentID),
-    FOREIGN KEY(hemiID) references hemiagreement
+    FOREIGN KEY(hemiID) references hemiagreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE homologation(
     homoID SERIAL,
-    gdeID INT,
+    gdeID TEXT,
     agreementID INT,
     signDate TIMESTAMP,
-    draftDate TIMESTAMP,
+    registeredDate TIMESTAMP,
     notificationDate TIMESTAMP,
     description TEXT,
-    PRIMARY KEY(homoID),
-    FOREIGN KEY(agreementID) REFERENCES agreement,
-);
-CREATE TABLE documentationHomologationLink(
     docID INT,
-    homoID INT,
-    description TEXT,
-    PRIMARY KEY(docID, homoID),
-    FOREIGN KEY(homoID) REFERENCES homologation,
-    FOREIGN KEY(docID) REFERENCES documentation
+    PRIMARY KEY(homoID),
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE invoice(
     invoiceID SERIAL,
@@ -311,16 +331,10 @@ CREATE TABLE invoice(
     amount DECIMAL(20,2),
     description TEXT,
     isCredit BOOLEAN,
+    relatedTo INT,
     PRIMARY KEY(invoiceID),
-    FOREIGN KEY(agreementID) REFERENCES agreement,
-    UNIQUE(afipID)
-);
-CREATE TABLE documentationInvoiceLink(
-    invoiceID INT,
-    docID INT,
-    PRIMARY KEY(invoiceID, docID),
-    FOREIGN KEY(invoiceID) REFERENCES invoice,
-    FOREIGN KEY(docID) REFERENCES documentation
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(relatedTo) REFERENCES invoice ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE payment(
     paymentID SERIAL,
@@ -328,40 +342,36 @@ CREATE TABLE payment(
     amount DECIMAL(20,2),
     paymentDate TIMESTAMP,
     notifiedDate TIMESTAMP,
+    notifiedBy TEXT,
     bankReference TEXT,
     description TEXT,
     isEvilified BOOLEAN,
-	PRIMARY KEY(paymentID),
-	FOREIGN KEY(agreementID) REFERENCES agreement
-);
-CREATE TABLE documentationPaymentLink(
     docID INT,
-    paymentID INT,
-    PRIMARY KEY(docID, paymentID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(paymentID) REFERENCES payment
+	PRIMARY KEY(paymentID),
+	FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE observation(
     obsID SERIAL, 
-    agreementID INT,
-    obsDate TIMESTAMP,
-    reason TEXT,
+    agreementID INT NOT NULL,
+    obsDate TIMESTAMP NOT NULL,
+    reason TEXT NOT NULL,
     description TEXT,
     notifiedDate TIMESTAMP,
     replyDate TIMESTAMP,
     secloEmailNotificationDate TIMESTAMP,
-    PRIMARY KEY(paymentID),
-    FOREIGN KEY(agreementID) REFERENCES agreement
+    PRIMARY KEY(obsID),
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE documentationObservationLink(
     docID INT,
     obsID INT,
     PRIMARY KEY(docID, obsID),
-    FOREIGN KEY(docID) REFERENCES documentation,
-    FOREIGN KEY(obsID) REFERENCES observation
+    FOREIGN KEY(docID) REFERENCES documentation ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(obsID) REFERENCES observation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE complaint(
-    compID SERIAL,
+    complaintID SERIAL,
     recID INT,
     description TEXT,
     complainDate TIMESTAMP,
@@ -370,77 +380,69 @@ CREATE TABLE complaint(
     channel TEXT,
     ackDate TIMESTAMP,
     reply TEXT,
-    PRIMARY KEY(compID),
-    FOREIGN KEY(recID) REFERENCES claim
+    PRIMARY KEY(complaintID),
+    FOREIGN KEY(recID) REFERENCES claim ON UPDATE CASCADE ON DELETE CASCADE
 );
 CREATE TABLE complaintAgreementLink(
-    compID INT,
+    complaintID INT,
     agreementID INT,
-    PRIMARY KEY(compID, agreementID),
-    FOREIGN KEY(compID) REFERENCES complaint,
-    FOREIGN KEY(agreementID) REFERENCES agreement
+    PRIMARY KEY(complaintID, agreementID),
+    FOREIGN KEY(complaintID) REFERENCES complaint ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE complaintHomologationLink(
-    compID INT,
+    complaintID INT,
     homoID INT,
-    PRIMARY KEY(compID, homoID),
-    FOREIGN KEY(compID) REFERENCES complaint,
-    FOREIGN KEY(homoID) REFERENCES homologation
+    PRIMARY KEY(complaintID, homoID),
+    FOREIGN KEY(complaintID) REFERENCES complaint ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(homoID) REFERENCES homologation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE complaintPaymentLink(
-    compID INT,
+    complaintID INT,
     paymentID INT,
-    PRIMARY KEY(compID, paymentID),
-    FOREIGN KEY(compID) REFERENCES complaint,
-    FOREIGN KEY(paymentID) REFERENCES payment
+    PRIMARY KEY(complaintID, paymentID),
+    FOREIGN KEY(complaintID) REFERENCES complaint ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(paymentID) REFERENCES payment ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE complaintObservationLink(
-    compID INT,
+    complaintID INT,
     obsID INT,
-    PRIMARY KEY(compID, obsID),
-    FOREIGN KEY(compID) REFERENCES complaint,
-    FOREIGN KEY(obsID) REFERENCES observation
+    PRIMARY KEY(complaintID, obsID),
+    FOREIGN KEY(complaintID) REFERENCES complaint ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(obsID) REFERENCES observation ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE nonagreement(
     nonID SERIAL,
-    recID INT,
-    citationID INT,
-    claims TEXT,
+    recID INT NOT NULL,
+    citationID INT NOT NULL,
+    claims TEXT NOT NULL,
     bonusData TEXT,
-    presentationDate TEXT,
     sentDate TEXT,
     notes TEXT,
+    waitToSend BOOLEAN NOT NULL,
     PRIMARY KEY(nonID),
-    FOREIGN KEY(recID) REFERENCES claim,
-    FOREIGN KEY(citationID) REFERENCES citation
+    FOREIGN KEY(recID) REFERENCES claim ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(citationID) REFERENCES citation ON DELETE CASCADE ON UPDATE CASCADE
 );
-CREATE TABLE nonagreementInvoice(
+CREATE TABLE nonagreementSECLOInvoice(
     secloInvoiceID INT,
-    total DECIMAL(20,2),
-    date TIMESTAMP,
+    amoutn DECIMAL(20,2),
+    periodDate TIMESTAMP,
     paymentDate TIMESTAMP,
     PRIMARY KEY(secloInvoiceID)
 );
 CREATE TABLE nonagreementInvoiceLink(
     secloInvoiceID INT, 
     nonID INT,
+    reopening BOOLEAN,
     amount DECIMAL(20,2),
     dateRegistered TIMESTAMP,
-    PRIMARY KEY(secloInvoiceID, nonID),
-    FOREIGN KEY(secloInvoiceID) REFERENCES nonagreementInvoice,
-    FOREIGN KEY(nonID) REFERENCES nonagreement
-);
-CREATE TABLE monthlyHonorary(
-    amount DECIMAL(20,2),
-    validSince TIMESTAMP,
-    PRIMARY KEY(validSince)
+    PRIMARY KEY(secloInvoiceID, nonID, reopening, dateRegistered),
+    FOREIGN KEY(secloInvoiceID) REFERENCES nonagreementSECLOInvoice ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(nonID) REFERENCES nonagreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE bratInvoice(
     bratID SERIAL,
-    expenses DECIMAL(20,2),
-    bonusPercentual DECIMAL(20,2),
-    deductions DECIMAL(20,2),
-    bonusRaw DECIMAL(20,2),
     percentage DECIMAL(3,2),
     description TEXT,
     PRIMARY KEY(bratID)
@@ -449,13 +451,121 @@ CREATE TABLE bratAgreements(
     bratID INT,
     agreementID INT,
     PRIMARY KEY(bratID, agreementID),
-    FOREIGN KEY(bratID) REFERENCES bratInvoice,
-    FOREIGN KEY(agreementID) REFERENCES agreement
+    FOREIGN KEY(bratID) REFERENCES bratInvoice ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(agreementID) REFERENCES agreement ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE bratNonAgreements(
     bratID INT,
     SECLOInvoiceID INT,
     PRIMARY KEY(bratID, SECLOInvoiceID),
-    FOREIGN KEY(bratID) REFERENCES bratInvoice,
-    FOREIGN KEY(SECLOInvoiceID) REFERENCES nonagreementInvoice
+    FOREIGN KEY(bratID) REFERENCES bratInvoice ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(SECLOInvoiceID) REFERENCES nonagreementSECLOInvoice ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE bratBonusPercentual(
+    bratID INT, 
+    amount DECIMAL(20,2),
+    description TEXT,
+    PRIMARY KEY(bratID, amount, description),
+    FOREIGN KEY(bratID) references bratInvoice ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE bratDeductionPercentual(
+    bratID INT, 
+    amount DECIMAL(20,2),
+    description TEXT,
+    PRIMARY KEY(bratID, amount, description),
+    FOREIGN KEY(bratID) references bratInvoice ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE bratBonusAbsolute(
+    bratID INT, 
+    amount DECIMAL(20,2),
+    description TEXT,
+    PRIMARY KEY(bratID, amount, description),
+    FOREIGN KEY(bratID) references bratInvoice ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE bratDeductionAbsolute(
+    bratID INT, 
+    amount DECIMAL(20,2),
+    description TEXT,
+    PRIMARY KEY(bratID, amount, description),
+    FOREIGN KEY(bratID) references bratInvoice ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE monthlyHonorary(
+    id SERIAL,
+    amount DECIMAL(20,2) NOT NULL,
+    validSince TIMESTAMP NOT NULL,
+    importedOn TIMESTAMP NOT NULL,
+    signedDisposition BOOLEAN NOT NULL,
+    PRIMARY KEY(id)
+);
+CREATE TABLE lawyerDirectory(
+    lawyerID SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    T INT NOT NULL,
+    F INT NOT NULL,
+    CUIT INT,
+    bankAccount INT,
+    FOREIGN KEY(bankAccount) REFERENCES bankAccount ON UPDATE CASCADE ON DELETE SET NULL
+);
+CREATE TABLE companyDirectory(
+    CUIT INT PRIMARY KEY,
+    name TEXT NOT NULL
+)
+CREATE TABLE lawyerCompanyDirectoryLink(
+    CUIT INT,
+    lawyerID INT,
+    autoNotify BOOLEAN,
+    PRIMARY KEY(CUIT, lawyerID),
+    FOREIGN KEY(CUIT) REFERENCES companyDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(lawyerID) REFERENCES lawyerDirectory ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE lawfirmDirectory(
+    lawfirmID SERIAL PRIMARY KEY,
+    lawfirmName TEXT
+);
+CREATE TABLE lawfirmLawyerLink(
+    lawfirmID INT NOT NULL,
+    lawyerID INT NOT NULL,
+    PRIMARY KEY(lawfirmID, lawyerID),
+    FOREIGN KEY(lawfirmID) REFERENCES lawfirmDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(lawyerID) REFERENCES lawyerDirectory ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE lawfirmCompanyDirectoryLink(
+    lawfirmID INT NOT NULL,
+    companyID INT NOT NULL,
+    autoNotify BOOLEAN,
+    PRIMARY KEY(lawfirmID, companyID),
+    FOREIGN KEY(lawfirmID) REFERENCES lawfirmDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(companyID) REFERENCES companyDirectory ON DELETE CASCADE ON UPDATE CASCADE   
+);
+CREATE TABLE lawyerDirectoryTelephoneLink(
+    lawyerID INT NOT NULL,
+    telID INT NOT NULL,
+    description TEXT,
+    PRIMARY KEY(lawyerID, telID),
+    FOREIGN KEY(lawyerID) REFERENCES lawyerDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(telID) REFERENCES telephone ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE lawfirmDirectoryTelephoneLink(
+    lawfirmID INT NOT NULL,
+    telID INT NOT NULL,
+    description TEXT,
+    PRIMARY KEY(lawfirmID, telID),
+    FOREIGN KEY(lawfirmID) REFERENCES lawfirmDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(telID) REFERENCES telephone ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE lawyerDirectoryEmailLink(
+    lawyerID INT NOT NULL,
+    emailID INT NOT NULL,
+    description TEXT,
+    PRIMARY KEY(lawyerID, emailID),
+    FOREIGN KEY(lawyerID) REFERENCES lawyerDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(emailID) REFERENCES email ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE lawfirmDirectoryEmailLink(
+    lawfirmID INT NOT NULL,
+    emailID INT NOT NULL,
+    description TEXT,
+    PRIMARY KEY(lawfirmID, emailID),
+    FOREIGN KEY(lawfirmID) REFERENCES lawfirmDirectory ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(emailID) REFERENCES email ON DELETE CASCADE ON UPDATE CASCADE
 );
