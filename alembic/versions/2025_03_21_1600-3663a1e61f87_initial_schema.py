@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table(
         'claim',
         sa.Column('recID', sa.Integer, primary_key=True, autoincrement=False),
-        sa.Column('gdeID', sa.String, nullable=False, unique=True),
+        sa.Column('gdeID', sa.String(64), nullable=False, unique=True),
         sa.Column('creationDate', sa.DateTime, nullable=False),
         sa.Column('initByEmployee', sa.Boolean, default=True, nullable=False),
         sa.Column('claimType', sa.String),
@@ -68,19 +68,19 @@ def upgrade() -> None:
         sa.Column('emissionDate', sa.DateTime, nullable=False),
         sa.Column('receptionDate', sa.DateTime, nullable=True),
         sa.Column('deliveryCode', sa.Integer, nullable=True),
-        sa.Column('deliveryDescription', sa.DateTime, nullable=False),
+        sa.Column('deliveryDescription', sa.DateTime, nullable=True),
         if_not_exists=True
     )
 
     op.create_table(
         'bankAccount',
         sa.Column('accountID', sa.Integer, primary_key=True),
-        sa.Column('CBU', sa.Integer, nullable=False),
+        sa.Column('CBU', sa.String, nullable=True),
         sa.Column('bank', sa.String, nullable=False), 
         sa.Column('alias', sa.String, nullable=True),
         sa.Column('accountNumber', sa.String, nullable=True),
         sa.Column('accountType', sa.String, nullable=True),
-        sa.Column('CUIT', sa.Integer, nullable=True),
+        sa.Column('CUIT', sa.BigInteger, nullable=True),
         sa.Column('isValidated', sa.Boolean, nullable=False),
         if_not_exists=True
     )
@@ -119,7 +119,7 @@ def upgrade() -> None:
         sa.Column('CUIL', sa.Integer, nullable=True),
         sa.Column('isValidated', sa.Boolean, nullable=False, default=False),
         sa.Column('birthDate', sa.DateTime, nullable=True), 
-        sa.Column('bankAccount', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE'), nullable=False),
+        sa.Column('bankAccountID', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE'), nullable=False, unique=True),
         if_not_exists=True
     )
 
@@ -141,7 +141,7 @@ def upgrade() -> None:
     
     op.create_table(
         'secloNotificationToEmployee',
-        sa.Column('notificationID', sa.Integer, sa.ForeignKey('secloNotification.notificationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('notificationID', sa.Integer, sa.ForeignKey('secloNotification.notificationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False, unique=True),
         sa.Column('employeeID', sa.Integer, sa.ForeignKey('employee.employeeID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         if_not_exists=True
     )
@@ -151,7 +151,7 @@ def upgrade() -> None:
         sa.Column('employerID', sa.Integer, primary_key=True),
         sa.Column('recID', sa.Integer, sa.ForeignKey('claim.recID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
         sa.Column('employerName', sa.String, nullable=False),
-        sa.Column('CUIT', sa.Integer, nullable=True),
+        sa.Column('CUIT', sa.BigInteger, nullable=True),
         sa.Column('personType', sa.String, nullable=False),
         sa.Column('requiredAs', sa.String, nullable=True),
         sa.Column('SECLORegisterDate', sa.DateTime, nullable=True),
@@ -179,7 +179,7 @@ def upgrade() -> None:
     
     op.create_table(
         'secloNotificationToEmployer',
-        sa.Column('notificationID', sa.Integer, sa.ForeignKey('secloNotification.notificationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('notificationID', sa.Integer, sa.ForeignKey('secloNotification.notificationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False, unique=True),
         sa.Column('employerID', sa.Integer, sa.ForeignKey('employer.employerID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         if_not_exists=True
     )
@@ -193,10 +193,10 @@ def upgrade() -> None:
         sa.Column('F', sa.Integer, nullable=False),
         sa.Column('registeredOn', sa.DateTime, nullable=True),
         sa.Column('registeredFrom', sa.String, nullable=True),
-        sa.Column('CUIT', sa.Integer, nullable=True),
+        sa.Column('CUIT', sa.BigInteger, nullable=True),
         sa.Column('isValidated', sa.Boolean, nullable=False, default=False),
         sa.Column('hasVAT', sa.Boolean, nullable=False, default=False),
-        sa.Column('bankAccount', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE')),
+        sa.Column('bankAccountID', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE')),
         if_not_exists=True
     )
         
@@ -206,9 +206,9 @@ def upgrade() -> None:
         sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyer.lawyerID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
         sa.Column('isActualLawyer', sa.Boolean, nullable=False, default=True),
+        sa.Column('isSelfRepresenting', sa.Boolean, nullable=False, default=False),
         sa.Column('clientAbsent', sa.Boolean, nullable=False),
         sa.Column('description', sa.String, nullable=True),
-        sa.Column('secloNotification', sa.Integer, sa.ForeignKey('secloNotification.notificationID')),
         if_not_exists=True
     )
     
@@ -220,6 +220,7 @@ def upgrade() -> None:
         sa.Column('isActualLawyer', sa.Boolean, nullable=False, default=True),
         sa.Column('isEmpowered', sa.Boolean, nullable=False, default=True),
         sa.Column('isSelfRepresenting', sa.Boolean, nullable=False, default=False),
+        sa.Column('clientAbsent', sa.Boolean, nullable=False, default=False),
         sa.Column('description', sa.String, nullable=True),
         if_not_exists=True
     )
@@ -270,30 +271,26 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        'telephone',
+        'lawyerTelephone',
         sa.Column('telID', sa.Integer, primary_key=True),
         sa.Column('telephone', sa.Integer, nullable=False),
         sa.Column('prefix', sa.Integer, nullable=False),
+        sa.Column('description', sa.String, nullable=True),
+        sa.Column('obtainedFrom', sa.String, nullable=True),
         if_not_exists=True
-    )
-
-    op.create_table(
-        'lawyerTelephoneLink',
-        sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyer.lawyerID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, autoincrement=False),
-        sa.Column('telID', sa.Integer, sa.ForeignKey('telephone.telID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, autoincrement=False),
     )
 
     op.create_table(
         'agreement',
         sa.Column('agreementID', sa.Integer, primary_key=True, nullable=False),
         sa.Column('recID', sa.Integer, sa.ForeignKey('claim.recID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='SET NULL', onupdate='CASCADE'), nullable=True),
-        sa.Column('invoiceTo', sa.Integer, sa.ForeignKey('employer.employerID', ondelete='SET NULL', onupdate='CASCADE')),
+        sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='SET NULL', onupdate='CASCADE'), nullable=True, unique=True),
         sa.Column('malignaHonorary', sa.Numeric(20, 2), nullable=False),
         sa.Column('malignaHonoraryExpirationRelative', sa.Interval),
         sa.Column('isUncashable', sa.Boolean),
         sa.Column('initReason', sa.String),
         sa.Column('claimedObjects', sa.String),
+        sa.Column('isDomestic', sa.Boolean),
         sa.Column('hasCertificateDelivery', sa.Boolean),
         sa.Column('notes', sa.String),
         sa.Column('initialSendDate', sa.DateTime),
@@ -361,7 +358,7 @@ def upgrade() -> None:
         sa.Column('registeredDate', sa.DateTime),
         sa.Column('notificationDate', sa.DateTime),
         sa.Column('description', sa.String),
-        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), nullable=True),
+        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), nullable=True, unique=True),
         if_not_exists=True
     )
 
@@ -371,12 +368,12 @@ def upgrade() -> None:
         sa.Column('agreementID', sa.Integer, sa.ForeignKey('agreement.agreementID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
         sa.Column('afipID', sa.String),
         sa.Column('emissionDate', sa.DateTime),
-        sa.Column('CUIT', sa.Integer, nullable=False),
+        sa.Column('employerID', sa.Integer, sa.ForeignKey('employer.employerID', ondelete='SET NULL', onupdate='CASCADE'), nullable=True),
         sa.Column('amount', sa.Numeric(20, 2), nullable=False),
         sa.Column('description', sa.String),
         sa.Column('isCredit', sa.Boolean),
         sa.Column('relatedTo', sa.Integer, sa.ForeignKey('invoice.invoiceID', ondelete='CASCADE', onupdate='CASCADE')),
-        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE')),
+        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), unique=True, nullable=True),
         if_not_exists=True
     )
     
@@ -391,7 +388,7 @@ def upgrade() -> None:
         sa.Column('bankReference', sa.String, nullable=True),
         sa.Column('description', sa.String),
         sa.Column('isEvilified', sa.Boolean),
-        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE')),
+        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), unique=True, nullable=True),
         if_not_exists=True
     )
 
@@ -402,7 +399,7 @@ def upgrade() -> None:
         sa.Column('obsDate', sa.Date, nullable=False),
         sa.Column('reason', sa.String, nullable=False),
         sa.Column('description', sa.String, nullable=True),
-        sa.Column('notifiedDate', sa.DateTime, nullable=True),
+        sa.Column('partsNotifiedDate', sa.DateTime, nullable=True),
         sa.Column('replyDate', sa.DateTime, nullable=True),
         sa.Column('secloEmailNotificationDate', sa.DateTime, nullable=True),
         if_not_exists=True
@@ -410,8 +407,9 @@ def upgrade() -> None:
 
     op.create_table(
         'documentationObservationLink',
-        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False, unique=True),
         sa.Column('obsID', sa.Integer, sa.ForeignKey('observation.obsID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('description', sa.String, nullable=True),
         if_not_exists=True
     )
 
@@ -419,7 +417,7 @@ def upgrade() -> None:
         'complaint',
         sa.Column('complaintID', sa.Integer, primary_key=True),
         sa.Column('recID', sa.Integer, sa.ForeignKey('claim.recID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('description', sa.String, nullable=False),
+        sa.Column('description', sa.String, nullable=True),
         sa.Column('complaintDate', sa.DateTime, nullable=False),
         sa.Column('recipient', sa.String, nullable=False),
         sa.Column('reason', sa.String, nullable=False),
@@ -444,13 +442,6 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        'complaintPaymentLink',
-        sa.Column('complaintID', sa.Integer, sa.ForeignKey('complaint.complaintID', ondelete="CASCADE", onupdate="CASCADE"), nullable=False, primary_key=True, autoincrement=False),
-        sa.Column('paymentID', sa.Integer, sa.ForeignKey('payment.paymentID', ondelete="CASCADE", onupdate="CASCADE"), nullable=False, primary_key=True, autoincrement=False),
-        if_not_exists=True
-    )
-
-    op.create_table(
         'complaintObservationLink',
         sa.Column('complaintID', sa.Integer, sa.ForeignKey('complaint.complaintID', ondelete="CASCADE", onupdate="CASCADE"), nullable=False, primary_key=True, autoincrement=False),
         sa.Column('obsID', sa.Integer, sa.ForeignKey('observation.obsID', ondelete="CASCADE", onupdate="CASCADE"), nullable=False, primary_key=True, autoincrement=False),
@@ -461,7 +452,7 @@ def upgrade() -> None:
         'nonagreement',
         sa.Column('nonID', sa.Integer, primary_key=True),
         sa.Column('recID', sa.Integer, sa.ForeignKey('claim.recID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
+        sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, unique=True),
         sa.Column('claims', sa.String, nullable=False),
         sa.Column('bonusData', sa.String, nullable=True),
         sa.Column('sentDate', sa.DateTime, nullable=True),
@@ -474,7 +465,7 @@ def upgrade() -> None:
         'nonagreementSECLOInvoice',
         sa.Column('secloInvoiceID', sa.Integer, primary_key=True, autoincrement=False, nullable=False),
         sa.Column('amount', sa.Numeric(20,2), nullable=False),
-        sa.Column('periodDate', sa.Date, nullable=True),
+        sa.Column('periodDate', sa.Date, nullable=False),
         sa.Column('paymentDate', sa.Date, nullable=True),
         if_not_exists=True
     )
@@ -498,51 +489,28 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        'bratAgreements',
+        'bratAgreement',
         sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
         sa.Column('agreementID', sa.Integer, sa.ForeignKey('agreement.agreementID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
         if_not_exists=True
     )
 
     op.create_table(
-        'bratNonAgreements',
+        'bratNonAgreement',
         sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
-        sa.Column('nonID', sa.Integer, sa.ForeignKey('nonagreement.nonID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
+        sa.Column('secloInvoiceID', sa.Integer, sa.ForeignKey('nonagreementSecloInvoice.secloInvoiceID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
         if_not_exists=True
     )
 
     op.create_table(
-        'bratBonusPercentual',
+        'bratBonus',
         sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
         sa.Column('amount', sa.Numeric(20,2), nullable=False, primary_key=True),
+        sa.Column('percentage', sa.Integer, nullable=False),
         sa.Column('description', sa.String, nullable=False, primary_key=True),
         if_not_exists=True
     )
     
-    op.create_table(
-        'bratDeductionPercentual',
-        sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
-        sa.Column('amount', sa.Numeric(20,2), nullable=False, primary_key=True),
-        sa.Column('description', sa.String, nullable=False, primary_key=True),
-        if_not_exists=True
-    )
-
-    op.create_table(
-        'bratBonusAbsolute',
-        sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
-        sa.Column('amount', sa.Numeric(20,2), nullable=False, primary_key=True),
-        sa.Column('description', sa.String, nullable=False, primary_key=True),
-        if_not_exists=True
-    )
-
-    op.create_table(
-        'bratDeductionAbsolute',
-        sa.Column('bratID', sa.Integer, sa.ForeignKey('bratInvoice.bratID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, nullable=False, autoincrement=False),
-        sa.Column('amount', sa.Numeric(20,2), nullable=False, primary_key=True),
-        sa.Column('description', sa.String, nullable=False, primary_key=True),
-        if_not_exists=True
-    )
-
     op.create_table(
         'monthlyHonorary',
         sa.Column('id', sa.Integer, primary_key=True),
@@ -559,21 +527,21 @@ def upgrade() -> None:
         sa.Column('name', sa.String, nullable=False),
         sa.Column('T', sa.Integer, nullable=False),
         sa.Column('F', sa.Integer, nullable=False),
-        sa.Column('CUIT', sa.Integer, nullable=True),
-        sa.Column('bankAccount', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate="CASCADE"), nullable=True),
+        sa.Column('CUIT', sa.BigInteger, nullable=True),
+        sa.Column('bankAccountID', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate="CASCADE"), nullable=True),
         if_not_exists=True
     )
 
     op.create_table(
         'companyDirectory',
-        sa.Column('CUIT', sa.Integer, primary_key=True, autoincrement=False, nullable=False),
+        sa.Column('CUIT', sa.BigInteger, primary_key=True, autoincrement=False, nullable=False),
         sa.Column('name', sa.String, nullable=False),
         if_not_exists=True
     )
 
     op.create_table(
         'lawyerCompanyDirectoryLink',
-        sa.Column('companyCUIT', sa.Integer, sa.ForeignKey('companyDirectory.CUIT', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, autoincrement=False, nullable=False),
+        sa.Column('companyCUIT', sa.BigInteger, sa.ForeignKey('companyDirectory.CUIT', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, autoincrement=False, nullable=False),
         sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyerDirectory.lawyerID', ondelete='CASCADE', onupdate='CASCADE'), primary_key=True, autoincrement=False, nullable=False),
         sa.Column('autoNotify', sa.Boolean),
         if_not_exists=True
@@ -583,7 +551,7 @@ def upgrade() -> None:
         'lawfirmDirectory',
         sa.Column('lawfirmID', sa.Integer, primary_key=True, nullable=False),
         sa.Column('lawfirmName', sa.String, nullable=False),
-        sa.Column('bankAccount', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE'), nullable=True),
+        sa.Column('bankAccountID', sa.Integer, sa.ForeignKey('bankAccount.accountID', ondelete='SET NULL', onupdate='CASCADE'), nullable=True, unique=True),
         if_not_exists=True
     )
 
@@ -591,26 +559,27 @@ def upgrade() -> None:
         'lawfirmLawyerLink',
         sa.Column('lawfirmID', sa.Integer, sa.ForeignKey('lawfirmDirectory.lawfirmID', ondelete="CASCADE", onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyerDirectory.lawyerID', ondelete="CASCADE", onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('isStillValid', sa.Boolean)
     )
 
     op.create_table(
         'lawfirmCompanyDirectoryLink',
         sa.Column('lawfirmID', sa.Integer, sa.ForeignKey('lawfirmDirectory.lawfirmID', ondelete="CASCADE", onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
-        sa.Column('companyCUIT', sa.Integer, sa.ForeignKey('companyDirectory.CUIT', ondelete="CASCADE", onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('companyCUIT', sa.BigInteger, sa.ForeignKey('companyDirectory.CUIT', ondelete="CASCADE", onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         sa.Column('autoNotify', sa.Boolean)
     )
 
     op.create_table(
         'lawyerDirectoryPhoneLink',
         sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyerDirectory.lawyerID', ondelete='CASCADE', onupdate='CASCADE')),
-        sa.Column('telID', sa.Integer, sa.ForeignKey('telephone.telID', ondelete='CASCADE', onupdate='CASCADE')),
+        sa.Column('telID', sa.Integer, sa.ForeignKey('lawyerTelephone.telID', ondelete='CASCADE', onupdate='CASCADE')),
         sa.Column('description', sa.Text)
     )
 
     op.create_table(
         'lawfirmDirectoryPhoneLink',
         sa.Column('lawfirmID', sa.Integer, sa.ForeignKey('lawfirmDirectory.lawfirmID', ondelete='CASCADE', onupdate='CASCADE')),
-        sa.Column('telID', sa.Integer, sa.ForeignKey('telephone.telID', ondelete='CASCADE', onupdate='CASCADE')),
+        sa.Column('telID', sa.Integer, sa.ForeignKey('lawyerTelephone.telID', ondelete='CASCADE', onupdate='CASCADE')),
         sa.Column('description', sa.Text)
     )
 
@@ -641,10 +610,7 @@ def downgrade() -> None:
     op.drop_table('companyDirectory', if_exists=True)
     op.drop_table('lawyerDirectory', if_exists=True)
     op.drop_table('monthlyHonorary', if_exists=True)
-    op.drop_table('bratDeductionAbsolute', if_exists=True)
-    op.drop_table('bratBonusAbsolute', if_exists=True)
-    op.drop_table('bratDeductionPercentual', if_exists=True)
-    op.drop_table('bratBonusPercentual', if_exists=True)
+    op.drop_table('bratBonus', if_exists=True)
     op.drop_table('bratNonAgreements', if_exists=True)
     op.drop_table('bratAgreements', if_exists=True)
     op.drop_table('bratInvoice', if_exists=True)
@@ -667,8 +633,7 @@ def downgrade() -> None:
     op.drop_table('agreementDesist', if_exists=True)
     op.drop_table('agreementExtension', if_exists=True)
     op.drop_table('agreement', if_exists=True)
-    op.drop_table('lawyerTelephoneLink', if_exists=True)
-    op.drop_table('telephone', if_exists=True)
+    op.drop_table('lawyerTelephone', if_exists=True)
     op.drop_table('documentationLawyerLink', if_exists=True)
     op.drop_table('documentationEmployerLink', if_exists=True)
     op.drop_table('documentationEmployeeLink', if_exists=True)
