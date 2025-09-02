@@ -1,40 +1,15 @@
 
 from datetime import datetime
 from typing import Any, Self
-from enum import Enum
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
+from backend.dataobjects.enums import SECLONotification
 from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
 import re
 
 import logging
 logger = logging.getLogger(__name__)
-
-class SECLONotification(Enum):
-    TELEGRAM = 'T'
-    AFIP = 'A'
-    PERSONAL = 'P'
-    DONOTSEND = 'N'
-    ELECTRONIC = 'E'
-    CEDULE = 'C'
-
-    def NotificationShortToEnum(notif: str):
-        '''
-        Parses a notification ID from the website into a enum object.
-        '''
-        if (notif == 'Tel'):
-            return SECLONotification.TELEGRAM
-        if (notif == 'Per'):
-            return SECLONotification.PERSONAL        
-        if (notif == 'Afip'):
-            return SECLONotification.AFIP
-        if ('Electr' in notif):
-            return SECLONotification.ELECTRONIC
-        if ('No env' in notif):
-            return SECLONotification.DONOTSEND
-        if (notif == 'Ced'):
-            return SECLONotification.CEDULE
 
 
 class CitationResult:

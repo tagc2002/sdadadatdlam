@@ -17,7 +17,7 @@ from selenium.webdriver.remote.webelement import WebElement
 from webdriver_manager.chrome import ChromeDriverManager
 from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from backend.repositories.SECLO.SECLOProgressReporting import ProgressReport
-from backend.repositories.SECLO.SECLODataClasses import SECLOAddressData, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotification, SECLOOtherData, CitationResult
+from backend.dataobjects.SECLODataClasses import SECLOAddressData, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotification, SECLOOtherData, CitationResult
 
 from datetime import datetime
 from typing import List, Self, Tuple
@@ -170,6 +170,10 @@ class SECLOAccessor:
         self.progress.setCompletion("Done")
         logger.info(f'recID found, set to {self.recid}')
         return self
+    
+    def setGdeIdFromRecId(self: Self, recID: int) -> Self:
+        return self
+
 
 class SECLOCitation(SECLOAccessor):
     '''
@@ -890,22 +894,22 @@ class SECLORecData(SECLOAccessor):
             self.driver.switch_to.alert.accept()
         return claimData
     
-    def addEmployer(self: Self, CUIT: int, address: SECLOAddressData)-> Self:
-        '''
-        Ettempts to expand a claim with the given employer. This can fail in many many ways, but we can try at least.
+    # def addEmployer(self: Self, CUIT: int, address: SECLOAddressData)-> Self:
+    #     '''
+    #     Ettempts to expand a claim with the given employer. This can fail in many many ways, but we can try at least.
 
-        Parameters:
-            employer (SECLOEmployerData): The employer to be added.
-        '''
-        self.progress.setSteps(1)
-        self.progress.setProgress(0, "Loading claim data form...")
-        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
-        self._loadRec()
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
-        list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstEmpleadores')))
-        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+    #     Parameters:
+    #         employer (SECLOEmployerData): The employer to be added.
+    #     '''
+    #     self.progress.setSteps(1)
+    #     self.progress.setProgress(0, "Loading claim data form...")
+    #     WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
+    #     self._loadRec()
+    #     WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
+    #     list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstEmpleadores')))
+    #     WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
         
-        return self
+    #     return self
     
 class SECLOInvoiceParser(SECLOAccessor):
     def listInvoices(self: Self):

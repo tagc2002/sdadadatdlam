@@ -3,7 +3,7 @@ import re
 from typing import List
 import backend.repositories.SECLO.SECLOProgressReporting as pr
 from backend.repositories.SECLO.SECLODriver import CitationResult, SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser, SECLOClaimValidationData
-from backend.repositories.SECLO.SECLODataClasses import SECLOClaimData
+from backend.dataobjects.SECLODataClasses import SECLOClaimData
 
 import logging
 from threading import Thread

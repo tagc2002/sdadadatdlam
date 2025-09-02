@@ -5,6 +5,8 @@ from enum import Enum, auto
 from turtle import back
 from typing import List
 
+from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, RequiredAsType, SECLONotification
+
 from sqlalchemy import ForeignKey, create_engine
 from sqlalchemy import text
 from sqlalchemy import Table, Column, Integer, String
@@ -43,9 +45,9 @@ class Claim(Base):
     __tablename__ = "claim"
     recID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     gdeID: Mapped[str] = mapped_column(String(64), unique=True)
-    creationDate: Mapped[datetime]
+    initDate: Mapped[datetime]
     initByEmployee: Mapped[bool] = mapped_column(default=True)
-    claimType: Mapped[str]
+    claimType: Mapped[int]
     legalStuff: Mapped[str]
     isDomestic: Mapped[bool]
     calID: Mapped[str | None]
@@ -68,8 +70,8 @@ class Citation(Base):
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     secloAudID: Mapped[int | None] = mapped_column(unique=True)
     citationDate: Mapped[datetime | None]
-    citationType: Mapped[str]
-    citationStatus: Mapped[int | None]
+    citationType: Mapped[CitationType]
+    citationStatus: Mapped[CitationStatus]
     citationSummary: Mapped[str | None]
     notes: Mapped[str | None]
     isCalendarPrimary: Mapped[bool]
@@ -86,7 +88,7 @@ class Documentation(Base):
     __tablename__ = "documentation"
     docID: Mapped[int] = mapped_column(primary_key=True)
     docName: Mapped[str]
-    docType: Mapped[str]
+    docType: Mapped[DocType]
     fileDriveID: Mapped[str | None]
     importedDate: Mapped[datetime | None]
     importedFromSeclo: Mapped[bool]
@@ -104,8 +106,8 @@ class SecloNotification(Base):
     __tablename__ = "secloNotification"
     notificationID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'))
-    notificationType: Mapped[int | None]
-    secloPostalID: Mapped[int]
+    notificationType: Mapped[SECLONotification]
+    secloPostalID: Mapped[int | None]
     emissionDate: Mapped[datetime]
     receptionDate: Mapped[datetime | None]
     deliveryCode: Mapped[int | None]
@@ -222,7 +224,7 @@ class Employer(Base):
     employerName: Mapped[str]
     CUIL: Mapped[int | None]
     personType: Mapped[str]
-    requiredAs: Mapped[str | None]
+    requiredAs: Mapped[RequiredAsType]
     SECLORegisterDate: Mapped[datetime | None]
     mustRegisterSECLO: Mapped[bool]
     isValidated: Mapped[bool]
@@ -488,7 +490,7 @@ class Homologation(Base):
     __tablename__ = "homologation"
     
     homoID: Mapped[int] = mapped_column(primary_key=True)
-    gdeID: Mapped[str]
+    gdeID: Mapped[str | None]
     agreementID: Mapped[int] = mapped_column(ForeignKey('agreement.agreementID'))
     signedDate: Mapped[datetime | None]
     registeredDate: Mapped[datetime]

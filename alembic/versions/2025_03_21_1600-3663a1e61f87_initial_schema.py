@@ -12,6 +12,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
+from backend.dataobjects.enums import CitationType, CitationStatus, DocType, RequiredAsType, SECLONotification
+
 
 # revision identifiers, used by Alembic.
 revision: str = '3663a1e61f87'
@@ -25,9 +27,9 @@ def upgrade() -> None:
         'claim',
         sa.Column('recID', sa.Integer, primary_key=True, autoincrement=False),
         sa.Column('gdeID', sa.String(64), nullable=False, unique=True),
-        sa.Column('creationDate', sa.DateTime, nullable=False),
+        sa.Column('initDate', sa.DateTime, nullable=False),
         sa.Column('initByEmployee', sa.Boolean, default=True, nullable=False),
-        sa.Column('claimType', sa.String),
+        sa.Column('claimType', sa.Integer, nullable=False),
         sa.Column('legalStuff', sa.String),
         sa.Column('isDomestic', sa.Boolean, default=False, nullable=False),
         sa.Column('calID', sa.String),
@@ -39,8 +41,8 @@ def upgrade() -> None:
         sa.Column('recID', sa.Integer, sa.ForeignKey('claim.recID', onupdate='CASCADE', ondelete='CASCADE'), nullable=False),
         sa.Column('secloAudID', sa.Integer, nullable=True, unique=True),
         sa.Column('citationDate', sa.DateTime, nullable=True),
-        sa.Column('citationType', sa.String, nullable=False),
-        sa.Column('citationStatus', sa.Integer, nullable=True),
+        sa.Column('citationType', sa.Enum(CitationType), nullable=False),
+        sa.Column('citationStatus', sa.Enum(CitationStatus), nullable=True),
         sa.Column('citationSummary', sa.String, nullable=True),
         sa.Column('notes', sa.String, nullable=True),
         sa.Column('isCalendarPrimary', sa.Boolean, nullable=False),
@@ -52,7 +54,7 @@ def upgrade() -> None:
         'documentation',
         sa.Column('docID', sa.Integer, primary_key=True),
         sa.Column('docName', sa.String, nullable=False),
-        sa.Column('docType', sa.String),
+        sa.Column('docType', sa.Enum(DocType)),
         sa.Column('fileDriveID', sa.String, nullable=True),
         sa.Column('importedDate', sa.DateTime, nullable=True),
         sa.Column('importedFromSECLO', sa.Boolean, default=False),
@@ -63,7 +65,7 @@ def upgrade() -> None:
         'secloNotification',
         sa.Column('notificationID', sa.Integer, primary_key=True, autoincrement=False),
         sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('notificationType', sa.Integer, nullable=False),
+        sa.Column('notificationType', sa.Enum(SECLONotification), nullable=False),
         sa.Column('secloPostalID', sa.Integer, nullable=True),
         sa.Column('emissionDate', sa.DateTime, nullable=False),
         sa.Column('receptionDate', sa.DateTime, nullable=True),
@@ -153,7 +155,7 @@ def upgrade() -> None:
         sa.Column('employerName', sa.String, nullable=False),
         sa.Column('CUIT', sa.BigInteger, nullable=True),
         sa.Column('personType', sa.String, nullable=False),
-        sa.Column('requiredAs', sa.String, nullable=True),
+        sa.Column('requiredAs', sa.Enum(RequiredAsType), nullable=False),
         sa.Column('SECLORegisterDate', sa.DateTime, nullable=True),
         sa.Column('mustRegisterSECLO', sa.Boolean, nullable=False, default=True),
         sa.Column('isValidated', sa.Boolean, nullable=False, default=False),
@@ -352,7 +354,7 @@ def upgrade() -> None:
     op.create_table(
         'homologation',
         sa.Column('homoID', sa.Integer, primary_key=True),
-        sa.Column('gdeID', sa.String, unique=True),
+        sa.Column('gdeID', sa.String, nullable=True),
         sa.Column('agreementID', sa.Integer, sa.ForeignKey('agreement.agreementID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
         sa.Column('signedDate', sa.DateTime),
         sa.Column('registeredDate', sa.DateTime),
