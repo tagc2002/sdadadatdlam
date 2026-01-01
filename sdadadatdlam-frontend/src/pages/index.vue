@@ -1,5 +1,5 @@
 <template>
-  <HelloWorld />
+  <ExpMain />
 </template>
 
 <script lang="ts" setup>
