@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import re
 from typing import List
@@ -14,10 +15,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME'), os.getenv('SECLO_PASSWORD'))
+cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
 
 logging.basicConfig(filename="sdadadatdlam-webdata.log", level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
+
+# def progressThread(progress: pr.ProgressReport):
+#     while(True):
+#         ans = progress.getProgress()
+#         if ans != None:
+#             //print(ans)
+#         if progress.getCompletion(): break
+
+
+progress = pr.ProgressReport()
+with SECLOCalendarParser(cred, None, progress) as cal:
+    # thread = Thread(target = progressThread, args = [progress])
+    # thread.start()
+    items = cal.getWorkableDays()
+# thread.join()
+for item in items:
+    print(f'{item[0].strftime('%d/%m/%Y')}:\t{item[1]} {f'({item[2]})' if not item[1] else ''}')
+
 
 # files = SECLOFileManager(cred, 3576469)
 # files.uploadRecord('bepis', True)
@@ -41,35 +60,35 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #    print(SECLORecData(cred, 0).setRecIDfromGDEID(entry['gdeID']).getClaimData())
 
 
-gdeID = 'EX-2024-133692207'
-closeAmount = 4500000
-file = "H:\\My Drive\\133692207 Acuerdo firmado.pdf"
+# gdeID = 'EX-2024-133692207'
+# closeAmount = 4500000
+# file = "H:\\My Drive\\133692207 Acuerdo firmado.pdf"
 
-progress = pr.ProgressReport()
-citationManager = SECLOCitation(credentials=cred, progress=progress).setRecIDfromGDEID(gdeID)
-items = citationManager.getItems()
+# progress = pr.ProgressReport()
+# citationManager = SECLOCitation(credentials=cred, progress=progress).setRecIDfromGDEID(gdeID)
+# items = citationManager.getItems()
 
-for item in items:
-    if item.isEmployee():
-        item.setResult(True, closeAmount)
-    print(item)
-thread = Thread(target = citationManager.closeCase, args = [items])
-progress.setProgress(0, "")
+# for item in items:
+#     if item.isEmployee():
+#         item.setResult(True, closeAmount)
+#     print(item)
+# thread = Thread(target = citationManager.closeCase, args = [items])
+# progress.setProgress(0, "")
 
-thread.start()
-while(progress.getCompletion() == False):
-    ans = progress.getProgress()
-    if ans != None:
-        print(ans)
+# thread.start()
+# while(progress.getCompletion() == False):
+#     ans = progress.getProgress()
+#     if ans != None:
+#         print(ans)
 
-print('OUT')
-thread.join()
+# print('OUT')
+# thread.join()
 
-filemanager = SECLOFileManager(cred).setRecIDfromGDEID(gdeID)
-filemanager.uploadFile("H:\\My Drive\\133692207 Poder.pdf", SECLOFileType.PODER)
-filemanager.uploadFile("H:\\My Drive\\133692207 Credencial requerida.pdf", SECLOFileType.CREDENTIAL)
+# filemanager = SECLOFileManager(cred).setRecIDfromGDEID(gdeID)
+# filemanager.uploadFile("H:\\My Drive\\133692207 Poder.pdf", SECLOFileType.PODER)
+# filemanager.uploadFile("H:\\My Drive\\133692207 Credencial requerida.pdf", SECLOFileType.CREDENTIAL)
 
-filemanager.uploadRecord(file, True)
+# filemanager.uploadRecord(file, True)
 
 # val = SECLOClaimValidationData(cred)
 # print(val.validateCUIT('27-40317985-5'))

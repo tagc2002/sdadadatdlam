@@ -15,6 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, InvalidElementStateException, TimeoutException
 from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.common.print_page_options import PrintOptions
 from webdriver_manager.chrome import ChromeDriverManager
 from backend.dataobjects.enums import ClaimType
 from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
@@ -33,14 +34,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 logging.getLogger('selenium').setLevel(logging.CRITICAL)
-
+logging.getLogger('urllib3.connectionpool').setLevel(logging.CRITICAL)
+logging.getLogger('WDM').setLevel(logging.CRITICAL)
 portalVersionSupported = '8.4.11.0'
 
 downloadpath = Path(f'./temp/{uuid.uuid4()}')
 downloadpath = downloadpath.resolve()
 DEBUGMODE = os.getenv('DEBUGMODE', False)
-if DEBUGMODE:
-    logger.critical("\nWARNING!\n DEBUG mode enabled. Any requested changes will not be submitted.")
 
 class SECLOLoginCredentials:
     def __init__(self, user: str, password: str):
@@ -80,12 +80,15 @@ class SECLOAccessor:
             "download.default_directory": str(downloadpath)
         })
         logger.debug(f'Download path set to {downloadpath}')
+        if DEBUGMODE:
+            logger.critical("\nWARNING!\n DEBUG mode enabled. Any requested changes will not be submitted.")
 
         #chrome_service.creation_flags = CREATE_NO_WINDOW
         self.credentials = credentials
         self.recid: int | None = recid
         self.progress = progressReport if (progressReport) else ProgressReport()
-        return self
+        self.printOptions = PrintOptions()
+        self.printOptions.set_page_size(PrintOptions.A4)
 
     def __enter__(self: Self) -> Self:
         logger.debug('Creating chrome webdriver service manager instance')
@@ -1048,12 +1051,13 @@ class SECLOInvoiceParser(SECLOAccessor):
             }
 
 class SECLOCalendarParser(SECLOAccessor):
+    WEEKS = 20
+
     def getCalendar(self: Self):
         '''
         Fetches the current calendar assignments from SECLO. Ideal entry point for claim registration and validating cases
         '''
-        WEEKS = 20
-        firstStage = ProgressReport().setSteps(1 + WEEKS).setMessage("Loading calendar")
+        firstStage = ProgressReport().setSteps(1 + self.WEEKS).setMessage("Loading calendar")
         secondStage = ProgressReport()
         self.progress.compose(firstStage).compose(secondStage)
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
@@ -1063,8 +1067,8 @@ class SECLOCalendarParser(SECLOAccessor):
 
         #Loop through weeks
         IDs = []
-        for i in range(0, WEEKS):
-            firstStage.increaseProgress(1, f'Parsing calendar week {i} of {WEEKS}')
+        for i in range(0, self.WEEKS):
+            firstStage.increaseProgress(1, f'Parsing calendar week {i} of {self.WEEKS}')
             WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
             table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
             #loop through days
@@ -1092,10 +1096,39 @@ class SECLOCalendarParser(SECLOAccessor):
                  'citationDate': datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
                  'initDate': datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
                  'citationID': item,
-                 'citationType': self.driver.find_element(By.ID, 'auTipoYEstado').text
+                 'citationType': self.driver.find_element(By.ID, 'auTipoYEstado').text,
+                 'pdfString': self.driver.print_page(self.printOptions)
                 })
         secondStage.setCompletion("Finished loading calendar info")
         return calendarCitations
+    
+    def getWorkableDays(self: Self) -> List[Tuple[datetime, bool, str]]:
+        '''
+        Fetches a list of workable and unworkable days, useful for estimating notification periods.
+        '''
+        workDays: List[Tuple[datetime, bool, str]] = []
+        self.progress.setSteps(self.WEEKS*7)
+        self.progress.setMessage("Loading calendar info...")
+
+        self.driver.get('https://conciliadores.trabajo.gob.ar/pa_Abogados_Audiencias.aspx')
+        Select(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Principal_CmbFormato')))).select_by_value('1') #per-day
+        for day in range(1, self.WEEKS * 7):
+            cal = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Principal_DayPilotCalendar1'))).find_element(By.TAG_NAME, 'tr').find_elements(By.TAG_NAME, 'table')[1]
+            date = datetime.strptime(str(self.driver.find_element(By.ID, 'ctl00_Principal_txtFecha_txtFecha').get_property('value') or ""), '%d/%m/%Y')
+            day = cal.find_elements(By.TAG_NAME, 'tr')[2].find_element(By.TAG_NAME, 'td')
+            dayTitle = cal.find_elements(By.TAG_NAME, 'tr')[1].find_element(By.TAG_NAME, 'td').text
+
+            if 'Feriado' in (day.get_attribute('title') or ""):
+                workDays.append((date, False, ' '.join((day.get_attribute('title') or "").split()[1:])))
+            elif 'dom' in dayTitle or 'sáb' in dayTitle:
+                workDays.append((date, False, dayTitle))
+            else:
+                workDays.append((date, True, ""))
+            self.progress.increaseProgress(1, f'Obtained info for {date.strftime('%d/%m/%Y')}')
+            self.driver.find_element(By.ID, 'ctl00_Principal_lnkDer').click()
+            WebDriverWait(self.driver, 10).until(EC.staleness_of(cal))
+        self.progress.setCompletion("Done getting cal info")
+        return workDays
 
 class SECLOClaimValidationData(SECLOAccessor):
     def _createRequest(self: Self, endpoint: str, data: str):
@@ -1150,3 +1183,7 @@ class SECLOClaimValidationData(SECLOAccessor):
     
     def getStreetHelper(self: Self, province: str, street = str, district: str | None = None, county: str | None = None):
         return self._createRequest('https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetCallesHelper', '{' + f'\'prov\': \'{province}\', \'part\': \'{(district or "")}\', \'localidad\': \'{(county or "")}\', \'calle\': \'{street}\'' + '}')
+
+
+if __name__ == '__main__':
+    print('This script cannot be executed on its own')
