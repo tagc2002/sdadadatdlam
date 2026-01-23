@@ -1,10 +1,10 @@
-from codecs import backslashreplace_errors
 from datetime import datetime, timedelta
 from decimal import Decimal
+import decimal
 from enum import Enum, auto
-from turtle import back
-from typing import List
+from typing import List, Self
 
+from backend.dataobjects.SECLODataClasses import SECLOAddressData
 from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, RequiredAsType, SECLONotification
 
 from sqlalchemy import ForeignKey, create_engine
@@ -56,10 +56,10 @@ class Claim(Base):
     employees: Mapped[List["Employee"]] = relationship(back_populates="claim")
     employers: Mapped[List["Employer"]] = relationship(back_populates="claim")
     lawyers: Mapped[List["Lawyer"]] = relationship(back_populates="claim")
-    agreements: Mapped[List["Agreement"] | None] = relationship(back_populates="claim")
-    complaints: Mapped[List["Complaint"] | None] = relationship(back_populates="claim")
-    nonagreements: Mapped[List["Nonagreement"] | None] = relationship(back_populates="claim")
-    invoices: Mapped[List["Invoice"] | None] = relationship(back_populates="employer")
+    agreements: Mapped[List["Agreement"]] = relationship(back_populates="claim")
+    complaints: Mapped[List["Complaint"]] = relationship(back_populates="claim")
+    nonagreements: Mapped[List["Nonagreement"]] = relationship(back_populates="claim")
+    invoices: Mapped[List["Invoice"]] = relationship(back_populates="employer")
 
     #def __repr__(self) -> str:
     #   return f'User(id={self.id!r}, name={self.name!r}, fullname={self.fullname!r})'
@@ -79,11 +79,19 @@ class Citation(Base):
 
     claim: Mapped["Claim"] = relationship(back_populates="citations")
     notifications: Mapped[List["SecloNotification"]] = relationship(back_populates="citation")
-    lawyerToEmployee: Mapped[List["LawyerToEmployee"] | None] = relationship(back_populates="citation")
-    lawyerToEmployer: Mapped[List["LawyerToEmployer"] | None] = relationship(back_populates="citation")
-    agreement: Mapped["Agreement" | None] = relationship(back_populates="citation")
-    nonagreement: Mapped["Nonagreement" | None] = relationship(back_populates="citation")
+    lawyerToEmployee: Mapped[List["LawyerToEmployee"]] = relationship(back_populates="citation")
+    lawyerToEmployer: Mapped[List["LawyerToEmployer"]] = relationship(back_populates="citation")
+    agreement: Mapped["Agreement | None"] = relationship(back_populates="citation")
+    nonagreement: Mapped["Nonagreement | None"] = relationship(back_populates="citation")
 
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Citation):
+            if self.citationID == other.citationID and self.citationID is not None: return True
+            elif self.secloAudID == other.secloAudID and self.secloAudID is not None: return True
+            elif self.recID == other.recID and self.citationDate == other.citationDate and\
+                self.citationStatus == other.citationStatus and self.citationType == other.citationType: return True
+            else: return False
+        else: return False
 class Documentation(Base):
     __tablename__ = "documentation"
     docID: Mapped[int] = mapped_column(primary_key=True)
@@ -93,14 +101,14 @@ class Documentation(Base):
     importedDate: Mapped[datetime | None]
     importedFromSeclo: Mapped[bool]
 
-    employeeLink: Mapped[List["DocumentationEmployeeLink"] | None] = relationship(back_populates="document")
-    employerLink: Mapped[List["DocumentationEmployerLink"] | None] = relationship(back_populates="document")
-    lawyerLink: Mapped[List["DocumentationLawyerLink"] | None] = relationship(back_populates="document")
-    agreementLink: Mapped[List["DocumentationAgreementLink"] | None] = relationship(back_populates="document")
-    homologation: Mapped["Homologation" | None] = relationship(back_populates="document")
-    invoice: Mapped["Invoice" | None] = relationship(back_populates="document")
-    payment: Mapped["Payment" | None] = relationship(back_populates="document")
-    observationLink: Mapped["DocumentationObservationLink" | None] = relationship(back_populates="document")
+    employeeLink: Mapped[List["DocumentationEmployeeLink"]] = relationship(back_populates="document")
+    employerLink: Mapped[List["DocumentationEmployerLink"]] = relationship(back_populates="document")
+    lawyerLink: Mapped[List["DocumentationLawyerLink"]] = relationship(back_populates="document")
+    agreementLink: Mapped[List["DocumentationAgreementLink"]] = relationship(back_populates="document")
+    homologation: Mapped["Homologation | None"] = relationship(back_populates="document")
+    invoice: Mapped["Invoice | None"] = relationship(back_populates="document")
+    payment: Mapped["Payment | None"] = relationship(back_populates="document")
+    observationLink: Mapped["DocumentationObservationLink | None"] = relationship(back_populates="document")
 
 class SecloNotification(Base):
     __tablename__ = "secloNotification"
@@ -115,8 +123,8 @@ class SecloNotification(Base):
 
     citation: Mapped["Citation"] = relationship(back_populates="notifications")
 
-    employeeLink: Mapped["SecloNotificationToEmployee" | None] = relationship(back_populates="notificationID")
-    employerLink: Mapped["SecloNotificationToEmployer" | None] = relationship(back_populates="notificationID")
+    employeeLink: Mapped["SecloNotificationToEmployee | None"] = relationship(back_populates="notificationID")
+    employerLink: Mapped["SecloNotificationToEmployer | None"] = relationship(back_populates="notificationID")
 
 class BankAccount(Base):
     __tablename__ = "bankAccount"
@@ -130,10 +138,10 @@ class BankAccount(Base):
     CUIT: Mapped[int | None]
     isValidated: Mapped[bool]
 
-    employee: Mapped["Employee" | None] = relationship(back_populates="bankAccount")
-    lawyers: Mapped[List["Lawyer"] | None] = relationship(back_populates="bankAccount")
-    lawyerDirectory: Mapped[List["LawyerDirectory"] | None] = relationship(back_populates="bankAccount")
-    lawfirmDirectory: Mapped["LawfirmDirectory" | None] = relationship(back_populates="bankAccount")
+    employee: Mapped["Employee | None"] = relationship(back_populates="bankAccount")
+    lawyers: Mapped[List["Lawyer"]] = relationship(back_populates="bankAccount")
+    lawyerDirectory: Mapped[List["LawyerDirectory"]] = relationship(back_populates="bankAccount")
+    lawfirmDirectory: Mapped["LawfirmDirectory | None"] = relationship(back_populates="bankAccount")
 
 class Address(Base):
     __tablename__ = "address"
@@ -146,11 +154,27 @@ class Address(Base):
     streetnumber: Mapped[str]
     floor: Mapped[str]
     apt: Mapped[str]
-    CPA: Mapped[str]
+    cpa: Mapped[str]
     extra: Mapped[str]
 
-    employees: Mapped[List["EmployeeAddressLink"] | None] = relationship(back_populates="address")
-    employers: Mapped[List["EmployerAddressLink"] | None] = relationship(back_populates="address")
+    employees: Mapped[List["EmployeeAddressLink"]] = relationship(back_populates="address")
+    employers: Mapped[List["EmployerAddressLink"]] = relationship(back_populates="address")
+
+    @staticmethod
+    def fromAddressData(data: SECLOAddressData | None) -> 'Address':
+        if isinstance(data, SECLOAddressData):
+            return Address(province = data.province, district = data.district, county = data.county,
+                        street = data.street, streetnumber = data.number, floor = data.floor, 
+                        apt = data.apt, cpa = data.cpa, extra = data.bonusData)
+        else: raise TypeError("Null address")
+    
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Address):
+            if (self.addressID == other.addressID and self.addressID != None): return True
+            else: return self.province == other.province and self.district == other.district and self.extra == other.extra and\
+                         self.county == other.county and self.street == other.street and self.cpa == other.cpa and\
+                         self.streetnumber == other.streetnumber and self.floor == other.floor and self.apt == other.apt
+        return False 
 
 class Email(Base):
     __tablename__ = "email"
@@ -161,11 +185,17 @@ class Email(Base):
     registeredFrom: Mapped[str]
     description: Mapped[str]
 
-    employees: Mapped[List["EmployeeEmailLink"] | None] = relationship(back_populates="email")
-    employers: Mapped[List["EmployerEmailLink"] | None] = relationship(back_populates="email")
-    lawyers: Mapped[List["LawyerEmailLink"] | None] = relationship(back_populates="email")
-    lawyerDirectory: Mapped[List["LawyerDirectoryEmailLink"] | None] = relationship(back_populates="email")
-    lawfirmDirectory: Mapped[List["LawfirmDirectoryEmailLink"] | None] = relationship(back_populates="email")
+    employees: Mapped[List["EmployeeEmailLink"]] = relationship(back_populates="email")
+    employers: Mapped[List["EmployerEmailLink"]] = relationship(back_populates="email")
+    lawyers: Mapped[List["LawyerEmailLink"]] = relationship(back_populates="email")
+    lawyerDirectory: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(back_populates="email")
+    lawfirmDirectory: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(back_populates="email")
+
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Email):
+            if self.emailID == other.emailID and self.emailID != None: return True
+            else: return self.email == other.email
+        else: return False
 
 class Employee(Base):
     __tablename__ = "employee"
@@ -173,20 +203,39 @@ class Employee(Base):
     employeeID: Mapped[int] = mapped_column(primary_key=True)
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     employeeName: Mapped[str]
-    DNI: Mapped[int]
-    CUIL: Mapped[int | None]
+    dni: Mapped[int]
+    cuil: Mapped[int | None]
     isValidated: Mapped[bool]
     birthDate: Mapped[datetime | None]
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey('bankAccount.accountID'))
+    startDate: Mapped[datetime | None]
+    endDate: Mapped[datetime | None]
+    wage: Mapped[Decimal]
+    claimAmount: Mapped[Decimal]
+    category: Mapped[str]
+    cct: Mapped[int]
 
-    bankAccount = Mapped["BankAccount" | None] = relationship(back_populates="employee")
+
+    bankAccount: Mapped["BankAccount | None"] = relationship(back_populates="employee")
     claim: Mapped["Claim"] = relationship(back_populates="employees")
     addresses: Mapped[List["EmployeeAddressLink"]] = relationship(back_populates="employee")
-    emails: Mapped[List["EmployeeEmailLink"] | None] = relationship(back_populates="employee")
+    emails: Mapped[List["EmployeeEmailLink"]] = relationship(back_populates="employee")
     notifications: Mapped[List["SecloNotificationToEmployee"]] = relationship(back_populates="employee")
-    documentation: Mapped[List["DocumentationEmployeeLink"] | None] = relationship(back_populates="employee")
-    lawyerLink: Mapped[List["LawyerToEmployee"] | None] = relationship(back_populates="employee")
-    hemiagreement: Mapped["Hemiagreement" | None] = relationship(back_populates="employee")
+    documentation: Mapped[List["DocumentationEmployeeLink"]] = relationship(back_populates="employee")
+    lawyerLink: Mapped[List["LawyerToEmployee"]] = relationship(back_populates="employee")
+    hemiagreement: Mapped["Hemiagreement | None"] = relationship(back_populates="employee")
+
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Employee):
+            if other.employeeID == self.employeeID and self.employeeID != None:
+                return True
+            elif (other.dni == self.dni):
+                return True
+            elif (other.cuil == self.cuil):
+                return True
+            else: return False
+        else:
+            return False
 
 class EmployeeAddressLink(Base):
     __tablename__ = "employeeAddressLink"
@@ -197,6 +246,11 @@ class EmployeeAddressLink(Base):
     employee: Mapped["Employee"] = relationship(back_populates="addresses")
     address: Mapped["Address"] = relationship(back_populates="employees")
 
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, EmployeeAddressLink):
+            return self.employee == other.employee and self.address == other.address
+        else: return False
+
 class EmployeeEmailLink(Base):
     __tablename__ = "employeeEmailLink"
 
@@ -206,12 +260,17 @@ class EmployeeEmailLink(Base):
 
     employee: Mapped["Employee"] = relationship(back_populates="emails")
     email: Mapped["Email"] = relationship(back_populates="employees")
+    
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, EmployeeEmailLink):
+            return self.employee == other.employee and self.email == other.email
+        else: return False
 
 class SecloNotificationToEmployee(Base):
     __tablename__ = "secloNotificationToEmployee"
 
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'), primary_key=True)
-    notification: Mapped[int] = mapped_column(ForeignKey('secloNotification.notificationID'), primary_key=True)
+    notificationID: Mapped[int] = mapped_column(ForeignKey('secloNotification.notificationID'), primary_key=True)
 
     employee: Mapped["Employee"] = relationship(back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(back_populates="employees")
@@ -222,7 +281,7 @@ class Employer(Base):
     employerID: Mapped[int] = mapped_column(primary_key=True)
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     employerName: Mapped[str]
-    CUIL: Mapped[int | None]
+    cuil: Mapped[int | None]
     personType: Mapped[str]
     requiredAs: Mapped[RequiredAsType]
     SECLORegisterDate: Mapped[datetime | None]
@@ -230,17 +289,27 @@ class Employer(Base):
     isValidated: Mapped[bool]
     isDesisted: Mapped[bool]
 
-    master: Mapped["Employer" | None] = relationship(back_populates='slave')
-    slaves: Mapped["Employer" | None] = relationship(back_populates='master')
+    master: Mapped["Employer | None"] = relationship(back_populates='slave')
+    slaves: Mapped["Employer | None"] = relationship(back_populates='master')
 
     claim: Mapped["Claim"] = relationship(back_populates="employers")
-    addresses: Mapped[List["EmployerAddressLink"] | None] = relationship(back_populates="employer")
-    emails: Mapped[List["EmployerEmailLink"] | None] = relationship(back_populates="employer")
-    notifications: Mapped[List["SecloNotificationToEmployer"] | None] = relationship(back_populates="employer")
-    documentation: Mapped[List["DocumentationEmployerLink"] | None] = relationship(back_populates="employer")
-    lawyerLink: Mapped[List["LawyerToEmployer"] | None] = relationship(back_populates="employer")
-    agreementExtension: Mapped[List["AgreementExtension"] | None] = relationship(back_populates="employer")
-    agreementDesist: Mapped[List["AgreementDesist"] | None] = relationship(back_populates="employer")
+    addresses: Mapped[List["EmployerAddressLink"]] = relationship(back_populates="employer")
+    emails: Mapped[List["EmployerEmailLink"]] = relationship(back_populates="employer")
+    notifications: Mapped[List["SecloNotificationToEmployer"]] = relationship(back_populates="employer")
+    documentation: Mapped[List["DocumentationEmployerLink"]] = relationship(back_populates="employer")
+    lawyerLink: Mapped[List["LawyerToEmployer"]] = relationship(back_populates="employer")
+    agreementExtension: Mapped[List["AgreementExtension"]] = relationship(back_populates="employer")
+    agreementDesist: Mapped[List["AgreementDesist"]] = relationship(back_populates="employer")
+
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Employer):
+            if other.employerID == self.employerID and self.employerID != None:
+                return True
+            elif (other.cuil == self.cuil):
+                return True
+            else: return False
+        else:
+            return False
 
 
 class EmployerAddressLink(Base):
@@ -252,6 +321,11 @@ class EmployerAddressLink(Base):
     employer: Mapped["Employer"] = relationship(back_populates="addresses")
     address: Mapped["Address"] = relationship(back_populates="employers")
 
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, EmployerAddressLink):
+            return self.employer == other.employer and self.address == other.address
+        else: return False
+
 class EmployerEmailLink(Base):
     __tablename__ = "employerEmailLink"
 
@@ -262,11 +336,16 @@ class EmployerEmailLink(Base):
     employer: Mapped["Employer"] = relationship(back_populates="emails")
     email: Mapped["Email"] = relationship(back_populates="employers")
 
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, EmployerEmailLink):
+            return self.employer == other.employer and self.email == other.email
+        else: return False
+
 class SecloNotificationToEmployer(Base):
     __tablename__ = "secloNotificationToEmployer"
 
     employerID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
-    notification: Mapped[int] = mapped_column(ForeignKey('secloNotification.notificationID'), primary_key=True)
+    notificationID: Mapped[int] = mapped_column(ForeignKey('secloNotification.notificationID'), primary_key=True)
 
     employer: Mapped["Employer"] = relationship(back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(back_populates="employers")
@@ -277,8 +356,8 @@ class Lawyer(Base):
     lawyerID: Mapped[int] = mapped_column(primary_key=True)
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     lawyerName: Mapped[str | None]
-    T: Mapped[int]
-    F: Mapped[int]
+    t: Mapped[int]
+    f: Mapped[int]
     registeredOn: Mapped[datetime | None]
     registeredFrom: Mapped[str | None]
     CUIL: Mapped[int | None]
@@ -287,17 +366,17 @@ class Lawyer(Base):
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey('bankAccount.accountID'))
 
     claim: Mapped["Claim"] = relationship(back_populates="lawyers")
-    bankAccount: Mapped["BankAccount" | None] = relationship(back_populates="lawyers")
-    emails: Mapped[List["LawyerEmailLink"] | None] = relationship(back_populates="lawyer")
-    documentation: Mapped[List["DocumentationLawyerLink"] | None] = relationship(back_populates="lawyer")
-    employeeLink: Mapped[List["LawyerToEmployee"] | None] = relationship(back_populates="lawyer")
-    employerLink: Mapped[List["LawyerToEmployer"] | None] = relationship(back_populates="lawyer")
-    telephones: Mapped[List["LawyerTelephone"] | None] = relationship(back_populates='lawyer')
+    bankAccount: Mapped["BankAccount | None"] = relationship(back_populates="lawyers")
+    emails: Mapped[List["LawyerEmailLink"]] = relationship(back_populates="lawyer")
+    documentation: Mapped[List["DocumentationLawyerLink"]] = relationship(back_populates="lawyer")
+    employeeLink: Mapped[List["LawyerToEmployee"]] = relationship(back_populates="lawyer")
+    employerLink: Mapped[List["LawyerToEmployer"]] = relationship(back_populates="lawyer")
+    telephones: Mapped[List["LawyerTelephone"]] = relationship(back_populates='lawyer')
 
 class LawyerEmailLink(Base):
     __tablename__ = "lawyerEmailLink"
 
-    lawyer: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
+    lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     emailID: Mapped[int] = mapped_column(ForeignKey('email.emailID'), primary_key=True)
     description: Mapped[str | None]
 
@@ -310,10 +389,10 @@ class LawyerToEmployee(Base):
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'), primary_key=True)
     lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'), primary_key=True)
-    isActualLawyer: Mapped[bool]
-    isSelfRepresenting: Mapped[bool]
-    clientAbsent: Mapped[bool]
-    description: Mapped[str | None]
+    isActualLawyer: Mapped[bool | None]
+    isSelfRepresenting: Mapped[bool | None]
+    clientAbsent: Mapped[bool | None]
+    description: Mapped[str]
 
     employee: Mapped["Employee"] = relationship(back_populates="lawyerLink")
     lawyer: Mapped["Lawyer"] = relationship(back_populates="employeeLink")
@@ -325,11 +404,11 @@ class LawyerToEmployer(Base):
     employerID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
     lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'), primary_key=True)
-    isActualLawyer: Mapped[bool]
-    isEmpowered: Mapped[bool]
-    isSelfRepresenting: Mapped[bool]
-    clientAbsent: Mapped[bool]
-    description: Mapped[str | None]
+    isActualLawyer: Mapped[bool | None]
+    isEmpowered: Mapped[bool | None]
+    isSelfRepresenting: Mapped[bool | None]
+    clientAbsent: Mapped[bool | None]
+    description: Mapped[str]
 
     employer: Mapped["Employee"] = relationship(back_populates="lawyerLink")
     lawyer: Mapped["Lawyer"] = relationship(back_populates="employerLink")
@@ -340,7 +419,7 @@ class EmployerRelation(Base):
 
     masterID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
     slaveID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
-    relationship: Mapped[str]
+    relationshipDescription: Mapped[str]
 
     master: Mapped["Employer"] = relationship(back_populates="slaves")
     slave:  Mapped["Employer"] = relationship(back_populates="master")
@@ -391,9 +470,9 @@ class LawyerTelephone(Base):
     description: Mapped[str | None]
     obtainedFrom: Mapped[str | None]
 
-    lawyer: Mapped["Lawyer" | None] = relationship(back_populates="telephones")
-    lawyerDirectory: Mapped[List["LawyerDirectory"] | None] = relationship(back_populates="telephone")
-    lawfirmDirectory: Mapped[List["LawfirmDirectory"] | None] = relationship(back_populates="telephone")
+    lawyer: Mapped["Lawyer | None"] = relationship(back_populates="telephones")
+    lawyerDirectory: Mapped[List["LawyerDirectory"]] = relationship(back_populates="telephone")
+    lawfirmDirectory: Mapped[List["LawfirmDirectory"]] = relationship(back_populates="telephone")
 
 class Agreement(Base):
     __tablename__ = "agreement"
@@ -416,17 +495,17 @@ class Agreement(Base):
     signedSendDate: Mapped[datetime | None]
 
     claim: Mapped["Claim"] = relationship(back_populates="agreements")
-    citation: Mapped["Citation" | None] = relationship(back_populates="agreement")
-    documentationLink: Mapped[List["DocumentationAgreementLink"] | None] = relationship(back_populates="agreement")
-    extension: Mapped[List["AgreementExtension"] | None] = relationship(back_populates="agreement")
-    desist: Mapped[List["AgreementDesist"] | None] = relationship(back_populates="agreement")
-    hemiagreements: Mapped[List["Hemiagreement"] | None] = relationship(back_populates="agreement")
-    homologations: Mapped[List["Homologation"] | None] = relationship(back_populates='agreement')
-    invoices: Mapped[List["Invoice"] | None] = relationship(back_populates='agreement')
-    payments: Mapped[List["Payment"] | None] = relationship(back_populates='agreement')
-    observations: Mapped[List["Observation"] | None] = relationship(back_populates='agreement')
-    complaintLink: Mapped[List["ComplaintAgreementLink"] | None] = relationship(back_populates="agreement")
-    bratInvoice: Mapped["BratAgreement" | None] = relationship(back_populates="agreement")
+    citation: Mapped["Citation | None"] = relationship(back_populates="agreement")
+    documentationLink: Mapped[List["DocumentationAgreementLink"]] = relationship(back_populates="agreement")
+    extension: Mapped[List["AgreementExtension"]] = relationship(back_populates="agreement")
+    desist: Mapped[List["AgreementDesist"]] = relationship(back_populates="agreement")
+    hemiagreements: Mapped[List["Hemiagreement"]] = relationship(back_populates="agreement")
+    homologations: Mapped[List["Homologation"]] = relationship(back_populates='agreement')
+    invoices: Mapped[List["Invoice"]] = relationship(back_populates='agreement')
+    payments: Mapped[List["Payment"]] = relationship(back_populates='agreement')
+    observations: Mapped[List["Observation"]] = relationship(back_populates='agreement')
+    complaintLink: Mapped[List["ComplaintAgreementLink"]] = relationship(back_populates="agreement")
+    bratInvoice: Mapped["BratAgreement | None"] = relationship(back_populates="agreement")
 
 class DocumentationAgreementLink(Base):
     __tablename__ = "documentationAgreementLink"
@@ -470,7 +549,7 @@ class Hemiagreement(Base):
 
     agreement: Mapped["Agreement"] = relationship(back_populates='hemiagreements')
     employee: Mapped["Employee"] = relationship(back_populates="hemiagreement")
-    installments: Mapped[List["PaymentInstallment"] | None] = relationship(back_populates="hemiagreement")
+    installments: Mapped[List["PaymentInstallment"]] = relationship(back_populates="hemiagreement")
 
 class PaymentInstallment(Base):
     __tablename__ = "paymentInstallment"
@@ -499,8 +578,8 @@ class Homologation(Base):
     docID: Mapped[int | None] = mapped_column(ForeignKey('documentation.docID'))
     
     agreement: Mapped["Agreement"] = relationship(back_populates="homologations")
-    document: Mapped["Documentation" | None] = relationship(back_populates="homologation")
-    complaintLink: Mapped[List["ComplaintHomologationLink"] | None] = relationship(back_populates="homologation")
+    document: Mapped["Documentation | None"] = relationship(back_populates="homologation")
+    complaintLink: Mapped[List["ComplaintHomologationLink"]] = relationship(back_populates="homologation")
 
 class Invoice(Base):
     __tablename__ = "invoice"
@@ -517,10 +596,10 @@ class Invoice(Base):
     docID: Mapped[int | None] = mapped_column(ForeignKey('documentation.docID'))
 
     agreement: Mapped["Agreement"] = relationship(back_populates="invoices")
-    document: Mapped["Documentation" | None] = relationship(back_populates="invoice")
-    employer: Mapped["Employer" | None] = relationship(back_populates="invoices")
-    invoiceChild: Mapped["Invoice" | None] = relationship(back_populates="invoiceMaster")
-    invoiceMaster: Mapped["Invoice" | None] = relationship(back_populates="invoiceChild")
+    document: Mapped["Documentation | None"] = relationship(back_populates="invoice")
+    employer: Mapped["Employer | None"] = relationship(back_populates="invoices")
+    invoiceChild: Mapped["Invoice | None"] = relationship(back_populates="invoiceMaster")
+    invoiceMaster: Mapped["Invoice | None"] = relationship(back_populates="invoiceChild")
 
 class Payment(Base):
     __tablename__ = "payment"
@@ -537,7 +616,7 @@ class Payment(Base):
     docID: Mapped[int | None] = mapped_column(ForeignKey('documentation.docID'))
     
     agreement: Mapped["Agreement"] = relationship(back_populates="payments")
-    document: Mapped["Documentation" | None] = relationship(back_populates="payment")
+    document: Mapped["Documentation | None"] = relationship(back_populates="payment")
 
 class Observation(Base):
     __tablename__ = "observation"
@@ -552,8 +631,8 @@ class Observation(Base):
     secloEmailNotificationDate: Mapped[datetime | None]
 
     agreement: Mapped["Agreement"] = relationship(back_populates="observations")
-    documentationLink: Mapped[List["DocumentationObservationLink"] | None] = relationship(back_populates="observation")
-    complaintLink: Mapped[List["ComplaintObservationLink"] | None] = relationship(back_populates="observation")
+    documentationLink: Mapped[List["DocumentationObservationLink"]] = relationship(back_populates="observation")
+    complaintLink: Mapped[List["ComplaintObservationLink"]] = relationship(back_populates="observation")
 
 class DocumentationObservationLink(Base):
     __tablename__ = "documentationObservationLink"
@@ -579,9 +658,9 @@ class Complaint(Base):
     reply: Mapped[str | None]
 
     claim: Mapped["Claim"] = relationship(back_populates="complaints")
-    agreementLink: Mapped["ComplaintAgreementLink" | None] = relationship(back_populates="complaint")
-    homologationLink: Mapped["ComplaintHomologationLink" | None] = relationship(back_populates="complaint")
-    observationLink: Mapped["ComplaintObservationLink" | None] = relationship(back_populates="complaint")
+    agreementLink: Mapped["ComplaintAgreementLink | None"] = relationship(back_populates="complaint")
+    homologationLink: Mapped["ComplaintHomologationLink | None"] = relationship(back_populates="complaint")
+    observationLink: Mapped["ComplaintObservationLink | None"] = relationship(back_populates="complaint")
 
 class ComplaintAgreementLink(Base):
     __tablename__ = "complaintAgreementLink"
@@ -624,7 +703,7 @@ class Nonagreement(Base):
 
     claim: Mapped["Claim"] = relationship(back_populates="nonagreements")
     citation: Mapped["Citation"] = relationship(back_populates="nonagreement")
-    invoice: Mapped[List["NonagreementInvoiceLink"] | None] = relationship(back_populates="nonagreement")
+    invoice: Mapped[List["NonagreementInvoiceLink"]] = relationship(back_populates="nonagreement")
 
 class NonagreementSECLOInvoice(Base):
     __tablename__ = "nonagreementSECLOInvoice"
@@ -634,7 +713,7 @@ class NonagreementSECLOInvoice(Base):
     periodDate: Mapped[datetime]
     paymentDate: Mapped[datetime | None]
 
-    nonagreementLink: Mapped[List["NonagreementInvoiceLink"] | None] = relationship(back_populates='invoice')
+    nonagreementLink: Mapped[List["NonagreementInvoiceLink"]] = relationship(back_populates='invoice')
     bratInvoice: Mapped["BratNonAgreement"] = relationship(back_populates="secloInvoice")
 
 class NonagreementInvoiceLink(Base):
@@ -656,8 +735,8 @@ class BratInvoice(Base):
     paymentDate: Mapped[datetime | None]
     percentage: Mapped[int]
 
-    agreementLink: Mapped[List["BratAgreement"] | None] = relationship(back_populates="bratInvoice")
-    bonuses: Mapped[List["BratBonus"] | None] = relationship(back_populates='bratInvoice')
+    agreementLink: Mapped[List["BratAgreement"]] = relationship(back_populates="bratInvoice")
+    bonuses: Mapped[List["BratBonus"]] = relationship(back_populates='bratInvoice')
 
 class BratAgreement(Base):
     __tablename__ = "bratAgreement"
@@ -708,11 +787,11 @@ class LawyerDirectory(Base):
     CUIT: Mapped[int]
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey("bankAccount.accountID"))
 
-    bankAccount: Mapped["BankAccount" | None] = relationship(back_populates="lawyerDirectory")
-    lawfirms: Mapped[List["LawfirmLawyerLink"] | None] = relationship(back_populates="lawyer")
-    phoneLink: Mapped[List["LawyerDirectoryPhoneLink"] | None] = relationship(back_populates="lawyer")
-    emailLink: Mapped[List["LawyerDirectoryEmailLink"] | None] = relationship(back_populates="lawyer")
-    companyLink: Mapped[List["LawyerCompanyDirectoryLink"] | None] = relationship(back_populates="lawyer")
+    bankAccount: Mapped["BankAccount | None"] = relationship(back_populates="lawyerDirectory")
+    lawfirms: Mapped[List["LawfirmLawyerLink"]] = relationship(back_populates="lawyer")
+    phoneLink: Mapped[List["LawyerDirectoryPhoneLink"]] = relationship(back_populates="lawyer")
+    emailLink: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(back_populates="lawyer")
+    companyLink: Mapped[List["LawyerCompanyDirectoryLink"]] = relationship(back_populates="lawyer")
 
 class LawyerCompanyDirectoryLink(Base):
     __tablename__ = "lawyerCompanyDirectoryLink"
@@ -730,11 +809,11 @@ class LawfirmDirectory(Base):
     lawfirmName: Mapped[str]
     bankAccountID: Mapped[int] = mapped_column(ForeignKey('bankAccount.accountID'), primary_key=True)
 
-    bankAccount: Mapped["BankAccount" | None] = relationship(back_populates="lawfirmDirectory")
-    lawyers: Mapped[List["LawfirmLawyerLink"] | None] = relationship(back_populates="lawfirm")
-    companyLink: Mapped[List["LawfirmCompanyLink"] | None] = relationship(back_populates="lawfirm")
-    phoneLink: Mapped[List["LawfirmDirectoryPhoneLink"] | None] = relationship(back_populates="lawfirm")
-    emailLink: Mapped[List["LawfirmDirectoryEmailLink"] | None] = relationship(back_populates="lawfirm")
+    bankAccount: Mapped["BankAccount | None"] = relationship(back_populates="lawfirmDirectory")
+    lawyers: Mapped[List["LawfirmLawyerLink"]] = relationship(back_populates="lawfirm")
+    companyLink: Mapped[List["LawfirmCompanyLink"]] = relationship(back_populates="lawfirm")
+    phoneLink: Mapped[List["LawfirmDirectoryPhoneLink"]] = relationship(back_populates="lawfirm")
+    emailLink: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(back_populates="lawfirm")
 
 class LawfirmLawyerLink(Base):
     __tablename__ = "lawfirmLawyerLink"

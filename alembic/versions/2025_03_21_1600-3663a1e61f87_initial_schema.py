@@ -299,7 +299,9 @@ def upgrade() -> None:
         sa.Column('lastSendDate', sa.DateTime),
         sa.Column('isDraft', sa.Boolean),
         sa.Column('secloEmailNotificationDate', sa.DateTime),
-        sa.Column('signedSendDate', sa.DateTime, nullable=True),
+        sa.Column('signedSendDate', sa.DateTime, nullable=True),        
+        sa.Column('lawyerHonoraryRelative', sa.Integer),
+        sa.Column('onoraryAbsolute', sa.Numeric(20,2)),
         if_not_exists=True
     )
 
@@ -333,8 +335,6 @@ def upgrade() -> None:
         sa.Column('amountARS', sa.Numeric(20,2), nullable=False),
         sa.Column('amountUSD', sa.Numeric(20,2), nullable=True),
         sa.Column('employeeID', sa.Integer, sa.ForeignKey('employee.employeeID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('honoraryRelative', sa.Integer),
-        sa.Column('honoraryAbsolute', sa.Numeric(20,2)),
         if_not_exists=True
     )
 
