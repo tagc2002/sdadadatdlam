@@ -1,10 +1,11 @@
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, List, Self, Tuple
+from attr import dataclass
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
-from backend.dataobjects.enums import ClaimType, SECLONotification
+from backend.dataobjects.enums import ClaimType, SECLONotificationType
 from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
 import re
 
@@ -37,7 +38,7 @@ class CitationResult:
                 self.person = rowItem.find_elements(By.TAG_NAME, 'td')[1].text
             self.notify = False
             self.absent = False
-            self.notificationMethod = SECLONotification.TELEGRAM
+            self.notificationMethod = SECLONotificationType.TELEGRAM
             logger.debug(f'Created instance of CitationResult with {str(self)}')
 
     def __eq__(self, other):
@@ -88,11 +89,11 @@ class CitationResult:
         else:
             raise InvalidParameterException("Can only set result for employee.")
         
-    def setNotification(self: Self, notify: bool, absent: bool = False, method: SECLONotification | None = None):
+    def setNotification(self: Self, notify: bool, absent: bool = False, method: SECLONotificationType | None = None):
         if notify:
             self.notify = True
             self.absent = absent
-            if (isinstance(method, SECLONotification)):
+            if (isinstance(method, SECLONotificationType)):
                 self.notificationMethod = method
             else:
                 raise InvalidParameterException("Must provide a notification method to notify.")
@@ -237,3 +238,27 @@ class SECLOClaimData():
             for other in self.others:
                 base = base + f'{str(other)}\n'
         return base
+    
+@dataclass
+class SECLONotificationData():
+    id: int
+    person: str
+    citationType: str
+    isEmployer: bool
+    notificationType: SECLONotificationType
+    generatedDate: datetime
+    notifiedDate: datetime | None
+    notificationCode: str
+    notificationStatus: str
+    afipRead: bool
+    citationDate: datetime
+    citationStatus: str
+
+@dataclass
+class SECLOCitation():
+    citationID: int
+    gdeID: str
+    initDate: datetime
+    citationDate: datetime
+    citationType: str
+    pdfString: str | None = None

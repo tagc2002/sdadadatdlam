@@ -12,7 +12,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-from backend.dataobjects.enums import CitationType, CitationStatus, DocType, RequiredAsType, SECLONotification
+from backend.dataobjects.enums import CitationType, CitationStatus, DocType, RequiredAsType, SECLONotificationType
 
 
 # revision identifiers, used by Alembic.
@@ -65,7 +65,7 @@ def upgrade() -> None:
         'secloNotification',
         sa.Column('notificationID', sa.Integer, primary_key=True, autoincrement=False),
         sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
-        sa.Column('notificationType', sa.Enum(SECLONotification), nullable=False),
+        sa.Column('notificationType', sa.Enum(SECLONotificationType), nullable=False),
         sa.Column('secloPostalID', sa.Integer, nullable=True),
         sa.Column('emissionDate', sa.DateTime, nullable=False),
         sa.Column('receptionDate', sa.DateTime, nullable=True),

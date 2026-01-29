@@ -4,7 +4,7 @@ from enum import Enum, auto
 from typing import List, Self
 
 from backend.dataobjects.SECLODataClasses import SECLOAddressData
-from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, RequiredAsType, SECLONotification
+from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, RequiredAsType, SECLONotificationType
 
 from sqlalchemy import ForeignKey, create_engine
 from sqlalchemy import text
@@ -14,28 +14,6 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
-
-
-engine = create_engine("sqlite+pysqlite:///:memory:", echo=True)
-
-#rollsback unless conn.commit() is called after query
-with engine.connect() as conn:
-    result = conn.execute(text("select 'hello world'"))
-    print(result.all())
-
-    result = conn.execute(text("SELECT x, y FROM some_table"))
-    for row in result:
-        print(f"x: {row.x}  y: {row.y}")
-    for x, y in result:
-        print(f"x: {x}  y: {y}")
-    for row in result.mappings():
-        print(f"{row['x']}")
-
-#autocommits except on error
-with engine.begin() as conn:
-    conn.execute(text("INSERT INTO table (x, y) VALUES (:x, :y)"), [{"x": 1, "y": 2}])
-
-
 
 class Base(DeclarativeBase):
     pass
@@ -47,8 +25,9 @@ class Claim(Base):
     initDate: Mapped[datetime]
     initByEmployee: Mapped[bool] = mapped_column(default=True)
     claimType: Mapped[int]
+    isEvilized: Mapped[bool]
     legalStuff: Mapped[str]
-    isDomestic: Mapped[bool]
+    isDomestic: Mapped[bool | None]
     calID: Mapped[str | None]
 
     citations: Mapped[List["Citation"]] = relationship(back_populates="claim")
@@ -58,8 +37,7 @@ class Claim(Base):
     agreements: Mapped[List["Agreement"]] = relationship(back_populates="claim")
     complaints: Mapped[List["Complaint"]] = relationship(back_populates="claim")
     nonagreements: Mapped[List["Nonagreement"]] = relationship(back_populates="claim")
-    invoices: Mapped[List["Invoice"]] = relationship(back_populates="employer")
-
+    documentationLink: Mapped[List["DocumentationClaimLink"]] = relationship(back_populates="claim")
     #def __repr__(self) -> str:
     #   return f'User(id={self.id!r}, name={self.name!r}, fullname={self.fullname!r})'
 
@@ -91,6 +69,7 @@ class Citation(Base):
                 self.citationStatus == other.citationStatus and self.citationType == other.citationType: return True
             else: return False
         else: return False
+
 class Documentation(Base):
     __tablename__ = "documentation"
     docID: Mapped[int] = mapped_column(primary_key=True)
@@ -108,12 +87,21 @@ class Documentation(Base):
     invoice: Mapped["Invoice | None"] = relationship(back_populates="document")
     payment: Mapped["Payment | None"] = relationship(back_populates="document")
     observationLink: Mapped["DocumentationObservationLink | None"] = relationship(back_populates="document")
+    claimLink: Mapped[List["DocumentationClaimLink"]] = relationship(back_populates="documentation")
+
+class DocumentationClaimLink(Base):
+    __tablename__ = "documentationClaimLink"
+    docID: Mapped[int] = mapped_column(primary_key=True)
+    claimID: Mapped[int] = mapped_column(primary_key=True)
+
+    documentation: Mapped["Documentation"] = relationship(back_populates="claimLink")
+    claim: Mapped["Claim"] = relationship(back_populates="documentationLink")
 
 class SecloNotification(Base):
     __tablename__ = "secloNotification"
     notificationID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'))
-    notificationType: Mapped[SECLONotification]
+    notificationType: Mapped[SECLONotificationType]
     secloPostalID: Mapped[int | None]
     emissionDate: Mapped[datetime]
     receptionDate: Mapped[datetime | None]
@@ -299,6 +287,7 @@ class Employer(Base):
     lawyerLink: Mapped[List["LawyerToEmployer"]] = relationship(back_populates="employer")
     agreementExtension: Mapped[List["AgreementExtension"]] = relationship(back_populates="employer")
     agreementDesist: Mapped[List["AgreementDesist"]] = relationship(back_populates="employer")
+    invoices: Mapped[List["Invoice"]] = relationship(back_populates="employer")
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Employer):

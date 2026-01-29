@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from backend.dataobjects.enums import ClaimType
 from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from backend.repositories.SECLO.SECLOProgressReporting import ProgressReport
-from backend.dataobjects.SECLODataClasses import SECLOAddressData, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotification, SECLOOtherData, CitationResult
+from backend.dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
 
 from datetime import datetime
 from typing import List, Self, Tuple
@@ -218,7 +218,7 @@ class SECLOAccessor:
         return self
 
 
-class SECLOCitation(SECLOAccessor):
+class SECLOCitationManager(SECLOAccessor):
     '''
     A browser driver class to register citation results on the SECLO site. 
     Used for creating a new citation or closing a case with or without agreement.
@@ -710,12 +710,12 @@ class SECLORecData(SECLOAccessor):
     A class for accessing data from claims, the main data ingestion class if you may. 
     Eventually may allow modifying data as well, but the website is so shit I don't think it'll be reliable.
     '''
-    def getNotificationData(self: Self) -> List[dict]:
+    def getNotificationData(self: Self) -> List[SECLONotificationData]:
         '''
         Gets the associated notification information for a given case. Its up to the caller to link those to a citation or stuff like that.
 
         Returns:
-            List[dict]: The list of notification entries. 
+            List[SECLONotificationData]: The list of notification entries. 
         '''
         self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
         self._loadRec()
@@ -723,21 +723,21 @@ class SECLORecData(SECLOAccessor):
         results = []
         table = WebDriverWait(self.driver, 3).until(EC.presence_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
         for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
-            results.append({
-                'id': row.find_elements(By.TAG_NAME, 'td')[0].text,
-                'person': row.find_elements(By.TAG_NAME, 'td')[1].text,
-                'citationType': row.find_elements(By.TAG_NAME, 'td')[2].text,
-                'employer': True if row.find_elements(By.TAG_NAME, 'td')[3].text == 'Emp' else False,
-                'notificationType': SECLONotification.NotificationShortToEnum(row.find_elements(By.TAG_NAME, 'td')[4].text),
-                'generatedDate': datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[5].text, '%d/%m/%Y'),
-                'notifiedDate': None if len(row.find_elements(By.TAG_NAME, 'td')[6].text) == 0 
+            results.append(SECLONotificationData(
+                id = int(row.find_elements(By.TAG_NAME, 'td')[0].text),
+                person = row.find_elements(By.TAG_NAME, 'td')[1].text,
+                citationType = row.find_elements(By.TAG_NAME, 'td')[2].text,
+                isEmployer = True if row.find_elements(By.TAG_NAME, 'td')[3].text == 'Emp' else False,
+                notificationType = SECLONotificationType.NotificationShortToEnum(row.find_elements(By.TAG_NAME, 'td')[4].text),
+                generatedDate = datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[5].text, '%d/%m/%Y'),
+                notifiedDate = None if len(row.find_elements(By.TAG_NAME, 'td')[6].text) == 0 
                                 else datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[6].text, '%d/%m/%Y'),
-                'notificationCode': row.find_elements(By.TAG_NAME, 'td')[7].text,
-                'notificationStatus': row.find_elements(By.TAG_NAME, 'td')[8].text,
-                'afipRead': row.find_elements(By.TAG_NAME, 'td')[9].text,
-                'citationDate': datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[10].text, '%d/%m/%Y %H:%M'),
-                'citationStatus': row.find_elements(By.TAG_NAME, 'td')[11].text,
-            })
+                notificationCode = row.find_elements(By.TAG_NAME, 'td')[7].text,
+                notificationStatus = row.find_elements(By.TAG_NAME, 'td')[8].text,
+                afipRead = 'Si' in row.find_elements(By.TAG_NAME, 'td')[9].text,
+                citationDate = datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[10].text, '%d/%m/%Y %H:%M'),
+                citationStatus = row.find_elements(By.TAG_NAME, 'td')[11].text,
+            ))
         return results
 
     def getClaimData(self: Self) -> SECLOClaimData:
@@ -1051,13 +1051,24 @@ class SECLOInvoiceParser(SECLOAccessor):
             }
 
 class SECLOCalendarParser(SECLOAccessor):
-    WEEKS = 20
+    def __iterateCalendar(self: Self, table: WebElement) -> List[int]:
+        IDs: List[int] = []
+        #loop through days
+        for day in table.find_elements(By.TAG_NAME, 'table')[1].find_elements(By.TAG_NAME, 'tr')[0].find_elements(By.TAG_NAME, 'td'):
+            #loop through cases in day
+            for case in day.find_element(By.TAG_NAME, 'div').find_elements(By.TAG_NAME, 'div'):
+                foundID = str(case.get_attribute('onclick'))
+                if foundID:
+                    foundID = re.search(r'PK:\d+', foundID)
+                    if foundID:
+                        IDs.append(int(foundID.group(0)[3:]))
+        return IDs
 
-    def getCalendar(self: Self):
+    def getCalendar(self: Self, weeksBefore: int, weeksAfter: int, date: datetime | None = None) -> List[SECLOCitation]:
         '''
         Fetches the current calendar assignments from SECLO. Ideal entry point for claim registration and validating cases
         '''
-        firstStage = ProgressReport().setSteps(1 + self.WEEKS).setMessage("Loading calendar")
+        firstStage = ProgressReport().setSteps(1 + (1 if date else (weeksBefore + weeksAfter))).setMessage("Loading calendar")
         secondStage = ProgressReport()
         self.progress.compose(firstStage).compose(secondStage)
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
@@ -1065,22 +1076,35 @@ class SECLOCalendarParser(SECLOAccessor):
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
 
-        #Loop through weeks
         IDs = []
-        for i in range(0, self.WEEKS):
-            firstStage.increaseProgress(1, f'Parsing calendar week {i} of {self.WEEKS}')
+        #Loop through weeks
+        if (date):
+            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_txtFecha_txt'))).send_keys(
+                Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + date.strftime("%d/%m/%Y")
+            )
+            WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnConsultar'))).click()
+            firstStage.increaseProgress(1, f'Parsing calendar week of {date.strftime("%d/%m/%Y")}')
             WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
             table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
-            #loop through days
-            for day in table.find_elements(By.TAG_NAME, 'table')[1].find_elements(By.TAG_NAME, 'tr')[0].find_elements(By.TAG_NAME, 'td'):
-                #loop through cases in day
-                for case in day.find_element(By.TAG_NAME, 'div').find_elements(By.TAG_NAME, 'div'):
-                    foundID = str(case.get_attribute('onclick'))
-                    if foundID:
-                        foundID = re.search(r'PK:\d+', foundID)
-                        if foundID:
-                            IDs.append(foundID.group(0)[3:])
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
+            IDs.extend(self.__iterateCalendar(table))
+        else:
+            for i in range(0, weeksAfter):
+                firstStage.increaseProgress(1, f'Parsing calendar week {i} of {weeksBefore + weeksAfter}')
+                WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
+                table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
+                IDs.extend(self.__iterateCalendar(table))
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
+            if weeksAfter > 0:
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
+
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
+                for i in range(0, weeksBefore):
+                    firstStage.increaseProgress(1, f'Parsing calendar week {i + weeksAfter} of {weeksBefore + weeksAfter}')
+                    WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
+                    table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
+                    IDs.extend(self.__iterateCalendar(table))
+                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkIzq'))).click()
         secondStage.setSteps(len(IDs))
         secondStage.setMessage("Loading citation data")
         firstStage.setCompletion("Finished loading calendar weeks")
@@ -1091,28 +1115,28 @@ class SECLOCalendarParser(SECLOAccessor):
             gdeIDText = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
             initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
             initDateTimeText = initDatetimeText.split()[0] + ' ' + initDatetimeText.split()[1].split(':')[0] + ':' + initDatetimeText.split()[1].split(':')[1]
-            calendarCitations.append(
-                {'gdeID': gdeIDText,
-                 'citationDate': datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
-                 'initDate': datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
-                 'citationID': item,
-                 'citationType': self.driver.find_element(By.ID, 'auTipoYEstado').text,
-                 'pdfString': self.driver.print_page(self.printOptions)
-                })
+            calendarCitations.append(SECLOCitation(
+                gdeID = gdeIDText,
+                citationDate = datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
+                initDate = datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
+                citationID = item,
+                citationType = self.driver.find_element(By.ID, 'auTipoYEstado').text,
+                pdfString = self.driver.print_page(self.printOptions)
+                ))
         secondStage.setCompletion("Finished loading calendar info")
         return calendarCitations
     
-    def getWorkableDays(self: Self) -> List[Tuple[datetime, bool, str]]:
+    def getWorkableDays(self: Self, weeksAhead: int = 20) -> List[Tuple[datetime, bool, str]]:
         '''
         Fetches a list of workable and unworkable days, useful for estimating notification periods.
         '''
         workDays: List[Tuple[datetime, bool, str]] = []
-        self.progress.setSteps(self.WEEKS*7)
+        self.progress.setSteps(weeksAhead*7)
         self.progress.setMessage("Loading calendar info...")
 
         self.driver.get('https://conciliadores.trabajo.gob.ar/pa_Abogados_Audiencias.aspx')
         Select(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Principal_CmbFormato')))).select_by_value('1') #per-day
-        for day in range(1, self.WEEKS * 7):
+        for day in range(1, weeksAhead * 7):
             cal = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Principal_DayPilotCalendar1'))).find_element(By.TAG_NAME, 'tr').find_elements(By.TAG_NAME, 'table')[1]
             date = datetime.strptime(str(self.driver.find_element(By.ID, 'ctl00_Principal_txtFecha_txtFecha').get_property('value') or ""), '%d/%m/%Y')
             day = cal.find_elements(By.TAG_NAME, 'tr')[2].find_element(By.TAG_NAME, 'td')

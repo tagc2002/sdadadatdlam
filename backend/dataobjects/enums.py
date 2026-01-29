@@ -107,7 +107,7 @@ class ClaimType(Enum):
         else:
             return ClaimType.FIRED
 
-class SECLONotification(Enum):
+class SECLONotificationType(Enum):
     TELEGRAM = 'T'
     AFIP = 'A'
     PERSONAL = 'P'
@@ -121,17 +121,18 @@ class SECLONotification(Enum):
         Parses a notification ID from the website into a enum object.
         '''
         if (notif == 'Tel'):
-            return SECLONotification.TELEGRAM
+            return SECLONotificationType.TELEGRAM
         if (notif == 'Per'):
-            return SECLONotification.PERSONAL        
+            return SECLONotificationType.PERSONAL        
         if (notif == 'Afip'):
-            return SECLONotification.AFIP
+            return SECLONotificationType.AFIP
         if ('Electr' in notif):
-            return SECLONotification.ELECTRONIC
+            return SECLONotificationType.ELECTRONIC
         if ('No env' in notif):
-            return SECLONotification.DONOTSEND
+            return SECLONotificationType.DONOTSEND
         if (notif == 'Ced'):
-            return SECLONotification.CEDULE
+            return SECLONotificationType.CEDULE
+        return SECLONotificationType.PERSONAL
         
 
 class CitationType(Enum):
