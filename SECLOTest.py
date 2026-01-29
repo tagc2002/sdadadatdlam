@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import re
 from typing import List
+from backend.repositories.Google.CalendarAPI import getColors
 import backend.repositories.SECLO.SECLOProgressReporting as pr
 from backend.repositories.SECLO.SECLODriver import CitationResult, SECLOCitation, SECLOLoginCredentials, SECLOFileManager, SECLOFileType, SECLORecData, SECLOInvoiceParser, SECLOCalendarParser, SECLOClaimValidationData
 from backend.dataobjects.SECLODataClasses import SECLOClaimData
@@ -28,15 +29,16 @@ logging.getLogger().addHandler(logging.StreamHandler())
 #         if progress.getCompletion(): break
 
 
-progress = pr.ProgressReport()
-with SECLOCalendarParser(cred, None, progress) as cal:
-    # thread = Thread(target = progressThread, args = [progress])
-    # thread.start()
-    items = cal.getWorkableDays()
-# thread.join()
-for item in items:
-    print(f'{item[0].strftime('%d/%m/%Y')}:\t{item[1]} {f'({item[2]})' if not item[1] else ''}')
+# progress = pr.ProgressReport()
+# with SECLOCalendarParser(cred, None, progress) as cal:
+#     # thread = Thread(target = progressThread, args = [progress])
+#     # thread.start()
+#     items = cal.getWorkableDays()
+# # thread.join()
+# for item in items:
+#     print(f'{item[0].strftime('%d/%m/%Y')}:\t{item[1]} {f'({item[2]})' if not item[1] else ''}')
 
+getColors({})
 
 # files = SECLOFileManager(cred, 3576469)
 # files.uploadRecord('bepis', True)
