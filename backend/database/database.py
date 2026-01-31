@@ -3,10 +3,10 @@ from decimal import Decimal
 from enum import Enum, auto
 from typing import List, Self
 
-from backend.dataobjects.SECLODataClasses import SECLOAddressData
-from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, PersonType, RequiredAsType, SECLONotificationType
+from dataobjects.SECLODataClasses import SECLOAddressData
+from dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, PersonType, RequiredAsType, SECLONotificationType
 
-from sqlalchemy import ForeignKey, create_engine
+from sqlalchemy import ForeignKey, LargeBinary, create_engine
 from sqlalchemy import text
 from sqlalchemy import Table, Column, Integer, String
 
@@ -79,6 +79,7 @@ class Documentation(Base):
     fileDriveID: Mapped[str | None]
     importedDate: Mapped[datetime | None]
     importedFromSeclo: Mapped[bool]
+    file: Mapped[LargeBinary]
 
     employeeLink: Mapped[List["DocumentationEmployeeLink"]] = relationship(back_populates="document")
     employerLink: Mapped[List["DocumentationEmployerLink"]] = relationship(back_populates="document")
@@ -100,7 +101,7 @@ class DocumentationClaimLink(Base):
 
 class SecloNotification(Base):
     __tablename__ = "secloNotification"
-    notificationID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    notificationID: Mapped[int] = mapped_column(primary_key=True)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'))
     notificationType: Mapped[SECLONotificationType]
     secloPostalID: Mapped[int | None]

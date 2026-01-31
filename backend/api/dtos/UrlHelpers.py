@@ -1,5 +1,5 @@
 from pydantic import HttpUrl
-from backend.database.database import Agreement, Citation, Complaint, Documentation, Employee, Employer, Invoice, Lawyer, Nonagreement
+from database.database import Agreement, Citation, Complaint, Documentation, Employee, Employer, Invoice, Lawyer, Nonagreement
 
 baseURL = "https://sdadadatdlam.com" #TODO Wire actual URL!
 

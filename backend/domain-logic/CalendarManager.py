@@ -5,11 +5,11 @@ import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from backend.database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
-from backend.database.decorators import db, transactional
-from backend.dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
-from backend.dataobjects.enums import CitationType
-from backend.repositories.Google.CalendarAPI import createEvent, listEvents
+from database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
+from database.decorators import db, transactional
+from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
+from dataobjects.enums import CitationType
+from repositories.Google.CalendarAPI import createEvent, listEvents
 
 
 DEFAULT_DESCRIPTION = "No responder a este mail, consultas a <u>raqgonz@hotmail.com</u>"

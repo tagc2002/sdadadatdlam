@@ -12,7 +12,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-from backend.dataobjects.enums import CitationType, CitationStatus, DocType, RequiredAsType, SECLONotificationType
+from dataobjects.enums import CitationType, CitationStatus, DocType, RequiredAsType, SECLONotificationType
 
 
 # revision identifiers, used by Alembic.
@@ -27,12 +27,14 @@ def upgrade() -> None:
         'claim',
         sa.Column('recID', sa.Integer, primary_key=True, autoincrement=False),
         sa.Column('gdeID', sa.String(64), nullable=False, unique=True),
+        sa.Column('title', sa.String, nullable=False),
         sa.Column('initDate', sa.DateTime, nullable=False),
         sa.Column('initByEmployee', sa.Boolean, default=True, nullable=False),
         sa.Column('claimType', sa.Integer, nullable=False),
+        sa.Column('isEvilized', sa.Boolean, nullable=False),
         sa.Column('legalStuff', sa.String),
-        sa.Column('isDomestic', sa.Boolean, default=False, nullable=False),
-        sa.Column('calID', sa.String),
+        sa.Column('isDomestic', sa.Boolean, default=False, nullable=True),
+        sa.Column('calID', sa.String, nullable=True),
         if_not_exists=True
     )
     op.create_table(
@@ -42,7 +44,7 @@ def upgrade() -> None:
         sa.Column('secloAudID', sa.Integer, nullable=True, unique=True),
         sa.Column('citationDate', sa.DateTime, nullable=True),
         sa.Column('citationType', sa.Enum(CitationType), nullable=False),
-        sa.Column('citationStatus', sa.Enum(CitationStatus), nullable=True),
+        sa.Column('citationStatus', sa.Enum(CitationStatus), nullable=False),
         sa.Column('citationSummary', sa.String, nullable=True),
         sa.Column('notes', sa.String, nullable=True),
         sa.Column('isCalendarPrimary', sa.Boolean, nullable=False),
@@ -58,12 +60,19 @@ def upgrade() -> None:
         sa.Column('fileDriveID', sa.String, nullable=True),
         sa.Column('importedDate', sa.DateTime, nullable=True),
         sa.Column('importedFromSECLO', sa.Boolean, default=False),
+        sa.Column('file', sa.LargeBinary, nullable=True),
         if_not_exists=True
     )
 
     op.create_table(
+        'documentationClaimLink',
+        sa.Column('docID', sa.Integer, sa.ForeignKey('documentation.docID', onupdate='CASCADE', ondelete='CASCADE'), nullable=False, primary_key=True),
+        sa.Column('claimID', sa.Integer, sa.ForeignKey('claim.recID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True)
+    )
+
+    op.create_table(
         'secloNotification',
-        sa.Column('notificationID', sa.Integer, primary_key=True, autoincrement=False),
+        sa.Column('notificationID', sa.Integer, primary_key=True),
         sa.Column('citationID', sa.Integer, sa.ForeignKey('citation.citationID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False),
         sa.Column('notificationType', sa.Enum(SECLONotificationType), nullable=False),
         sa.Column('secloPostalID', sa.Integer, nullable=True),

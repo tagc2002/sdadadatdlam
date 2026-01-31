@@ -12,6 +12,7 @@ services:
         depends_on:
             python:
                 condition: service_started
+        env_file: ".env"
     python:
         build: ./backend
         container_name: backend
@@ -25,6 +26,7 @@ services:
                 restart: true
             redis:
                 condition: service_started
+        env_file: ".env"
     postgres:
         image: postgres:alpine
         container_name: prosgres
@@ -35,10 +37,7 @@ services:
             - 5432:5432
         networks:
             - backshots
-        environment:
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: passowrd
-            POSTGRES_DB: sdadadatdlam
+        env_file: ".env"
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
             interval: 10s
@@ -60,6 +59,13 @@ services:
         image: tailscale/tailscale:stable
         networks:
             - frontman
+        env_file: ".env"
+        volumes:
+            - ./backend/tsconfig:/config
+        cap_add:
+            - net_admin
+            - sys_module
+
     selenium-standalone:
         image: selenium/standalone-docker:4.40
         container_name: selenium-docker

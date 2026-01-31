@@ -3,11 +3,14 @@ from functools import wraps
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
-from backend.repositories.SECLO.SECLODriver import SECLOLoginCredentials
+from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 
 db_session_context = contextvars.ContextVar[Session | None]("db_session", default = None)
-engine = create_engine("sqlite+pysqlite:///:memory:", echo=True)
+engine: Engine | None = None
 sm = sessionmaker(engine)
+
+def initTransactionalAnnotation(engine: Engine):
+    engine = engine
 
 def secloCredentials(creds: SECLOLoginCredentials):
     def secloCredentials(func):
@@ -20,6 +23,7 @@ def secloCredentials(creds: SECLOLoginCredentials):
 
 def transactional(func):
     def wrap_func(*args, **kwargs):
+        if not engine: raise ValueError("DB NOT INITIALIZED")
         db_session = db_session_context.get()
         if db_session:
             return func(*args, **kwargs)

@@ -2,9 +2,9 @@ from datetime import datetime
 from typing import List, Self
 
 from pydantic import BaseModel, HttpUrl, computed_field
-from backend.database.database import Citation, Claim, SecloNotification
+from database.database import Citation, Claim, SecloNotification
 import UrlHelpers
-from backend.dataobjects.enums import CitationStatus, CitationType, SECLONotificationType
+from dataobjects.enums import CitationStatus, CitationType, SECLONotificationType
 
 class ClaimDTO(BaseModel):
     recID:          int

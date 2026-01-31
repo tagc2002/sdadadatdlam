@@ -17,10 +17,10 @@ from selenium.common.exceptions import NoSuchElementException, InvalidElementSta
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.print_page_options import PrintOptions
 from webdriver_manager.chrome import ChromeDriverManager
-from backend.dataobjects.enums import ClaimType, PersonType
-from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
-from backend.repositories.SECLO.SECLOProgressReporting import ProgressReport
-from backend.dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
+from dataobjects.enums import ClaimType, PersonType
+from repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
+from repositories.SECLO.SECLOProgressReporting import ProgressReport
+from dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
 
 from datetime import datetime
 from typing import List, Self, Tuple

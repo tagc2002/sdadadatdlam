@@ -5,8 +5,8 @@ from attr import dataclass
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
-from backend.dataobjects.enums import ClaimType, PersonType, SECLONotificationType
-from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
+from dataobjects.enums import ClaimType, PersonType, SECLONotificationType
+from repositories.SECLO.SECLOExceptions import InvalidParameterException
 import re
 
 import logging

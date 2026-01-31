@@ -11,4 +11,4 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-CMD ["fastapi", "run", "backend/main.py", "--port", "80", "--host", "0.0.0.0"]
+CMD ["fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0"]

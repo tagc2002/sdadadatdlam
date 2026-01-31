@@ -5,12 +5,12 @@ import uuid
 from pydantic import InstanceOf
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
-from backend.api.rest.claims import claims
-from backend.database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
-from backend.database.decorators import db, transactional
-from backend.dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
-from backend.dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
-from backend.repositories.Google.CalendarAPI import createEvent, listEvents
+from api.rest.claims import claims
+from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
+from database.decorators import db, transactional
+from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
+from dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
+from repositories.Google.CalendarAPI import createEvent, listEvents
 from repositories.SECLO.SECLODriver import SECLOCalendarParser, SECLOLoginCredentials, SECLORecData
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 import logging

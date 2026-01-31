@@ -10,7 +10,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import ValidationError
 
-from backend.dataobjects.GoogleDataClasses import GoogleColors, GoogleEvent
+from dataobjects.GoogleDataClasses import GoogleColors, GoogleEvent
 
 
 import logging
