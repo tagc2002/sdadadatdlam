@@ -1,16 +1,21 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from re import L
 from typing import List, Self
+import uuid
+from pydantic import InstanceOf
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from backend.api.rest.claims import claims
 from backend.database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
 from backend.database.decorators import db, transactional
-from backend.dataobjects.enums import CitationStatus, CitationType, ClaimType, RequiredAsType
+from backend.dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
+from backend.dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
+from backend.repositories.Google.CalendarAPI import createEvent, listEvents
 from repositories.SECLO.SECLODriver import SECLOCalendarParser, SECLOLoginCredentials, SECLORecData
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 import logging
 logger = logging.getLogger(__name__)
+
 
 class ClaimManager:
 
@@ -56,9 +61,8 @@ class ClaimManager:
 
             self.__updateNotifications(recID=localClaim.recID, creds=creds, progress=notificationProgress)
 
-            #TODO add to calendar
-            secondStage.setCompletion("Finished registering new claims")
-            progress.setCompletion("Finished registering new claims")
+        secondStage.setCompletion("Finished registering new claims")
+        progress.setCompletion("Finished registering new claims")
 
     def __ingressClaim(self: Self, creds: SECLOLoginCredentials, gdeID: str, initDate: datetime, progress: ProgressReport | None = None, db: Session | None = None) -> Claim:
         if not db: raise ValueError("Missing DB")
@@ -75,7 +79,8 @@ class ClaimManager:
             for employee in claimData.employees:
                 localEmployee = Employee(employeeName = employee.name, dni = employee.dni, cuil = employee.cuil, isValidated = employee.validated, 
                                         birthDate = employee.birthDate, startDate = employee.startDate, endDate = employee.endDate, wage = employee.wage,
-                                        claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct, claim = localClaim)
+                                        claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct, claim = localClaim,
+                                        headerName = employee.name.split(" ")[0])
                 localEmployee = self.__ingressEntryIfMissing(localEmployee, localClaim.employees)
                 
                 localAddress = self.__ingressEntryIfMissing(Address.fromAddressData(employee.address), localAddresses)
@@ -89,7 +94,9 @@ class ClaimManager:
             
             for employer in claimData.employers:
                 localEmployer = Employer(claim = localClaim, employerName = employer.name, cuil = employer.cuil, personType = employer.personType,
-                                        requiredAs = RequiredAsType.UNKNOWN, SECLORegisterDate = initDate, mustRegisterSECLO = False, isValidated = employer.validated)
+                                        requiredAs = RequiredAsType.UNKNOWN, SECLORegisterDate = initDate, mustRegisterSECLO = False, isValidated = employer.validated,
+                                        headerName = employer.name.split(" ")[0] if employer.personType == PersonType.PERSON else self.__filter_rules(employer.name)
+                                        )
                 localEmployer = self.__ingressEntryIfMissing(localEmployer, localClaim.employers)
 
                 localAddress = self.__ingressEntryIfMissing(Address.fromAddressData(employer.address), localAddresses)
@@ -137,7 +144,27 @@ class ClaimManager:
                         else:
                             logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\t match lawyer {localLawyer.lawyerName} to employer {represented[1]}. Execution will proceed')
             #TODO add others info
+            localClaim.calName = self.__getCalHeader(localClaim)
         return localClaim
+    
+    def __getCalHeader(self: Self, localClaim: Claim) -> str:
+        header = ""
+        employeeNames = []
+        employerNames = []
+        for employee in localClaim.employees:
+            self.__ingressEntryIfMissing(employee.headerName, employeeNames)    #TODO consignation must flip names!
+        for employer in localClaim.employers:
+            self.__ingressEntryIfMissing(employer.headerName, employerNames)
+        for index, name in enumerate(employeeNames):
+            header += ', ' if index > 0 else '' + name
+        header += ' c/ '
+        for index, name in enumerate(employeeNames):
+            header += ', ' if index > 0 else '' + name
+        return header
+    
+    def __filter_rules(self: Self, name: str) -> str:
+        # TODO apply rules
+        return name
 
     @staticmethod  
     def __ingressEntryIfMissing[T](entry: T, list: List[T]) -> T:

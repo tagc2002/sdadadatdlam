@@ -5,7 +5,7 @@ services:
         build: ./sdadadatdlam-frontend
         container_name: front
         ports: 
-            - 8080:8080
+            - 80:80
         networks:
             - backshots
             - frontman
@@ -13,10 +13,10 @@ services:
             python:
                 condition: service_started
     python:
-        build: .
+        build: ./backend
         container_name: backend
         ports: 
-            - "8080:8080"
+            - "80:80"
         networks:
             - backshots
         depends_on:
@@ -30,7 +30,7 @@ services:
         container_name: prosgres
         restart: always
         volumes:
-            - db-data:/var/lib/postgresql/data
+            - db-data:/var/lib/postgresql
         ports: 
             - 5432:5432
         networks:
@@ -60,10 +60,27 @@ services:
         image: tailscale/tailscale:stable
         networks:
             - frontman
+    selenium-standalone:
+        image: selenium/standalone-docker:4.40
+        container_name: selenium-docker
+        restart: always
+        volumes:
+            - ./backend/config.toml:/opt/selenium/config.toml
+            - /var/run/docker.sock:/var/run/docker.sock
+            - selenium-temp:/home/seluser/Downloads
+            - selenium-temp:/opt/selenium/assets
+        environment:
+            - CONFIG_FILE=/opt/bin/config.toml
+            - SE_NODE_DOCKER_CONFIG_FILENAME=config.toml
+        ports: 
+            - 4444:4444
+        networks:
+            - backshots
 
 volumes:
     db-data: {}
     redis-data: {}
+    selenium-temp: {}
 configs:
     httpd-config:
         external: true

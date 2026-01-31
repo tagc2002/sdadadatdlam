@@ -5,7 +5,7 @@ from attr import dataclass
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
-from backend.dataobjects.enums import ClaimType, SECLONotificationType
+from backend.dataobjects.enums import ClaimType, PersonType, SECLONotificationType
 from backend.repositories.SECLO.SECLOExceptions import InvalidParameterException
 import re
 
@@ -172,7 +172,7 @@ class SECLOEmployeeData(SECLOCommonData):
         return f'{super().__str__()}Birthdate: {self.birthDate}\nWorkdates: {self.startDate} - {self.endDate}\nwage: {self.wage}\nworktype: {self.category} - {self.cct}\nclaim: {self.claimAmount}'
     
 class SECLOEmployerData(SECLOCommonData):
-    def addPersonType(self: Self, personType: str):
+    def addPersonType(self: Self, personType: PersonType):
         self.personType = personType
     def __str__(self: Self):
         return f'{super().__str__()}Type: {self.personType}'

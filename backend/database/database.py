@@ -4,7 +4,7 @@ from enum import Enum, auto
 from typing import List, Self
 
 from backend.dataobjects.SECLODataClasses import SECLOAddressData
-from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, RequiredAsType, SECLONotificationType
+from backend.dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, PersonType, RequiredAsType, SECLONotificationType
 
 from sqlalchemy import ForeignKey, create_engine
 from sqlalchemy import text
@@ -22,6 +22,7 @@ class Claim(Base):
     __tablename__ = "claim"
     recID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     gdeID: Mapped[str] = mapped_column(String(64), unique=True)
+    calName: Mapped[str]
     initDate: Mapped[datetime]
     initByEmployee: Mapped[bool] = mapped_column(default=True)
     claimType: Mapped[int]
@@ -190,6 +191,7 @@ class Employee(Base):
     employeeID: Mapped[int] = mapped_column(primary_key=True)
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     employeeName: Mapped[str]
+    headerName: Mapped[str]
     dni: Mapped[int]
     cuil: Mapped[int | None]
     isValidated: Mapped[bool]
@@ -268,8 +270,9 @@ class Employer(Base):
     employerID: Mapped[int] = mapped_column(primary_key=True)
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     employerName: Mapped[str]
+    headerName: Mapped[str]
     cuil: Mapped[int | None]
-    personType: Mapped[str]
+    personType: Mapped[PersonType]
     requiredAs: Mapped[RequiredAsType]
     SECLORegisterDate: Mapped[datetime | None]
     mustRegisterSECLO: Mapped[bool]
@@ -398,7 +401,7 @@ class LawyerToEmployer(Base):
     clientAbsent: Mapped[bool | None]
     description: Mapped[str]
 
-    employer: Mapped["Employee"] = relationship(back_populates="lawyerLink")
+    employer: Mapped["Employer"] = relationship(back_populates="lawyerLink")
     lawyer: Mapped["Lawyer"] = relationship(back_populates="employerLink")
     citation: Mapped["Citation"] = relationship(back_populates="lawyerToEmployer")
     

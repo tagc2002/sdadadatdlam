@@ -17,7 +17,7 @@ from selenium.common.exceptions import NoSuchElementException, InvalidElementSta
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.print_page_options import PrintOptions
 from webdriver_manager.chrome import ChromeDriverManager
-from backend.dataobjects.enums import ClaimType
+from backend.dataobjects.enums import ClaimType, PersonType
 from backend.repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from backend.repositories.SECLO.SECLOProgressReporting import ProgressReport
 from backend.dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
@@ -855,7 +855,7 @@ class SECLORecData(SECLOAccessor):
             employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
             for item in self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb').find_elements(By.TAG_NAME, 'option'):
                 if item.get_attribute('selected'):
-                    employer.addPersonType(item.text)
+                    employer.addPersonType(PersonType.fromString(item.text))
             employer.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
             claimData.addEmployer(employer)
             if seclodbOK:
@@ -993,7 +993,7 @@ class SECLORecData(SECLOAccessor):
         else:
             raise InvalidCaseStateException("Couldn't open employer edit menu, you might need to edit this manually")
     
-        Select(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb')))).select_by_visible_text(employer.personType)
+        Select(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb')))).select_by_value(str(employer.personType.value[0]))
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_cuit_txtC'))).send_keys(str(employer.cuil) + Keys.TAB)
         Select(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_cmbActividad_cmb')))).select_by_value("22") #Otra
         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_txtActividad_txt'))).send_keys('alguna actividad misteriosa de la cual desconocemos' + Keys.TAB)    

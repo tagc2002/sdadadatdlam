@@ -208,3 +208,30 @@ class RequiredAsType(Enum):
     SOLIDARITY = 3
     NOT_REQUIRED = 4
     DIRECTORY_MEMBER = 5
+
+class PersonType(Enum):
+    UNKNOWN =       (0, 'Sel. Pers. Jurídica')
+    SH =            (1, 'Sociedades de Hecho')
+    SC =            (2, 'Sociedad Colectiva')
+    SCS =           (3, 'Sociedad en Comandita Simple')
+    SCI =           (4, 'Sociedad de Capital e Industria')
+    SRL =           (5, 'Sociedad de Responsabilidad Limitada')
+    SA =            (6, 'Sociedad Anónima')
+    SAE =           (7, 'Sociedad Anónima con Part. Estatal Mayoritaria')
+    SCA =           (8, 'Sociedad Comandita por Acciones')
+    SAP =           (9, 'Sociedad Accidental o en Participación')
+    CIVIC_ASSOC =   (10, 'Asociación Civil')
+    SCV =           (11,'Sociedades Civiles')
+    FUND =          (12, 'Fundaciones')
+    ONG =           (13, 'O.N.G. (Organizaciones no Gubernamentales)')
+    COOP =          (14, 'Cooperativas')
+    WORK_COOP =     (15, 'Cooperativas de trabajo')
+    PERSON =        (16, 'Persona Física')
+    OTHER =         (17, 'Otro')
+
+    @staticmethod
+    def fromString(string: str) -> 'PersonType':
+        for person in PersonType:
+            if string == person.value[1]:
+                return person
+        return PersonType.UNKNOWN
