@@ -6,11 +6,12 @@ from sqlalchemy.orm import sessionmaker, Session
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 
 db_session_context = contextvars.ContextVar[Session | None]("db_session", default = None)
-engine: Engine | None = None
-sm = sessionmaker(engine)
+sm: sessionmaker | None = None
 
-def initTransactionalAnnotation(engine: Engine):
-    engine = engine
+def initTransactionalAnnotation(e: Engine):
+    global sm
+
+    sm = sessionmaker(bind=e)
 
 def secloCredentials(creds: SECLOLoginCredentials):
     def secloCredentials(func):
@@ -23,14 +24,14 @@ def secloCredentials(creds: SECLOLoginCredentials):
 
 def transactional(func):
     def wrap_func(*args, **kwargs):
-        if not engine: raise ValueError("DB NOT INITIALIZED")
+        if not sm: raise ValueError("DB NOT INITIALIZED")
         db_session = db_session_context.get()
         if db_session:
-            return func(*args, **kwargs)
+            return func(*args, **kwargs, db=db_session)
         db_session = sm()
         db_session_context.set(db_session)
         try:
-            result = func(*args, **kwargs)
+            result = func(*args, **kwargs, db=db_session)
             db_session.commit()
         except Exception as e:
             db_session.rollback()
@@ -48,5 +49,6 @@ def db(func):
     @wraps(func)
     def wrap_func(*args, **kwargs):
         db_session = db_session_context.get()
+        if not db_session: raise ValueError("NO DB SESSION")
         return func(*args, **kwargs, db=db_session)
     return wrap_func

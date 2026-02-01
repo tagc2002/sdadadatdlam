@@ -3,7 +3,7 @@ from typing import List, Self
 
 from pydantic import BaseModel, HttpUrl, computed_field
 from database.database import Citation, Claim, SecloNotification
-import UrlHelpers
+import api.dtos.UrlHelpers
 from dataobjects.enums import CitationStatus, CitationType, SECLONotificationType
 
 class ClaimDTO(BaseModel):

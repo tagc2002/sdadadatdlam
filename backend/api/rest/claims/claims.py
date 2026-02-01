@@ -4,14 +4,14 @@ from typing import List
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import create_engine
-from ClaimManager import ClaimManager
+from domainlogic.ClaimManager import ClaimManager
 from api.dtos.DTOs import CitationDTO, ClaimDTO, NotificationDTO
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 from database.decorators import transactional
 
 cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
 
-router = APIRouter(prefix = '/claim')
+router = APIRouter(prefix = '/api/claim')
 
 claimManager = ClaimManager()
 

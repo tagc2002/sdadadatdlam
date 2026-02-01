@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 class ClaimManager:
 
-    @db
     @transactional
     def batchVerifyAgenda(self: Self, creds: SECLOLoginCredentials, progress: ProgressReport | None = None, db: Session | None = None, weeksBefore: int = 0, weeksAfter: int = 20):
         if not db: raise ValueError("Missing DB")
@@ -64,6 +63,7 @@ class ClaimManager:
         secondStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
+    @db
     def __ingressClaim(self: Self, creds: SECLOLoginCredentials, gdeID: str, initDate: datetime, progress: ProgressReport | None = None, db: Session | None = None) -> Claim:
         if not db: raise ValueError("Missing DB")
         localAddresses: List[Address] = []
@@ -144,7 +144,7 @@ class ClaimManager:
                         else:
                             logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\t match lawyer {localLawyer.lawyerName} to employer {represented[1]}. Execution will proceed')
             #TODO add others info
-            localClaim.calName = self.__getCalHeader(localClaim)
+            localClaim.title = self.__getCalHeader(localClaim)
         return localClaim
     
     def __getCalHeader(self: Self, localClaim: Claim) -> str:
@@ -227,7 +227,6 @@ class ClaimManager:
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
                     citation.notifications.append(localNotification)
 
-    @db
     @transactional
     def getClaims(self: Self, date: datetime | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")
@@ -239,7 +238,6 @@ class ClaimManager:
         claims.extend(dbclaims)
         return claims
 
-    @db
     @transactional
     def getClaim(self: Self, recID: int, db: Session | None = None) -> Claim:
         if not db: raise ValueError("Missing DB")
@@ -247,7 +245,6 @@ class ClaimManager:
         dbclaim = db.scalars(statement).one()
         return dbclaim
     
-    @db
     @transactional
     def getCitations(self: Self, recID: int, db: Session | None = None, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[Citation]:
         if not db: raise ValueError("Missing DB")
@@ -260,7 +257,6 @@ class ClaimManager:
         citations.extend(dbcitations)
         return citations
 
-    @db
     @transactional
     def getCitation(self: Self, citationID: int, db: Session | None = None) -> Citation:
         if not db: raise ValueError("Missing DB")
@@ -268,7 +264,6 @@ class ClaimManager:
         dbcitation = db.scalars(statement).one()
         return dbcitation
         
-    @db
     @transactional
     def getNotifications(self: Self, recID: int, citationID: int, db: Session | None = None, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[SecloNotification]:
         if not db: raise ValueError("Missing DB")

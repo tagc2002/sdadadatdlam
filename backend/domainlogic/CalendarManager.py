@@ -28,7 +28,7 @@ class CalendarManager():
             summary += 'S/A '
         else:
             summary += 'SECLO '
-        summary += localClaim.gdeID.split("-")[2] + '/' + localClaim.gdeID.split("-")[1] + ' ' + localClaim.calName
+        summary += localClaim.gdeID.split("-")[2] + '/' + localClaim.gdeID.split("-")[1] + ' ' + localClaim.title
         return summary
 
     def __citationMemberToGoogleAttendee(self: Self, citationMember: LawyerToEmployee | LawyerToEmployer) -> List[GoogleEventAttendee]:
@@ -102,7 +102,6 @@ class CalendarManager():
         else:
             return GoogleColorList.RED
     
-    @db
     @transactional
     def calendarInsertMissingCitations(self: Self, db: Session | None = None):
         if not db: raise ValueError("Missing DB")

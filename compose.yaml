@@ -5,7 +5,7 @@ services:
         build: ./sdadadatdlam-frontend
         container_name: front
         ports: 
-            - 80:80
+            - 8080:80
         networks:
             - backshots
             - frontman
@@ -13,6 +13,8 @@ services:
             python:
                 condition: service_started
         env_file: ".env"
+        expose:
+            - 8080
     python:
         build: ./backend
         container_name: backend
@@ -55,16 +57,6 @@ services:
             - 6379:6379
         networks:
             - backshots
-    tailscale:
-        image: tailscale/tailscale:stable
-        networks:
-            - frontman
-        env_file: ".env"
-        volumes:
-            - ./backend/tsconfig:/config
-        cap_add:
-            - net_admin
-            - sys_module
 
     selenium-standalone:
         image: selenium/standalone-docker:4.40
@@ -87,6 +79,7 @@ volumes:
     db-data: {}
     redis-data: {}
     selenium-temp: {}
+    tailscale-data: {}
 configs:
     httpd-config:
         external: true
