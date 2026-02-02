@@ -117,24 +117,36 @@ class SECLOAddressData():
     
  
 class SECLOCommonData():
-    def __init__(self: Self, name: str, dni: int | None = None, cuil: int | None = None, validated: bool = False):
+    def __init__(self: Self, name: str, dni: str | None = None, cuil: str | None = None, validated: bool = False):
         self.name: str = name
-        self.dni: int | None = dni
-        self.cuil: int | None = cuil
         self.address: SECLOAddressData | None = None
         self.mail: str | None = None
-        self.phone: str | None = None
-        self.mobilePhone: Tuple[str, str] | None = None
+        self.phone: int | None = None
+        self.mobilePhone: Tuple[int, int] | None = None
         self.validated: bool = validated
+        self.dni: int | None
+        self.cuil: str | None
+        try:
+            self.dni = int(dni or "")
+        except ValueError:
+            self.dni = None
+
+        self.cuil = cuil
     
     def addAddress(self: Self, address: SECLOAddressData):
         self.address = address
     def addMail(self: Self, mail: str | None = None):
         self.mail = mail
     def addPhone(self: Self, phone: str | None):
-        self.phone = phone
+        try:
+            self.phone = int(phone or "")
+        except ValueError:
+            self.phone = None
     def addMobilePhone(self: Self, prefix: str, phone: str):
-        self.mobilePhone = (prefix, phone)
+        try:
+            self.mobilePhone = (int(prefix), int(phone))
+        except ValueError:
+            self.mobilePhone = None
     def __str__(self: Self):
         return f'Name: {self.name}\nDNI: {self.dni}\nCUIT: {self.cuil}\nvalidated: {self.validated}\nphone: {self.phone} / {self.mobilePhone}\nmail: {self.mail}\naddress: {self.address}\n'
     def __eq__(self: Self, other: Any) -> bool:
@@ -144,7 +156,7 @@ class SECLOCommonData():
         if isinstance(other, SECLOCommonData):
             if self.dni is not None and self.dni == other.dni and self.dni > 0:
                 return True
-            if self.cuil is not None and self.cuil == other.cuil and self.cuil > 0:
+            if self.cuil is not None and self.cuil == other.cuil and self.cuil:
                 return True
             if len(self.name.split()) == len(other.name.split()):
                 for term in self.name.split():
@@ -155,19 +167,34 @@ class SECLOCommonData():
             return False
 
 class SECLOEmployeeData(SECLOCommonData):
-    def addBirthDate(self: Self, date: datetime):
-        self.birthDate = date
-    def addStartDate(self: Self, date: datetime):
-        self.startDate = date
-    def addEndDate(self: Self, date: datetime | None):
-        self.endDate = date
-    def addWage(self: Self, amount: int):
-        self.wage = amount
-    def addType(self: Self, cct: int | None = None, category: str | None = None):
+    def addBirthDate(self: Self, date: str):
+        try:
+            self.birthDate = datetime.strptime(date, "%d/%m/%Y")
+        except ValueError:
+            self.birthDate = None
+    def addStartDate(self: Self, date: str):
+        try:
+            self.startDate = datetime.strptime(date, "%d/%m/%Y")
+        except ValueError:
+            self.startDate = None    
+    def addEndDate(self: Self, date: str):
+        try:
+            self.endDate = datetime.strptime(date, "%d/%m/%Y")
+        except ValueError:
+            self.endDate = None
+    def addWage(self: Self, amount: str):
+        try:
+            self.wage = int(amount)
+        except ValueError:
+            self.wage = 0
+    def addType(self: Self, cct: str | None = None, category: str | None = None):
         self.cct = cct
         self.category = category
-    def addClaimAmount(self: Self, amount: int):
-        self.claimAmount = amount
+    def addClaimAmount(self: Self, amount: str):
+        try:
+            self.claimAmount = int(amount)
+        except ValueError:
+            self.claimAmount = None    
     def __str__(self: Self):
         return f'{super().__str__()}Birthdate: {self.birthDate}\nWorkdates: {self.startDate} - {self.endDate}\nwage: {self.wage}\nworktype: {self.category} - {self.cct}\nclaim: {self.claimAmount}'
     
@@ -178,12 +205,16 @@ class SECLOEmployerData(SECLOCommonData):
         return f'{super().__str__()}Type: {self.personType}'
 
 class SECLOLawyerData(SECLOCommonData):
-    def __init__(self: Self, name: str, dni: int | None = None, cuil: int | None = None, validated: bool = False):
+    def __init__(self: Self, name: str, dni: str | None = None, cuil: str | None = None, validated: bool = False):
         super().__init__(name, dni, cuil, validated)
         self.represents: List[Tuple[bool, str]] = []
-    def addTF(self: Self, t: int, f: int):
-        self.t = t
-        self.f = f
+    def addTF(self: Self, t: str, f: str):
+        try:
+            self.t = int(t)
+            self.f = int(f)
+        except ValueError:
+            self.t = 0
+            self.f = 0
     def addRepresented(self: Self, isEmployee: bool, name: str):
         self.represents.append((isEmployee, name))
         pass

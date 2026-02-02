@@ -12,6 +12,7 @@ from alembic.config import Config
 from alembic import command
 from sqlalchemy import Engine, create_engine
 
+from api.batch import ingress
 from database.decorators import initTransactionalAnnotation
 
 sys.path.append('/usr/app/src')
@@ -30,11 +31,11 @@ postgresdb = os.getenv("POSTGRES_DB")
 postgresdomain = os.getenv("POSTGRES_DOMAIN")
 alembic_script_location = './alembic'
 
-logging.basicConfig(filename="sdadadatdlam-webdata.log", level=logging.DEBUG)
+logging.basicConfig(filename="./logs/sdadadatdlam-backend.log", level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
 logger = logging.getLogger(__name__)
 
-connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@postgres/{postgresdb}'
+connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@{postgresdomain}/{postgresdb}'
 
 
 logger.info('Running DB migrations in %r on %r', alembic_script_location, connect_string)
@@ -48,3 +49,4 @@ initTransactionalAnnotation(engine)
 
 app = FastAPI()
 app.include_router(claims.router)
+app.include_router(ingress.router)

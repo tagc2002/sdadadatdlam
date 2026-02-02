@@ -13,12 +13,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, InvalidElementStateException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, InvalidElementStateException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.print_page_options import PrintOptions
 from webdriver_manager.chrome import ChromeDriverManager
 from dataobjects.enums import ClaimType, PersonType
-from repositories.SECLO.SECLOExceptions import UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
+from repositories.SECLO.SECLOExceptions import AttemptsExceededException, UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 from dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
 
@@ -41,6 +41,7 @@ portalVersionSupported = '8.4.11.0'
 downloadpath = Path(f'./temp/{uuid.uuid4()}')
 downloadpath = downloadpath.resolve()
 DEBUGMODE = os.getenv('DEBUGMODE', False)
+MAX_ATTEMPTS = 3
 
 class SECLOLoginCredentials:
     def __init__(self, user: str, password: str):
@@ -81,8 +82,11 @@ class SECLOAccessor:
         })
         logger.debug(f'Download path set to {downloadpath}')
         if DEBUGMODE:
-            logger.critical("\nWARNING!\n DEBUG mode enabled. Any requested changes will not be submitted.")
+            logger.critical("WARNING! DEBUG mode enabled. Any requested changes will not be submitted.")
 
+        if os.getenv("CONTAINER", "FALSE") == "TRUE":
+            self.chrome_options.add_argument("--no-sandbox")
+            self.chrome_options.add_argument("--disable-gpu")
         #chrome_service.creation_flags = CREATE_NO_WINDOW
         self.credentials = credentials
         self.recid: int | None = recid
@@ -91,12 +95,16 @@ class SECLOAccessor:
         self.printOptions.set_page_size(PrintOptions.A4)
 
     def __enter__(self: Self) -> Self:
-        logger.debug('Creating chrome webdriver service manager instance')
-        chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
+        if os.getenv("CONTAINER", "FALSE") == "TRUE":
+            seleniumRemote = os.getenv("SELENIUM_REMOTE_URL", "http://localhost:4444/wd/hub")
+            self.driver = webdriver.Remote(command_executor=seleniumRemote, options = self.chrome_options)
+        else:
+            logger.debug('Creating chrome webdriver service manager instance')
+            chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
 
-        logger.debug('instantiating chrome driver')
-        self.driver = webdriver.Chrome(service = chrome_service, options = self.chrome_options)
-        logger.debug('Chrome loaded successfully')
+            logger.debug('instantiating chrome driver')
+            self.driver = webdriver.Chrome(service = chrome_service, options = self.chrome_options)
+            logger.debug('Chrome loaded successfully')
 
         logger.debug('Getting login page...')
         for i in range(0,3):
@@ -158,7 +166,7 @@ class SECLOAccessor:
         if self.recid == None or self.recid == 0:
             raise InvalidParameterException()
         
-        logger.debug(f'Loading recID{self.recid}')
+        logger.debug(f'Loading recID {self.recid}')
         try:
             WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
             self.driver.execute_script("arguments[0].value = "+ str(self.recid)+ ";", self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"))
@@ -717,6 +725,7 @@ class SECLORecData(SECLOAccessor):
         Returns:
             List[SECLONotificationData]: The list of notification entries. 
         '''
+
         self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
         self._loadRec()
 
@@ -731,7 +740,7 @@ class SECLORecData(SECLOAccessor):
                 notificationType = SECLONotificationType.NotificationShortToEnum(row.find_elements(By.TAG_NAME, 'td')[4].text),
                 generatedDate = datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[5].text, '%d/%m/%Y'),
                 notifiedDate = None if len(row.find_elements(By.TAG_NAME, 'td')[6].text) == 0 
-                                else datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[6].text, '%d/%m/%Y'),
+                                else datetime.strptime(row.find_elements(By.TAG_NAME, 'td')[6].text, '%d-%m-%Y'),
                 notificationCode = row.find_elements(By.TAG_NAME, 'td')[7].text,
                 notificationStatus = row.find_elements(By.TAG_NAME, 'td')[8].text,
                 afipRead = 'Si' in row.find_elements(By.TAG_NAME, 'td')[9].text,
@@ -747,221 +756,242 @@ class SECLORecData(SECLOAccessor):
         Returns:
             SECLOClaimData: an object that contains all claim data.
         '''
-        self.progress.setSteps(1)
-        self.progress.setProgress(0, "Loading claim data form...")
-        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
-        self._loadRec()
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
-        seclodbOK = True
-        totalItems = len(self.driver.find_element(By.ID, 'ctl00_Center_lstTrabajadores').find_elements(By.TAG_NAME, 'li'))
-        totalItems += len(self.driver.find_element(By.ID, 'ctl00_Center_lstEmpleadores').find_elements(By.TAG_NAME, 'li'))
-        totalItems += len(self.driver.find_element(By.ID, 'ctl00_Center_lstReprentantes').find_elements(By.TAG_NAME, 'li'))
-        try:
-            totalItems += len(self.driver.find_element(By.ID, 'ctl00_Center_lstDerechohabientes').find_elements(By.TAG_NAME, 'li'))
-        except NoSuchElementException:
-            pass
-        self.progress.setSteps(2 + totalItems)
-        #CLAIM
-        self.progress.increaseProgress(1, "Getting claim data...")
-        claimData = SECLOClaimData(
-            recid = self.recid or 0,
-            legalStuff = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtComentario').get_attribute('value') or "",
-            initWorker = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked') == True
-        )
-        for row in self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_chkObjetoReclamo').find_elements(By.TAG_NAME, 'td'):
-            if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
-                claimData.addClaimObject(ClaimType.stringToEnum(row.find_element(By.TAG_NAME, 'label').text))
-        
-        #EMPLOYEES
-        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstTrabajadores').find_elements(By.TAG_NAME, 'li'))
-        i = 0
-        while i < listLen:
-            list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstTrabajadores')))
-            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
-            
-            cuil = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl00_cuit_txtC')))
-            name = f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtApellido_txt').get_attribute('value') or ""} {self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNombre_txt').get_attribute('value') or ""}'
-            self.progress.increaseProgress(1, f'Getting worker data for {name} ({i + 1} of {listLen})...')
+        attempts = 0
+        lastException = None
+        while attempts < MAX_ATTEMPTS:
+            try:
+                self.progress.setSteps(1)
+                self.progress.setProgress(0, "Loading claim data form...")
+                WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_lnkModificacion'))).click()
+                self._loadRec()
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ucReclamo_txtFecha')))
+                seclodbOK = True
+                totalItems = len(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstTrabajadores'))).find_elements(By.TAG_NAME, 'li'))
+                totalItems += len(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstEmpleadores'))).find_elements(By.TAG_NAME, 'li'))
+                totalItems += len(WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstReprentantes'))).find_elements(By.TAG_NAME, 'li'))
+                try:
+                    totalItems += len(WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lstDerechohabientes'))).find_elements(By.TAG_NAME, 'li'))
+                except (NoSuchElementException, TimeoutException):
+                    pass
+                self.progress.setSteps(2 + totalItems)
+                #CLAIM
+                self.progress.increaseProgress(1, "Getting claim data...")
+                claimData = SECLOClaimData(
+                    recid = self.recid or 0,
+                    legalStuff = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtComentario').get_attribute('value') or "",
+                    initWorker = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked') == True
+                )
+                for row in self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_chkObjetoReclamo').find_elements(By.TAG_NAME, 'td'):
+                    if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
+                        claimData.addClaimObject(ClaimType.stringToEnum(row.find_element(By.TAG_NAME, 'label').text))
+                
+                #EMPLOYEES
+                listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstTrabajadores').find_elements(By.TAG_NAME, 'li'))
+                i = 0
+                while i < listLen:
+                    list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstTrabajadores')))
+                    WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+                    
+                    cuil = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl00_cuit_txtC')))
+                    name = f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtApellido_txt').get_attribute('value') or ""} {self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNombre_txt').get_attribute('value') or ""}'
+                    self.progress.increaseProgress(1, f'Getting worker data for {name} ({i + 1} of {listLen})...')
 
-            if len(cuil.text) > 0 and seclodbOK and not cuil.get_attribute('disabled'):
-                cuil.click()
-                cuil.send_keys(Keys.TAB)
-                WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or "") > 0)
-                if 'null null' not in (self.driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or ""):
-                    name = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or ""
+                    if len(cuil.text) > 0 and seclodbOK and not cuil.get_attribute('disabled'):
+                        cuil.click()
+                        cuil.send_keys(Keys.TAB)
+                        WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or "") > 0)
+                        if 'null null' not in (self.driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or ""):
+                            name = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_cuit_txtRS').get_attribute('value') or ""
+                        else:
+                            seclodbOK = False
+                    employee = SECLOEmployeeData(
+                        name = name,
+                        dni = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS').get_attribute('value') or "",
+                        cuil = (cuil.get_attribute('value') or "").replace('-', ''),
+                        validated = seclodbOK
+                    )
+                    employee.addAddress(
+                        SECLOAddressData(
+                            province=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value') or "",
+                            district=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value') or "",
+                            county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
+                            street=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCalle').get_attribute('value') or "",
+                            number=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtNumero').get_attribute('value'),
+                            floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPiso').get_attribute('value'),
+                            apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtDepart').get_attribute('value'),
+                            cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCPA').get_attribute('value'),
+                            bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtAdicional').get_attribute('value')
+                        )
+                    )
+                    employee.addBirthDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecNacimiento_txt').get_attribute('value') or "")
+                    employee.addClaimAmount(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtImporte_txt').get_attribute('value') or "")
+                    employee.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtEmail_txt').get_attribute('value'))
+                    employee.addMobilePhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCodArea_Numerico').get_attribute('value') or "", self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCel_Numerico').get_attribute('value') or "")
+                    employee.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtTelefono_txt').get_attribute('value'))
+                    employee.addStartDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecIngreso_txt').get_attribute('value') or "")
+                    employee.addEndDate(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecEgreso_txt').get_attribute('value') or "")
+                    employee.addType(cct = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtConvenioNum_txt').get_attribute('value') or "", category = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCategoria_txt').get_attribute('value'))
+                    employee.addWage(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtRemuneracion_txt').get_attribute('value') or "")
+                    claimData.addEmployee(employee)
+                    if seclodbOK:
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl00_btnAgregar'))).click()
+                    i += 1
+
+                #EMPLOYERS
+                listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstEmpleadores').find_elements(By.TAG_NAME, 'li'))
+                i = 0
+                while i < listLen:
+                    list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstEmpleadores')))
+                    WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+
+                    WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl01_cuit_txtRS')))
+                    self.progress.increaseProgress(1, f'Getting employer data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value')} ({i + 1} of {listLen})...')
+                    employer = SECLOEmployerData(
+                        name=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value') or "",
+                        dni=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtNroDocumento_txt').get_attribute('value'),
+                        cuil=(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value') or "").replace('-',''),
+                        validated = seclodbOK
+                    )
+                    employer.addAddress(
+                        SECLOAddressData(
+                            province=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtProvincia').get_attribute('value') or "",
+                            district=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPartido').get_attribute('value') or "",
+                            county=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
+                            street=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCalle').get_attribute('value') or "",
+                            number=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtNumero').get_attribute('value'),
+                            floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPiso').get_attribute('value'),
+                            apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtDepart').get_attribute('value'),
+                            cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCPA').get_attribute('value'),
+                            bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtAdicional').get_attribute('value')
+                        )
+                    )
+                    employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
+                    for item in self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb').find_elements(By.TAG_NAME, 'option'):
+                        if item.get_attribute('selected'):
+                            employer.addPersonType(PersonType.fromString(item.text))
+                    employer.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
+                    claimData.addEmployer(employer)
+                    if seclodbOK:
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_btnAgregar'))).click()
+                    i += 1
+                
+                #LAWYERS
+                listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstReprentantes').find_elements(By.TAG_NAME, 'li'))
+                i = 0
+                while i < listLen:
+                    list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstReprentantes')))
+                    WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+
+                    email = (self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtEmail_txt').get_attribute('value') or "").strip()
+                    phone = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTelefono_txt').get_attribute('value')
+                    mobileprefix = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCodArea_Numerico').get_attribute('value')
+                    mobilephone = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCel_Numerico').get_attribute('value')
+
+                    #name validation
+                    folio = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt')))
+                    foliovalue = folio.get_property('value')
+                    # folio.send_keys(Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + '0' + Keys.TAB)
+                    # WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+                    # self.driver.switch_to.alert.accept()
+                    # folio.send_keys(str(foliovalue))
+                    # folio.send_keys(Keys.TAB)
+                    selfValidated = True
+                    name:str = " ".join([self.driver.find_element(By.ID, "ctl00_Center_ctl02_txtNombre_lbl").text, self.driver.find_element(By.ID, "ctl00_Center_ctl02_txtApellido_lbl").text])
+                    # try:
+                    #     WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text) > 0)
+                    # except Exception:
+                    #     try:
+                    #         alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+                    #         self.driver.switch_to.alert.accept()
+                    #     except Exception:
+                    #         selfValidated = False
+                    # if selfValidated:
+                    #     name:str = " ".join([self.driver.find_element(By.ID, "ctl00_Center_ctl02_txtNombre_lbl").text, self.driver.find_element(By.ID, "ctl00_Center_ctl02_txtApellido_lbl").text])
+                    self.progress.increaseProgress(1, f'Getting lawyer data for {name} ({i + 1} of {listLen})...')
+
+                    lawyer = SECLOLawyerData(
+                        name=name,
+                        dni=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNroDocumento_lbl').text,
+                        validated = seclodbOK and selfValidated
+                    )
+                    lawyer.addAddress(
+                        SECLOAddressData(
+                            province=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtProvincia').get_attribute('value') or "",
+                            district=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value') or "",
+                            county=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
+                            street=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCalle').get_attribute('value') or "",
+                            number=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtNumero').get_attribute('value'),
+                            floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPiso').get_attribute('value'),
+                            apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtDepart').get_attribute('value'),
+                            cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCPA').get_attribute('value'),
+                            bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtAdicional').get_attribute('value')
+                        )
+                    )
+
+                    for row in self.driver.find_element(By.ID, 'ctl00_Center_ctl02_lstAsignados').find_elements(By.TAG_NAME, 'td'):
+                        if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
+                            name = row.text.replace(',', '')
+                            lawyer.addRepresented(
+                                isEmployee=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_chkRepresentantes_0').get_attribute('checked') == True, 
+                                name=name
+                            )
+                    lawyer.addPhone(phone)
+                    lawyer.addMobilePhone(prefix=mobileprefix or "", phone=mobilephone or "")
+                    lawyer.addMail(email)
+                    lawyer.addTF(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTomo_txt').get_attribute('value') or "", self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtFolio_txt').get_attribute('value') or "")
+                    claimData.addLawyer(lawyer)
+                    i += 1       
+                
+                #OTHERS
+                try:
+                    listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstDerechohabientes').find_elements(By.TAG_NAME, 'li'))
+                except NoSuchElementException:
+                    pass
                 else:
-                    seclodbOK = False
-            employee = SECLOEmployeeData(
-                name = name,
-                dni = int(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS').get_attribute('value') or "0"),
-                cuil = int((cuil.get_attribute('value') or "").replace('-', '')),
-                validated = seclodbOK
-            )
-            employee.addAddress(
-                SECLOAddressData(
-                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value') or "",
-                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value') or "",
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
-                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCalle').get_attribute('value') or "",
-                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtNumero').get_attribute('value'),
-                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPiso').get_attribute('value'),
-                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtDepart').get_attribute('value'),
-                    cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCPA').get_attribute('value'),
-                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtAdicional').get_attribute('value')
-                )
-            )
-            employee.addBirthDate(datetime.strptime(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecNacimiento_txt').get_attribute('value') or "", "%d/%m/%Y"))
-            employee.addClaimAmount(int(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtImporte_txt').get_attribute('value') or ""))
-            employee.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtEmail_txt').get_attribute('value'))
-            employee.addMobilePhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCodArea_Numerico').get_attribute('value') or "", self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCel_Numerico').get_attribute('value') or "")
-            employee.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtTelefono_txt').get_attribute('value'))
-            employee.addStartDate(datetime.strptime(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecIngreso_txt').get_attribute('value') or "", "%d/%m/%Y"))
-            employee.addEndDate(datetime.strptime(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtFecEgreso_txt').get_attribute('value') or "", "%d/%m/%Y"))
-            employee.addType(cct = int(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtConvenioNum_txt').get_attribute('value') or ""), category = self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtCategoria_txt').get_attribute('value'))
-            employee.addWage(int(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_txtRemuneracion_txt').get_attribute('value') or ""))
-            claimData.addEmployee(employee)
-            if seclodbOK:
-                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl00_btnAgregar'))).click()
-            i += 1
+                    i = 0
+                    while i < listLen:
+                        list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstDerechohabientes')))
+                        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
+                        WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl03_txtNombre_txt')))
+                        self.progress.increaseProgress(1, f'Getting other data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNombre_txt').get_attribute('value')} ({i + 1} of {listLen})...')
+                        other = SECLOOtherData(
+                            name=f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNombre_txt').get_attribute('value')}',
+                            dni=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNroDocumento_txt').get_attribute('value')
+                        )
+                        other.addAddress(
+                            SECLOAddressData(
+                                province=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtProvincia').get_attribute('value') or "",
+                                district=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPartido').get_attribute('value') or "",
+                                county=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
+                                street=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCalle').get_attribute('value') or "",
+                                number=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtNumero').get_attribute('value'),
+                                floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPiso').get_attribute('value'),
+                                apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtDepart').get_attribute('value'),
+                                cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCPA').get_attribute('value'),
+                                bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtAdicional').get_attribute('value')
+                            )
+                        )
+                        other.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtEmail_txt').get_attribute('value'))
+                        other.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtTelefono_txt').get_attribute('value'))
+                        other.addMobilePhone(prefix=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCodArea_Numerico').get_attribute('value') or "", phone=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCel_Numerico').get_attribute('value') or "")
+                        claimData.addOther(other)
+                        i += 1
 
-        #EMPLOYERS
-        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstEmpleadores').find_elements(By.TAG_NAME, 'li'))
-        i = 0
-        while i < listLen:
-            list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstEmpleadores')))
-            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
-
-            WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl01_cuit_txtRS')))
-            self.progress.increaseProgress(1, f'Getting employer data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value')} ({i + 1} of {listLen})...')
-            employer = SECLOEmployerData(
-                name=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value') or "",
-                dni=int(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtNroDocumento_txt').get_attribute('value') or "0"),
-                cuil=int((self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value') or "0").replace('-','')),
-                validated = seclodbOK
-            )
-            employer.addAddress(
-                SECLOAddressData(
-                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtProvincia').get_attribute('value') or "",
-                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPartido').get_attribute('value') or "",
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
-                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCalle').get_attribute('value') or "",
-                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtNumero').get_attribute('value'),
-                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtPiso').get_attribute('value'),
-                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtDepart').get_attribute('value'),
-                    cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtCPA').get_attribute('value'),
-                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtAdicional').get_attribute('value')
-                )
-            )
-            employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
-            for item in self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb').find_elements(By.TAG_NAME, 'option'):
-                if item.get_attribute('selected'):
-                    employer.addPersonType(PersonType.fromString(item.text))
-            employer.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
-            claimData.addEmployer(employer)
-            if seclodbOK:
-                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_btnAgregar'))).click()
-            i += 1
-        
-        #LAWYERS
-        listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstReprentantes').find_elements(By.TAG_NAME, 'li'))
-        i = 0
-        while i < listLen:
-            list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstReprentantes')))
-            WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
-
-            email = (self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtEmail_txt').get_attribute('value') or "").strip()
-            phone = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTelefono_txt').get_attribute('value')
-            mobileprefix = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCodArea_Numerico').get_attribute('value')
-            mobilephone = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCel_Numerico').get_attribute('value')
-
-            #name validation
-            folio = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt')))
-            foliovalue = folio.get_property('value')
-            folio.send_keys(Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + '0' + Keys.TAB)
-            WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-            self.driver.switch_to.alert.accept()
-            folio.send_keys(str(foliovalue))
-            folio.send_keys(Keys.TAB)
-            WebDriverWait(self.driver, 5).until(lambda driver: len(driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text) > 0)
-            self.progress.increaseProgress(1, f'Getting lawyer data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text} {self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtApellido_lbl').text} ({i + 1} of {listLen})...')
-
-            lawyer = SECLOLawyerData(
-                name=f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text} {self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtApellido_lbl').text}',
-                dni=int(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtNroDocumento_lbl').text),
-                validated = seclodbOK
-            )
-            lawyer.addAddress(
-                SECLOAddressData(
-                    province=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtProvincia').get_attribute('value') or "",
-                    district=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPartido').get_attribute('value') or "",
-                    county=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
-                    street=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCalle').get_attribute('value') or "",
-                    number=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtNumero').get_attribute('value'),
-                    floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtPiso').get_attribute('value'),
-                    apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtDepart').get_attribute('value'),
-                    cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtCPA').get_attribute('value'),
-                    bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_Domicilio_direc_txtAdicional').get_attribute('value')
-                )
-            )
-
-            for row in self.driver.find_element(By.ID, 'ctl00_Center_ctl02_lstAsignados').find_elements(By.TAG_NAME, 'td'):
-                if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
-                    name = row.text.replace(',', '')
-                    lawyer.addRepresented(
-                        isEmployee=self.driver.find_element(By.ID, 'ctl00_Center_ctl02_chkRepresentantes_0').get_attribute('checked') == True, 
-                        name=name
-                    )
-            lawyer.addPhone(phone)
-            lawyer.addMobilePhone(prefix=mobileprefix or "", phone=mobilephone or "")
-            lawyer.addMail(email)
-            lawyer.addTF(int(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtTomo_txt').get_attribute('value') or "0"), int(self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtFolio_txt').get_attribute('value') or "0"))
-            claimData.addLawyer(lawyer)
-            i += 1       
-        
-        #OTHERS
-        try:
-            listLen = len(self.driver.find_element(By.ID, 'ctl00_Center_lstDerechohabientes').find_elements(By.TAG_NAME, 'li'))
-        except NoSuchElementException:
-            pass
-        else:
-            i = 0
-            while i < listLen:
-                list = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_lstDerechohabientes')))
-                WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable(list.find_elements(By.TAG_NAME, 'li')[i].find_element(By.TAG_NAME, 'a'))).click()
-                WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl03_txtNombre_txt')))
-                self.progress.increaseProgress(1, f'Getting other data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNombre_txt').get_attribute('value')} ({i + 1} of {listLen})...')
-                other = SECLOOtherData(
-                    name=f'{self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtApellido_txt').get_attribute('value')} {self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNombre_txt').get_attribute('value')}',
-                    dni=int(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtNroDocumento_txt').get_attribute('value') or "0"),
-                )
-                other.addAddress(
-                    SECLOAddressData(
-                        province=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtProvincia').get_attribute('value') or "",
-                        district=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPartido').get_attribute('value') or "",
-                        county=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
-                        street=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCalle').get_attribute('value') or "",
-                        number=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtNumero').get_attribute('value'),
-                        floor=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtPiso').get_attribute('value'),
-                        apt=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtDepart').get_attribute('value'),
-                        cpa=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtCPA').get_attribute('value'),
-                        bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_Domicilio_direc_txtAdicional').get_attribute('value')
-                    )
-                )
-                other.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtEmail_txt').get_attribute('value'))
-                other.addPhone(self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtTelefono_txt').get_attribute('value'))
-                other.addMobilePhone(prefix=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCodArea_Numerico').get_attribute('value') or "", phone=self.driver.find_element(By.ID, 'ctl00_Center_ctl03_txtCel_Numerico').get_attribute('value') or "")
-                claimData.addOther(other)
-                i += 1
-
-        #END
-        self.progress.setCompletion("Done getting data.")
-        if seclodbOK and not DEBUGMODE:
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkFinalizar'))).click()
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptarRec'))).click()
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSi'))).click()
-            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-            self.driver.switch_to.alert.accept()
-        return claimData
+                #END
+                self.progress.setCompletion("Done getting data.")
+                if seclodbOK and not DEBUGMODE:
+                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkFinalizar'))).click()
+                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptarRec'))).click()
+                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnSi'))).click()
+                    WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+                    self.driver.switch_to.alert.accept()
+                return claimData
+            except Exception as e:
+                attempts += 1
+                lastException = e
+                logger.warning(e)
+                continue
+        raise AttemptsExceededException(lastException)
 
     def __addressFieldComplete(self: Self, field: WebElement, text: str) -> None:
         if not field.get_attribute('readOnly'):
@@ -1011,7 +1041,7 @@ class SECLORecData(SECLOAccessor):
         WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtAdicional'))).send_keys((employer.address.bonusData  if employer.address else "") or "")
 
         WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_txtEmail_txt'))).send_keys(employer.mail or "")
-        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_txtTelefono_txt'))).send_keys(employer.phone or "")
+        WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_txtTelefono_txt'))).send_keys(str(employer.phone) or "")
 
         if not DEBUGMODE:
             WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_ctl01_btnAgregar'))).click()
@@ -1071,60 +1101,74 @@ class SECLOCalendarParser(SECLOAccessor):
         firstStage = ProgressReport().setSteps(1 + (1 if date else (weeksBefore + weeksAfter))).setMessage("Loading calendar")
         secondStage = ProgressReport()
         self.progress.compose(firstStage).compose(secondStage)
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
-
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
-        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
-
-        IDs = []
-        #Loop through weeks
-        if (date):
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_txtFecha_txt'))).send_keys(
-                Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + date.strftime("%d/%m/%Y")
-            )
-            WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnConsultar'))).click()
-            firstStage.increaseProgress(1, f'Parsing calendar week of {date.strftime("%d/%m/%Y")}')
-            WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
-            table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
-            IDs.extend(self.__iterateCalendar(table))
-        else:
-            for i in range(0, weeksAfter):
-                firstStage.increaseProgress(1, f'Parsing calendar week {i} of {weeksBefore + weeksAfter}')
-                WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
-                table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
-                IDs.extend(self.__iterateCalendar(table))
-                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
-            if weeksAfter > 0:
+        attempts = 0
+        lastException = None
+        while attempts < MAX_ATTEMPTS:
+            try:
+                firstStage.setSteps(1 + (1 if date else (weeksBefore + weeksAfter))).setMessage("Loading calendar")
+                firstStage.setProgress(0, "Loading calendar")
+                secondStage.setSteps(1)
+                secondStage.setProgress(0, "")
                 WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
 
                 WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
                 WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
-                for i in range(0, weeksBefore):
-                    firstStage.increaseProgress(1, f'Parsing calendar week {i + weeksAfter} of {weeksBefore + weeksAfter}')
+
+                IDs = []
+                #Loop through weeks
+                if (date):
+                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_txtFecha_txt'))).send_keys(
+                        Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + date.strftime("%d/%m/%Y")
+                    )
+                    WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnConsultar'))).click()
+                    firstStage.increaseProgress(1, f'Parsing calendar week of {date.strftime("%d/%m/%Y")}')
                     WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
                     table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
                     IDs.extend(self.__iterateCalendar(table))
-                    WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkIzq'))).click()
-        secondStage.setSteps(len(IDs))
-        secondStage.setMessage("Loading citation data")
-        firstStage.setCompletion("Finished loading calendar weeks")
-        calendarCitations = []
-        for index, item in enumerate(IDs):
-            secondStage.increaseProgress(1, f'Loading citation data for {index + 1} of {len(IDs)}')
-            self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?AudId={item}&esPortal=1')
-            gdeIDText = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
-            initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
-            initDateTimeText = initDatetimeText.split()[0] + ' ' + initDatetimeText.split()[1].split(':')[0] + ':' + initDatetimeText.split()[1].split(':')[1]
-            calendarCitations.append(SECLOCitation(
-                gdeID = gdeIDText,
-                citationDate = datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
-                initDate = datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
-                citationID = item,
-                citationType = self.driver.find_element(By.ID, 'auTipoYEstado').text,
-                pdfString = self.driver.print_page(self.printOptions)
-                ))
-        secondStage.setCompletion("Finished loading calendar info")
-        return calendarCitations
+                else:
+                    for i in range(0, weeksAfter):
+                        firstStage.increaseProgress(1, f'Parsing calendar week {i} of {weeksBefore + weeksAfter}')
+                        WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
+                        table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
+                        IDs.extend(self.__iterateCalendar(table))
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
+                    if weeksAfter > 0:
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
+
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
+                        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
+                        for i in range(0, weeksBefore):
+                            firstStage.increaseProgress(1, f'Parsing calendar week {i + weeksAfter} of {weeksBefore + weeksAfter}')
+                            WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
+                            table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
+                            IDs.extend(self.__iterateCalendar(table))
+                            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkIzq'))).click()
+                secondStage.setSteps(len(IDs))
+                secondStage.setMessage("Loading citation data")
+                firstStage.setCompletion("Finished loading calendar weeks")
+                calendarCitations = []
+                for index, item in enumerate(IDs):
+                    secondStage.increaseProgress(1, f'Loading citation data for {index + 1} of {len(IDs)}')
+                    self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?AudId={item}&esPortal=1')
+                    gdeIDText = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
+                    initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
+                    initDateTimeText = initDatetimeText.split()[0] + ' ' + initDatetimeText.split()[1].split(':')[0] + ':' + initDatetimeText.split()[1].split(':')[1]
+                    calendarCitations.append(SECLOCitation(
+                        gdeID = gdeIDText,
+                        citationDate = datetime.strptime(self.driver.find_element(By.ID, 'rcFechaA').text.split('a')[0], r'%d/%m/%Y - %H:%M '),
+                        initDate = datetime.strptime(initDateTimeText, r'%d/%m/%Y %H:%M'),
+                        citationID = item,
+                        citationType = self.driver.find_element(By.ID, 'auTipoYEstado').text,
+                        pdfString = self.driver.print_page(self.printOptions)
+                        ))
+                secondStage.setCompletion("Finished loading calendar info")
+                return calendarCitations
+            except Exception as e:
+                attempts += 1
+                lastException = e
+                logger.warning(e, exc_info=True)
+                continue
+        raise AttemptsExceededException(lastException)
     
     def getWorkableDays(self: Self, weeksAhead: int = 20) -> List[Tuple[datetime, bool, str]]:
         '''

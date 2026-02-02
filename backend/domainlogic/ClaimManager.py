@@ -1,12 +1,10 @@
+import base64
 from datetime import datetime, timedelta
 from re import L
 from typing import List, Self
-import uuid
-from pydantic import InstanceOf
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
-from api.rest.claims import claims
-from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
+from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, EmployeeRelationshipData, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
 from database.decorators import db, transactional
 from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
 from dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
@@ -29,37 +27,54 @@ class ClaimManager:
         progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Registering new claims')
 
         with SECLOCalendarParser(creds, None, firstStage) as calParser:
-            calendarInfo = calParser.getCalendar(weeksBefore=0, weeksAfter=20)
+            calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
         firstStage.setCompletion("Done acquiring calendar data")
+
+        for index, entry in enumerate(calendarInfo):
+            if CitationStatus.citationStringToEnum(entry.citationType) == CitationStatus.PENDING and CitationType.citationStringToEnum(entry.citationType) == CitationType.FIRST:
+                logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
+                with open(f'/home/downloads/{entry.citationDate}.pdf', 'wb') as file:
+                    file.write(base64.b64decode(entry.pdfString or ""))
+            else:
+                logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
 
         counter = 0
         for index, entry in enumerate(calendarInfo):
             entryProgress = ProgressReport()
             secondStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
-            statement = select(Claim).where(Claim.gdeID == entry.gdeID)
-            localClaim = db.scalars(statement).first()
+            localCitation = db.scalars(select(Citation).where(Citation.secloAudID == entry.citationID)).one_or_none()
+            localClaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
             if not localClaim:
                 counter += 1
                 ingressProgress = ProgressReport()
                 entryProgress.compose(ingressProgress, f'Found {counter} new claim{'s' if counter > 1 else ''}')
                 localClaim = self.__ingressClaim(creds, entry.gdeID, entry.initDate, ingressProgress)
                 db.add(localClaim)
-            
+
+            if not localCitation:
+                localCitation = Citation(secloAudID = entry.citationID, 
+                                        citationDate = entry.citationDate, recID = localClaim.recID,
+                                        citationType = CitationType.citationStringToEnum(entry.citationType),
+                                        citationStatus = CitationStatus.citationStringToEnum(entry.citationType),
+                                        )
+                primarize = True
+                if localCitation.citationStatus == CitationStatus.PENDING and localCitation.citationType == CitationType.FIRST:
+                    for citation in localClaim.citations:
+                        if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.NTH:
+                            primarize = False
+                        if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.FIRST and ((citation.citationDate or datetime.now()) > (localCitation.citationDate or datetime.now())):
+                            primarize = False
+                localCitation.isCalendarPrimary = primarize
+                db.add(localCitation)                
             notificationProgress = ProgressReport()
             entryProgress.compose(notificationProgress, 'Loading notification data')
 
-            localCitation = self.__ingressEntryIfMissing(Citation(secloAudID = entry.citationID, 
-                                    claim=localClaim, 
-                                    citationDate = entry.citationDate,
-                                    citationType = CitationType.citationStringToEnum(entry.citationType),
-                                    citationStatus = CitationStatus.citationStringToEnum(entry.citationType)
-                ), localClaim.citations)
             for lawyer in localClaim.lawyers:
                 for link in lawyer.employeeLink + lawyer.employerLink:
                     link.citation = localCitation
 
-            self.__updateNotifications(recID=localClaim.recID, creds=creds, progress=notificationProgress)
-
+            self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation)
+            db.commit()
         secondStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
@@ -75,12 +90,12 @@ class ClaimManager:
             with SECLORecData(creds, None, progress) as recData:
                 claimData = recData.setRecIDfromGDEID(gdeID).getClaimData()
             localClaim = Claim(recID = claimData.recid, gdeID = gdeID, initDate = initDate, initByEmployee = claimData.initWorker,
-                                claimType = ClaimType.enumsToInt(claimData.claims), legalStuff = claimData.legalStuff)
+                                claimType = ClaimType.enumsToInt(claimData.claims), legalStuff = claimData.legalStuff, isEvilized = False)
             for employee in claimData.employees:
                 localEmployee = Employee(employeeName = employee.name, dni = employee.dni, cuil = employee.cuil, isValidated = employee.validated, 
-                                        birthDate = employee.birthDate, startDate = employee.startDate, endDate = employee.endDate, wage = employee.wage,
-                                        claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct, claim = localClaim,
-                                        headerName = employee.name.split(" ")[0])
+                                        birthDate = employee.birthDate,  claim = localClaim, headerName = employee.name.split(" ")[0])
+                localEmployee.relationshipData.append(EmployeeRelationshipData(startDate = employee.startDate, endDate = employee.endDate, wage = employee.wage,
+                                        claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct, employee = localEmployee))
                 localEmployee = self.__ingressEntryIfMissing(localEmployee, localClaim.employees)
                 
                 localAddress = self.__ingressEntryIfMissing(Address.fromAddressData(employee.address), localAddresses)
@@ -95,7 +110,7 @@ class ClaimManager:
             for employer in claimData.employers:
                 localEmployer = Employer(claim = localClaim, employerName = employer.name, cuil = employer.cuil, personType = employer.personType,
                                         requiredAs = RequiredAsType.UNKNOWN, SECLORegisterDate = initDate, mustRegisterSECLO = False, isValidated = employer.validated,
-                                        headerName = employer.name.split(" ")[0] if employer.personType == PersonType.PERSON else self.__filter_rules(employer.name)
+                                        headerName = employer.name.split(" ")[0] if employer.personType == PersonType.PERSON else self.__filter_rules(employer.name),
                                         )
                 localEmployer = self.__ingressEntryIfMissing(localEmployer, localClaim.employers)
 
@@ -105,7 +120,7 @@ class ClaimManager:
 
                 if (employer.mail):
                     localMail = self.__ingressEntryIfMissing(Email(email = employer.mail, registeredOn = initDate, registeredFrom = "SECLO"), localMails)
-                    employerEmailLink = EmployerEmailLink(email = localMail, employee = localEmployer)
+                    employerEmailLink = EmployerEmailLink(email = localMail, employer = localEmployer)
                     if employerEmailLink not in localEmployer.emails: localEmployer.emails.append(employerEmailLink)
                 
             for lawyer in claimData.lawyers:
@@ -118,10 +133,10 @@ class ClaimManager:
                     lawyerEmailLink = LawyerEmailLink(email = localMail, lawyer = localLawyer)
                     if lawyerEmailLink not in localLawyer.emails: localLawyer.emails.append(lawyerEmailLink)
                 if (lawyer.phone):
-                    localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = int(lawyer.phone), obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
+                    localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = lawyer.phone, obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
                     if localPhone not in localLawyer.telephones: localLawyer.telephones.append(localPhone)
                 if (lawyer.mobilePhone):
-                    localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = int(lawyer.mobilePhone[1]), prefix = int(lawyer.mobilePhone[0]), obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
+                    localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = lawyer.mobilePhone[1], prefix = lawyer.mobilePhone[0], obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
                     if localPhone not in localLawyer.telephones: localLawyer.telephones.append(localPhone)
                 for represented in lawyer.represents:
                     if represented[0]:  #is employee
@@ -158,7 +173,7 @@ class ClaimManager:
         for index, name in enumerate(employeeNames):
             header += ', ' if index > 0 else '' + name
         header += ' c/ '
-        for index, name in enumerate(employeeNames):
+        for index, name in enumerate(employerNames):
             header += ', ' if index > 0 else '' + name
         return header
     
@@ -171,7 +186,9 @@ class ClaimManager:
         #only add address if not added already (one address entry can be used for multiple people)
         if (entry not in list):
             list.append(entry)
+            logger.debug(f'Appended {T} to list')
         else:
+            logger.debug(f'{T} not appended to list')
             for loadedEntry in list:
                 entry = loadedEntry if entry == loadedEntry else entry
         return entry
@@ -186,7 +203,10 @@ class ClaimManager:
             localNotification = db.scalars(select(SecloNotification).where(SecloNotification.secloPostalID == notification.id)).one_or_none()
             if (localNotification):
                 localNotification.receptionDate = notification.notifiedDate
-                localNotification.deliveryCode = int(notification.notificationCode)
+                try:
+                    localNotification.deliveryCode = int(notification.notificationCode)
+                except ValueError:
+                    localNotification.deliveryCode = None
                 localNotification.deliveryDescription = notification.notificationStatus + f'(Leida en afip)' if notification.afipRead else ''
                 localNotification.citation.citationStatus = CitationStatus.citationStringToEnum(notification.citationStatus)
             else:
@@ -201,7 +221,9 @@ class ClaimManager:
                                     citationStatus = CitationStatus.citationStringToEnum(calCitation.citationType),
                                     isCalendarPrimary = True, recID = recID, claim = db.scalar(select(Claim).where(Claim.recID == recID))
                                 )
-                                db.scalars(select(Citation).where(Citation.recID == recID and Citation.isCalendarPrimary)).one().isCalendarPrimary = False
+                                oldCitation = db.scalars(select(Citation).where(Citation.recID == recID and Citation.isCalendarPrimary)).one_or_none()
+                                if oldCitation:
+                                    oldCitation.isCalendarPrimary = False
                                 db.add(citation)
                                 break
                         else:
@@ -209,8 +231,13 @@ class ClaimManager:
                 if (citation.citationDate == notification.citationDate):
                     localNotification = SecloNotification(citation = citation, notificationType = notification.notificationType,
                                                         secloPostalID = notification.id, emissionDate = notification.generatedDate,
-                                                        receptionDate = notification.notifiedDate, deliveryCode = notification.notificationCode,
+                                                        receptionDate = notification.notifiedDate,
                                                         deliveryDescription = notification.notificationStatus + '(Leida en afip)' if notification.afipRead else '')
+                    try:
+                        localNotification.deliveryCode = int(notification.notificationCode)
+                    except ValueError:
+                        localNotification.deliveryCode = 00 if notification.afipRead else None
+
                     if notification.isEmployer:
                         for employer in citation.claim.employers:
                             if employer.employerName == notification.person:

@@ -143,9 +143,9 @@ class CitationType(Enum):
 
     @staticmethod
     def citationStringToEnum(string: str):
-        if ('Primer' in string):
+        if ('Primer' in string or ('Nueva' in string and not 'Incomparecencia' in string)):
             return CitationType.FIRST
-        if ('N-' in string):
+        if ('N-' in string or 'Incomparecencia' in string):
             return CitationType.NTH
         return CitationType.STANDBY
 

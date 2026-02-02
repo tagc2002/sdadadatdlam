@@ -3,8 +3,7 @@ import os
 from typing import List
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI
-from sqlalchemy import create_engine
-from domainlogic.ClaimManager import ClaimManager
+from domainlogic.claimmanager import ClaimManager
 from api.dtos.DTOs import CitationDTO, ClaimDTO, NotificationDTO
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 from database.decorators import transactional

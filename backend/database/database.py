@@ -6,7 +6,7 @@ from typing import List, Self
 from dataobjects.SECLODataClasses import SECLOAddressData
 from dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, PersonType, RequiredAsType, SECLONotificationType
 
-from sqlalchemy import ForeignKey, LargeBinary, create_engine
+from sqlalchemy import BigInteger, ForeignKey, LargeBinary, create_engine
 from sqlalchemy import text
 from sqlalchemy import Table, Column, Integer, String
 
@@ -119,12 +119,12 @@ class BankAccount(Base):
     __tablename__ = "bankAccount"
 
     accountID: Mapped[int] = mapped_column(primary_key=True)
-    CBU: Mapped[str | None]
+    cbu: Mapped[str | None]
     bank: Mapped[str]
     alias: Mapped[str | None]
     accountNumber: Mapped[str | None]
     accountType: Mapped[str | None]
-    CUIT: Mapped[int | None]
+    cuit: Mapped[int | None]
     isValidated: Mapped[bool]
     accountOwner: Mapped[str | None]
 
@@ -195,7 +195,7 @@ class Employee(Base):
     employeeName: Mapped[str]
     headerName: Mapped[str]
     dni: Mapped[int]
-    cuil: Mapped[int | None]
+    cuil: Mapped[str | None]
     isValidated: Mapped[bool]
     birthDate: Mapped[datetime | None]
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey('bankAccount.accountID'))
@@ -224,7 +224,7 @@ class Employee(Base):
 
 class EmployeeRelationshipData(Base):
     __tablename__ = 'employeeRelationshipData'
-    employeeDataId: Mapped[int] = mapped_column(primary_key=True)
+    employeeDataID: Mapped[int] = mapped_column(primary_key=True)
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'))
     startDate: Mapped[datetime | None]
     endDate: Mapped[datetime | None]
@@ -280,7 +280,7 @@ class Employer(Base):
     recID: Mapped[int] = mapped_column(ForeignKey('claim.recID'))
     employerName: Mapped[str]
     headerName: Mapped[str | None]
-    cuil: Mapped[int | None]
+    cuil: Mapped[str | None]
     personType: Mapped[PersonType]
     requiredAs: Mapped[RequiredAsType]
     SECLORegisterDate: Mapped[datetime | None]
@@ -357,7 +357,7 @@ class Lawyer(Base):
     f: Mapped[int]
     registeredOn: Mapped[datetime | None]
     registeredFrom: Mapped[str | None]
-    cuil: Mapped[int | None]
+    cuil: Mapped[str | None]
     isValidated: Mapped[bool]
     hasVAT: Mapped[bool]
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey('bankAccount.accountID'))
@@ -774,7 +774,7 @@ class LawyerDirectory(Base):
     name: Mapped[str]
     t: Mapped[int]
     f: Mapped[int]
-    cuit: Mapped[int]
+    cuit: Mapped[str]
     bankAccountID: Mapped[int | None] = mapped_column(ForeignKey("bankAccount.accountID"))
 
     bankAccount: Mapped["BankAccount | None"] = relationship(back_populates="lawyerDirectory")
@@ -785,13 +785,13 @@ class LawyerDirectory(Base):
 
 class CompanyDirectory(Base):
     __tablename__ = 'companyDirectory'
-    companyCUIT: Mapped[int] = mapped_column(primary_key=True)
+    companyCUIT: Mapped[str] = mapped_column(primary_key=True)
     name: Mapped[str]  
 
 class LawyerCompanyDirectoryLink(Base):
     __tablename__ = "lawyerCompanyDirectoryLink"
 
-    companyCUIT: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    companyCUIT: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
     lawyerID: Mapped[int] = mapped_column(ForeignKey("lawyerDirectory.lawyerID"), primary_key=True)
     autoNotify: Mapped[bool]
 
@@ -823,7 +823,7 @@ class LawfirmLawyerLink(Base):
 class LawfirmCompanyDirectoryLink(Base):
     __tablename__ = "lawfirmCompanyDirectoryLink"
 
-    companyCUIT: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    companyCUIT: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
     lawfirmID: Mapped[int] = mapped_column(ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True)
     autoNotify: Mapped[bool]
 

@@ -28,6 +28,9 @@ services:
                 restart: true
             redis:
                 condition: service_started
+        volumes:
+            - ./logs:/usr/app/src/logs
+            - ./downloads:/home/downloads
         env_file: ".env"
     postgres:
         image: postgres:alpine
@@ -36,7 +39,9 @@ services:
         volumes:
             - db-data:/var/lib/postgresql
         ports: 
-            - 5432:5432
+            - 5000:5432
+        expose:
+            - 5000
         networks:
             - backshots
         env_file: ".env"

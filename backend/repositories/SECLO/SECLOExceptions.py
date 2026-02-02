@@ -26,3 +26,7 @@ class InvalidParameterException(Exception):
 #Error class to raise when a file download attempt has timed out
 class FileDownloadTimeoutException(Exception):
     pass
+
+#Error class to raise when an operation has been attempted too many times without success
+class AttemptsExceededException(Exception):
+    pass
