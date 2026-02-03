@@ -293,3 +293,4 @@ class SECLOCitation():
     citationDate: datetime
     citationType: str
     pdfString: str | None = None
+    notificationData: List[SECLONotificationData] | None = None

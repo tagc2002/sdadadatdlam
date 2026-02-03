@@ -386,9 +386,9 @@ class LawyerToEmployee(Base):
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'), primary_key=True)
     lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'), primary_key=True)
-    isActualLawyer: Mapped[bool | None]
-    isSelfRepresenting: Mapped[bool | None]
-    clientAbsent: Mapped[bool | None]
+    isActualLawyer: Mapped[bool]
+    isSelfRepresenting: Mapped[bool]
+    clientAbsent: Mapped[bool]
     description: Mapped[str]
 
     employee: Mapped["Employee"] = relationship(back_populates="lawyerLink")
@@ -401,10 +401,10 @@ class LawyerToEmployer(Base):
     employerID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
     lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'), primary_key=True)
-    isActualLawyer: Mapped[bool | None]
-    isEmpowered: Mapped[bool | None]
-    isSelfRepresenting: Mapped[bool | None]
-    clientAbsent: Mapped[bool | None]
+    isActualLawyer: Mapped[bool]
+    isEmpowered: Mapped[bool]
+    isSelfRepresenting: Mapped[bool]
+    clientAbsent: Mapped[bool]
     description: Mapped[str]
 
     employer: Mapped["Employer"] = relationship(back_populates="lawyerLink")
@@ -686,7 +686,7 @@ class Nonagreement(Base):
     citationID: Mapped[int] = mapped_column(ForeignKey('citation.citationID'), primary_key=True)
     claims: Mapped[str]
     bonusData: Mapped[str | None]
-    sendDate: Mapped[datetime | None]
+    sentDate: Mapped[datetime | None]
     notes: Mapped[str | None]
     waitToSend: Mapped[bool]
 

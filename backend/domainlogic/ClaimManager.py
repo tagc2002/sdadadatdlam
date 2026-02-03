@@ -4,8 +4,9 @@ from re import L
 from typing import List, Self
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
+from dataobjects.SECLODataClasses import SECLONotificationData
+from repositories.SECLO.SECLOExceptions import RecNotAccessibleException
 from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, EmployeeRelationshipData, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
-from database.decorators import db, transactional
 from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
 from dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
 from repositories.Google.CalendarAPI import createEvent, listEvents
@@ -16,70 +17,87 @@ logger = logging.getLogger(__name__)
 
 
 class ClaimManager:
-
-    @transactional
     def batchVerifyAgenda(self: Self, creds: SECLOLoginCredentials, progress: ProgressReport | None = None, db: Session | None = None, weeksBefore: int = 0, weeksAfter: int = 20):
         if not db: raise ValueError("Missing DB")
         firstStage = ProgressReport()
         secondStage = ProgressReport()
+        thirdStage = ProgressReport()
         if not progress:
             progress = ProgressReport()
-        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Registering new claims')
+        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Aquiring notification data').compose(thirdStage, 'Registering new claims')
 
         with SECLOCalendarParser(creds, None, firstStage) as calParser:
             calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
         firstStage.setCompletion("Done acquiring calendar data")
 
-        for index, entry in enumerate(calendarInfo):
-            if CitationStatus.citationStringToEnum(entry.citationType) == CitationStatus.PENDING and CitationType.citationStringToEnum(entry.citationType) == CitationType.FIRST:
-                logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-                with open(f'/home/downloads/{entry.citationDate}.pdf', 'wb') as file:
-                    file.write(base64.b64decode(entry.pdfString or ""))
-            else:
-                logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
+        # for index, entry in enumerate(calendarInfo):
+        #     if CitationStatus.citationStringToEnum(entry.citationType) == CitationStatus.PENDING and CitationType.citationStringToEnum(entry.citationType) == CitationType.FIRST:
+        #         logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
+        #         with open(f'/home/downloads/{entry.citationDate}.pdf', 'wb') as file:
+        #             file.write(base64.b64decode(entry.pdfString or ""))
+        #     else:
+        #         logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
 
+        secondStage.setSteps(len(calendarInfo))
+        with SECLORecData(creds, None, None) as recData:
+            for index, entry in enumerate(calendarInfo):
+                entryProgress = ProgressReport()
+                secondStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
+                try:
+                    entry.notificationData = recData.setProgress(entryProgress).getNotificationData(gdeID=entry.gdeID)
+                except RecNotAccessibleException as e:
+                    logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
+                    continue
+        secondStage.setCompletion("Done aquiring notification data")
         counter = 0
-        for index, entry in enumerate(calendarInfo):
-            entryProgress = ProgressReport()
-            secondStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
-            localCitation = db.scalars(select(Citation).where(Citation.secloAudID == entry.citationID)).one_or_none()
-            localClaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
-            if not localClaim:
-                counter += 1
-                ingressProgress = ProgressReport()
-                entryProgress.compose(ingressProgress, f'Found {counter} new claim{'s' if counter > 1 else ''}')
-                localClaim = self.__ingressClaim(creds, entry.gdeID, entry.initDate, ingressProgress)
-                db.add(localClaim)
+        with SECLORecData(creds, None, None) as recData:
+            for index, entry in enumerate(calendarInfo):
+                entryProgress = ProgressReport()
+                thirdStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
+                localCitation = db.scalars(select(Citation).where(Citation.secloAudID == entry.citationID)).one_or_none()
+                localClaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
+                if not localClaim:
+                    counter += 1
+                    ingressProgress = ProgressReport()
+                    entryProgress.compose(ingressProgress, f'Found {counter} new claim{'s' if counter > 1 else ''}')
+                    try:
+                        localClaim = self.__ingressClaim(creds, entry.gdeID, entry.initDate, progress=ingressProgress, db=db, recData=recData)
+                        db.add(localClaim)
+                    except RecNotAccessibleException as e:
+                        logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
+                        continue
 
-            if not localCitation:
-                localCitation = Citation(secloAudID = entry.citationID, 
-                                        citationDate = entry.citationDate, recID = localClaim.recID,
-                                        citationType = CitationType.citationStringToEnum(entry.citationType),
-                                        citationStatus = CitationStatus.citationStringToEnum(entry.citationType),
-                                        )
-                primarize = True
-                if localCitation.citationStatus == CitationStatus.PENDING and localCitation.citationType == CitationType.FIRST:
-                    for citation in localClaim.citations:
-                        if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.NTH:
-                            primarize = False
-                        if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.FIRST and ((citation.citationDate or datetime.now()) > (localCitation.citationDate or datetime.now())):
-                            primarize = False
-                localCitation.isCalendarPrimary = primarize
-                db.add(localCitation)                
-            notificationProgress = ProgressReport()
-            entryProgress.compose(notificationProgress, 'Loading notification data')
+                if not localCitation:
+                    localCitation = Citation(secloAudID = entry.citationID, 
+                                            citationDate = entry.citationDate, recID = localClaim.recID,
+                                            citationType = CitationType.citationStringToEnum(entry.citationType),
+                                            citationStatus = CitationStatus.citationStringToEnum(entry.citationType),
+                                            )
+                    primarize = True
+                    if localCitation.citationStatus == CitationStatus.PENDING and localCitation.citationType == CitationType.FIRST:
+                        for citation in localClaim.citations:
+                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.NTH:
+                                primarize = False
+                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.FIRST and ((citation.citationDate or datetime.now()) > (localCitation.citationDate or datetime.now())):
+                                primarize = False
+                        if primarize:
+                            for citation in localClaim.citations:
+                                citation.isCalendarPrimary = False
+                    localCitation.isCalendarPrimary = primarize
+                    db.add(localCitation)                
+                notificationProgress = ProgressReport()
+                entryProgress.compose(notificationProgress, 'Loading notification data')
 
-            for lawyer in localClaim.lawyers:
-                for link in lawyer.employeeLink + lawyer.employerLink:
-                    link.citation = localCitation
+                for lawyer in localClaim.lawyers:
+                    for link in lawyer.employeeLink + lawyer.employerLink:
+                        link.citation = localCitation
 
-            self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation)
-            db.commit()
+                self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db)
+                db.commit()
         secondStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
-    @db
-    def __ingressClaim(self: Self, creds: SECLOLoginCredentials, gdeID: str, initDate: datetime, progress: ProgressReport | None = None, db: Session | None = None) -> Claim:
+    def __ingressClaim(self: Self, creds: SECLOLoginCredentials, gdeID: str, initDate: datetime, recData: SECLORecData, progress: ProgressReport, db: Session | None = None) -> Claim:
         if not db: raise ValueError("Missing DB")
         localAddresses: List[Address] = []
         localMails: List[Email] = []
@@ -87,13 +105,12 @@ class ClaimManager:
         statement = select(Claim).where(Claim.gdeID == gdeID)
         localClaim = db.scalars(statement).first()
         if not localClaim:
-            with SECLORecData(creds, None, progress) as recData:
-                claimData = recData.setRecIDfromGDEID(gdeID).getClaimData()
+            claimData = recData.setProgress(progress).setRecIDfromGDEID(gdeID).getClaimData()
             localClaim = Claim(recID = claimData.recid, gdeID = gdeID, initDate = initDate, initByEmployee = claimData.initWorker,
                                 claimType = ClaimType.enumsToInt(claimData.claims), legalStuff = claimData.legalStuff, isEvilized = False)
             for employee in claimData.employees:
                 localEmployee = Employee(employeeName = employee.name, dni = employee.dni, cuil = employee.cuil, isValidated = employee.validated, 
-                                        birthDate = employee.birthDate,  claim = localClaim, headerName = employee.name.split(" ")[0])
+                                        birthDate = employee.birthDate,  claim = localClaim, headerName = employee.name.replace(',', '').split(" ")[0])
                 localEmployee.relationshipData.append(EmployeeRelationshipData(startDate = employee.startDate, endDate = employee.endDate, wage = employee.wage,
                                         claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct, employee = localEmployee))
                 localEmployee = self.__ingressEntryIfMissing(localEmployee, localClaim.employees)
@@ -139,25 +156,29 @@ class ClaimManager:
                     localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = lawyer.mobilePhone[1], prefix = lawyer.mobilePhone[0], obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
                     if localPhone not in localLawyer.telephones: localLawyer.telephones.append(localPhone)
                 for represented in lawyer.represents:
-                    if represented[0]:  #is employee
-                        for client in localClaim.employees:
-                            if client.employeeName == represented[1]:
-                                lawyerEmployeeLink = LawyerToEmployee(lawyer = localLawyer, employee = client, isActualLawyer = True)
-                                if (lawyer.cuil == client.cuil or lawyer.name == client.employeeName):
-                                    lawyerEmployeeLink.isSelfRepresenting = True
-                                client.lawyerLink.append(lawyerEmployeeLink)
-                                break
-                        else: logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\'t match lawyer {localLawyer.lawyerName} to employee {represented[1]}. Execution will proceed')
-                    else:
-                        for client in localClaim.employers:
-                            if client.employerName == represented[1]:
-                                lawyerEmployerLink = LawyerToEmployer(lawyer = localLawyer, employer = client, isActualLawyer = True)
-                                if (lawyer.cuil == client.cuil or lawyer.name == client.employerName):
-                                    lawyerEmployerLink.isSelfRepresenting = True
-                                client.lawyerLink.append(lawyerEmployerLink)
-                                break
+                    for client in localClaim.employees:
+                        isRepresented = True
+                        for name in client.employeeName.replace(',', '').split():
+                            if name not in represented[1]: isRepresented = False
+                        if isRepresented:
+                            lawyerEmployeeLink = LawyerToEmployee(lawyer = localLawyer, employee = client, isActualLawyer = True, isSelfRepresenting = localLawyer.lawyerName == client.employeeName, clientAbsent = False)
+                            if (lawyer.cuil == client.cuil or lawyer.name == client.employeeName):
+                                lawyerEmployeeLink.isSelfRepresenting = True
+                            client.lawyerLink.append(lawyerEmployeeLink)
+                            break
                         else:
-                            logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\t match lawyer {localLawyer.lawyerName} to employer {represented[1]}. Execution will proceed')
+                            for client in localClaim.employers:
+                                isRepresented = True
+                                for name in client.employerName.replace(',', '').split():
+                                    if name and name not in represented[1]: isRepresented = False
+                                if isRepresented:
+                                    lawyerEmployerLink = LawyerToEmployer(lawyer = localLawyer, employer = client, isActualLawyer = True, isSelfRepresenting = localLawyer.lawyerName == client.employerName, isEmpowered = False, clientAbsent = False)
+                                    if (lawyer.cuil == client.cuil or lawyer.name == client.employerName):
+                                        lawyerEmployerLink.isSelfRepresenting = True
+                                    client.lawyerLink.append(lawyerEmployerLink)
+                                    break
+                            else:
+                                logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\'t match lawyer {localLawyer.lawyerName} to client {represented[1]}. Execution will proceed')
             #TODO add others info
             localClaim.title = self.__getCalHeader(localClaim)
         return localClaim
@@ -171,10 +192,10 @@ class ClaimManager:
         for employer in localClaim.employers:
             self.__ingressEntryIfMissing(employer.headerName, employerNames)
         for index, name in enumerate(employeeNames):
-            header += ', ' if index > 0 else '' + name
+            header += (', ' if index > 0 else '') + name
         header += ' c/ '
         for index, name in enumerate(employerNames):
-            header += ', ' if index > 0 else '' + name
+            header += (', ' if index > 0 else '') + name
         return header
     
     def __filter_rules(self: Self, name: str) -> str:
@@ -193,12 +214,12 @@ class ClaimManager:
                 entry = loadedEntry if entry == loadedEntry else entry
         return entry
     
-    @db
-    def __updateNotifications(self: Self, recID: int, creds: SECLOLoginCredentials, db: Session | None = None, progress: ProgressReport | None = None, citation: Citation | None = None):
+    def __updateNotifications(self: Self, recID: int, creds: SECLOLoginCredentials, db: Session | None = None, progress: ProgressReport | None = None, citation: Citation | None = None, notificationData: List[SECLONotificationData] | None = None):
         if not db: raise ValueError("Missing DB")
         if not progress: progress = ProgressReport()
-        with SECLORecData(creds, recID, progress) as secloData:
-            notificationData = secloData.getNotificationData()
+        if not notificationData:
+            with SECLORecData(creds, recID, progress) as secloData:
+                notificationData = secloData.getNotificationData()
         for notification in notificationData:
             localNotification = db.scalars(select(SecloNotification).where(SecloNotification.secloPostalID == notification.id)).one_or_none()
             if (localNotification):
@@ -221,7 +242,7 @@ class ClaimManager:
                                     citationStatus = CitationStatus.citationStringToEnum(calCitation.citationType),
                                     isCalendarPrimary = True, recID = recID, claim = db.scalar(select(Claim).where(Claim.recID == recID))
                                 )
-                                oldCitation = db.scalars(select(Citation).where(Citation.recID == recID and Citation.isCalendarPrimary)).one_or_none()
+                                oldCitation = db.scalars(select(Citation).where(Citation.recID == recID, Citation.isCalendarPrimary)).one_or_none()
                                 if oldCitation:
                                     oldCitation.isCalendarPrimary = False
                                 db.add(citation)
@@ -240,21 +261,30 @@ class ClaimManager:
 
                     if notification.isEmployer:
                         for employer in citation.claim.employers:
-                            if employer.employerName == notification.person:
+                            isEmployer = True
+                            for name in employer.employerName.split():
+                                if name not in notification.person:
+                                    isEmployer = False
+                                    break
+                            if isEmployer:
                                 localNotification.employerLink = SecloNotificationToEmployer(employer = employer, notification = localNotification)
                                 break
                         else:
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employer \'{notification.person}\'. Execution will continue')
                     else:
                         for employee in citation.claim.employees:
-                            if employee.employeeName == notification.person:
+                            isEmployee = True
+                            for name in employee.employeeName.split():
+                                if name not in notification.person:
+                                    isEmployee = False
+                                    break
+                            if isEmployee:
                                 localNotification.employeeLink = SecloNotificationToEmployee(employee = employee, notification = localNotification)
                                 break
                         else:
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
                     citation.notifications.append(localNotification)
 
-    @transactional
     def getClaims(self: Self, date: datetime | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")
         statement = select(Claim)
@@ -265,14 +295,12 @@ class ClaimManager:
         claims.extend(dbclaims)
         return claims
 
-    @transactional
     def getClaim(self: Self, recID: int, db: Session | None = None) -> Claim:
         if not db: raise ValueError("Missing DB")
         statement = select(Claim).where(Claim.recID == recID)
         dbclaim = db.scalars(statement).one()
         return dbclaim
     
-    @transactional
     def getCitations(self: Self, recID: int, db: Session | None = None, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[Citation]:
         if not db: raise ValueError("Missing DB")
         if withUpdate:
@@ -284,14 +312,12 @@ class ClaimManager:
         citations.extend(dbcitations)
         return citations
 
-    @transactional
     def getCitation(self: Self, citationID: int, db: Session | None = None) -> Citation:
         if not db: raise ValueError("Missing DB")
         statement = select(Citation).where(Citation.citationID == citationID)
         dbcitation = db.scalars(statement).one()
         return dbcitation
         
-    @transactional
     def getNotifications(self: Self, recID: int, citationID: int, db: Session | None = None, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[SecloNotification]:
         if not db: raise ValueError("Missing DB")
         if withUpdate:

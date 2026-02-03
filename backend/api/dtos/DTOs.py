@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Self
 
-from pydantic import BaseModel, HttpUrl, computed_field
+from pydantic import BaseModel, ConfigDict, HttpUrl, TypeAdapter, computed_field
 from database.database import Citation, Claim, SecloNotification
 import api.dtos.UrlHelpers
 from dataobjects.enums import CitationStatus, CitationType, SECLONotificationType
@@ -9,6 +9,7 @@ from dataobjects.enums import CitationStatus, CitationType, SECLONotificationTyp
 class ClaimDTO(BaseModel):
     recID:          int
     gdeID:          str
+    title:          str
     initDate:       datetime
     initByEmployee: bool
     claimType:      int
@@ -16,11 +17,18 @@ class ClaimDTO(BaseModel):
     legalStuff:     str
     isDomestic:     bool | None
     calID:          str | None
+    model_config = ConfigDict(from_attributes=True) 
     
     @classmethod
     def fromList(cls, list: List[Claim]) -> List['ClaimDTO']:
-        newList: List[ClaimDTO] = [cls.model_validate(x) for x in list]
+        newList: List[ClaimDTO] = [cls.fromSQL(x) for x in list]
         return newList
+    
+    @staticmethod
+    def fromSQL(sql: Claim) -> 'ClaimDTO':
+        return ClaimDTO(recID=sql.recID, gdeID=sql.gdeID, initDate=sql.initDate, initByEmployee=sql.initByEmployee, 
+                        claimType=sql.claimType, isEvilized=sql.isEvilized, legalStuff=sql.legalStuff,
+                        isDomestic=sql.isDomestic, calID=sql.calID, title=sql.title)
     
 class CitationDTO(BaseModel):
     citationID:         int

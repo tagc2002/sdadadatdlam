@@ -228,8 +228,8 @@ def upgrade() -> None:
     
     op.create_table(
         'lawyerEmailLink',
-        sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyer.lawyerID'), nullable=False, primary_key=True, autoincrement=False),
-        sa.Column('emailID', sa.Integer, sa.ForeignKey('email.emailID'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('lawyerID', sa.Integer, sa.ForeignKey('lawyer.lawyerID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
+        sa.Column('emailID', sa.Integer, sa.ForeignKey('email.emailID', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, primary_key=True, autoincrement=False),
         sa.Column('description', sa.String, nullable=True),
         if_not_exists=True
     )

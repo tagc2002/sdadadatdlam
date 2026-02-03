@@ -26,10 +26,6 @@ from datetime import datetime
 from typing import List, Self, Tuple
 import os
 import uuid
-from dotenv import load_dotenv
-
-load_dotenv(override = True)
-
 import logging
 logger = logging.getLogger(__name__)
 
@@ -38,8 +34,6 @@ logging.getLogger('urllib3.connectionpool').setLevel(logging.CRITICAL)
 logging.getLogger('WDM').setLevel(logging.CRITICAL)
 portalVersionSupported = '8.4.11.0'
 
-downloadpath = Path(f'./temp/{uuid.uuid4()}')
-downloadpath = downloadpath.resolve()
 DEBUGMODE = os.getenv('DEBUGMODE', False)
 MAX_ATTEMPTS = 3
 
@@ -65,6 +59,8 @@ class SECLOAccessor:
     def __init__(self, credentials: SECLOLoginCredentials, recid: int | None = None, progressReport: ProgressReport | None = ProgressReport()):
         self.chrome_options = Options()
         self.chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
+        self.downloadpath = Path(f'./temp/{uuid.uuid4()}')
+        self.downloadpath = self.downloadpath.resolve()
         if os.getenv('HEADLESS', 'TRUE') == 'TRUE':
             logger.debug("Headless flag set true")
             self.chrome_options.add_argument('headless')
@@ -78,9 +74,9 @@ class SECLOAccessor:
             logger.debug("Detatch flag set false")
         
         self.chrome_options.add_experimental_option("prefs", {
-            "download.default_directory": str(downloadpath)
+            "download.default_directory": str(self.downloadpath)
         })
-        logger.debug(f'Download path set to {downloadpath}')
+        logger.debug(f'Download path set to {self.downloadpath}')
         if DEBUGMODE:
             logger.critical("WARNING! DEBUG mode enabled. Any requested changes will not be submitted.")
 
@@ -95,19 +91,21 @@ class SECLOAccessor:
         self.printOptions.set_page_size(PrintOptions.A4)
 
     def __enter__(self: Self) -> Self:
-        if os.getenv("CONTAINER", "FALSE") == "TRUE":
-            seleniumRemote = os.getenv("SELENIUM_REMOTE_URL", "http://localhost:4444/wd/hub")
-            self.driver = webdriver.Remote(command_executor=seleniumRemote, options = self.chrome_options)
-        else:
-            logger.debug('Creating chrome webdriver service manager instance')
-            chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
-
-            logger.debug('instantiating chrome driver')
-            self.driver = webdriver.Chrome(service = chrome_service, options = self.chrome_options)
-            logger.debug('Chrome loaded successfully')
-
-        logger.debug('Getting login page...')
         for i in range(0,3):
+            if hasattr(self, 'driver') and self.driver:
+                self.driver.close()
+            if os.getenv("CONTAINER", "FALSE") == "TRUE":
+                seleniumRemote = os.getenv("SELENIUM_REMOTE_URL", "http://localhost:4444/wd/hub")
+                self.driver = webdriver.Remote(command_executor=seleniumRemote, options = self.chrome_options)
+            else:
+                logger.debug('Creating chrome webdriver service manager instance')
+                chrome_service = ChromeService(executable_path=ChromeDriverManager().install())
+
+                logger.debug('instantiating chrome driver')
+                self.driver = webdriver.Chrome(service = chrome_service, options = self.chrome_options)
+                logger.debug('Chrome loaded successfully')
+
+            logger.debug('Getting login page...')
             self.driver.get(f'https://{self.credentials.user}:{self.credentials.password}@login-int.trabajo.gob.ar/adfs/ls/wia' + \
                 '?wa=wsignin1.0' + \
                 '&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f' + \
@@ -116,26 +114,26 @@ class SECLOAccessor:
             )
             try:
                 WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnAceptar'))).click()
-                break
             except (TimeoutException, NoSuchElementException):
                 if 'adfs' in self.driver.current_url:
                     raise UnauthorizedAccessException("Password is wrong or server entered inactive hours")
-        logger.debug('Logged in.')
+            logger.debug('Logged in.')
         
-        try:
-            WebDriverWait(self.driver,5).until(EC.element_to_be_clickable((By.CLASS_NAME, 'ColCerrar'))).click()
-            logger.debug('Closed notification panel.')
-        except TimeoutException as e:
-            logger.debug('Notification popup not found')
+            try:
+                WebDriverWait(self.driver,5).until(EC.element_to_be_clickable((By.CLASS_NAME, 'ColCerrar'))).click()
+                logger.debug('Closed notification panel.')
+            except TimeoutException as e:
+                logger.debug('Notification popup not found')
 
-        logger.info(f'Logged in as {self.driver.find_element(By.ID, "ctl00_lblConciliador").text}')
-        self.portalVersion = self.driver.find_element(By.ID, "ctl00_LblAppVersion").text.split()[1]
+            logger.info(f'Logged in as {self.driver.find_element(By.ID, "ctl00_lblConciliador").text}')
+            self.portalVersion = self.driver.find_element(By.ID, "ctl00_LblAppVersion").text.split()[1]
 
-        if (self.portalVersion != portalVersionSupported):
-            logger.warning(f'Current portal version is {self.portalVersion}, but driver supports up to {portalVersionSupported}. Some features might be unexpectedly broken.')
-        else: 
-            logger.debug(f'Current portal version: {self.portalVersion}')
-        return self
+            if (self.portalVersion != portalVersionSupported):
+                logger.warning(f'Current portal version is {self.portalVersion}, but driver supports up to {portalVersionSupported}. Some features might be unexpectedly broken.')
+            else: 
+                logger.debug(f'Current portal version: {self.portalVersion}')
+            return self
+        raise AttemptsExceededException()
     
     def __exit__(self: Self, exception_type, exception_value, traceback):
         self.driver.quit()
@@ -192,27 +190,33 @@ class SECLOAccessor:
         gdeFile = gdeID.split('-')[2]
         logger.debug(f'gdeYear: {gdeYear}')
         logger.debug(f'gdeFileNumber: {gdeFile}')
-        try:
-            findButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
-            self.driver.find_element(By.ID, 'ctl00_Busqueda_txtNro').send_keys(gdeFile)
-            self.driver.find_element(By.ID, 'ctl00_Busqueda_txtAnio').send_keys(Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+gdeYear)
-            findButton.click()
-        except (NoSuchElementException, TimeoutException) as e:
-            logger.error("Couldn't load notifications page")
-            raise e
-        try:
-            WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
-        except NoSuchElementException as e:
-            logger.error(f'Case with GDE ID {gdeID} not found')
-            raise RecNotAccessibleException('Case not found')
-        recID = self.driver.find_element(By.ID, 'ctl00_Top_hdnReclamoId').get_attribute('value')
-        if (recID):
-            self.recid = int(recID)
-        else:
-            raise RecNotAccessibleException("Can't load recID. bummers")
-        self.progress.setCompletion("Done")
-        logger.info(f'recID found, set to {self.recid}')
-        return self
+        lastException = None
+        for i in range(0, 3):
+            try:
+                findButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
+                self.driver.find_element(By.ID, 'ctl00_Busqueda_txtNro').send_keys(gdeFile)
+                self.driver.find_element(By.ID, 'ctl00_Busqueda_txtAnio').send_keys(Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.ARROW_RIGHT+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+Keys.BACKSPACE+gdeYear)
+                findButton.click()
+            except (NoSuchElementException, TimeoutException) as e:
+                logger.error("Couldn't load notifications page")
+                logger.error(e)
+                lastException = e
+            try:
+                WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
+            except (NoSuchElementException, TimeoutException) as e:
+                logger.error(f'Case with GDE ID {gdeID} not found')
+                logger.error(e)
+                lastException = RecNotAccessibleException('Case not found')
+            recID = self.driver.find_element(By.ID, 'ctl00_Top_hdnReclamoId').get_attribute('value')
+            if (recID):
+                self.recid = int(recID)
+            else:
+                raise RecNotAccessibleException("Can't load recID. bummers")
+            self.progress.setCompletion("Done")
+            logger.info(f'recID found, set to {self.recid}')
+            return self
+        if isinstance(lastException, RecNotAccessibleException): raise lastException
+        raise AttemptsExceededException(lastException)
     
     def setGdeIdFromRecId(self: Self, recID: int) -> Self:
         '''
@@ -223,6 +227,10 @@ class SECLOAccessor:
             self.gdeID = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
         except NoSuchElementException:
             logger.error("Case not found")
+        return self
+    
+    def setProgress(self: Self, progress: ProgressReport) -> Self:
+        self.progress = progress
         return self
 
 
@@ -587,7 +595,7 @@ class SECLOFileManager(SECLOAccessor):
         logger.debug("Downloading file")
         download = self.driver.find_element(By.ID, 'grdDocumentos').find_elements(By.CLASS_NAME, 'grdRowStyle')[index].find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input')
         logger.info(download.get_attribute("title"))
-        downloadfile = downloadpath / 'Reporte.pdf' #Hardcoded name (for this page at least) Selenium doesn't really offer a solution for downloading files.
+        downloadfile = self.downloadpath / 'Reporte.pdf' #Hardcoded name (for this page at least) Selenium doesn't really offer a solution for downloading files.
         downloadfile.unlink(True)   
         download.click()
         for i in range(0, 200):
@@ -718,7 +726,7 @@ class SECLORecData(SECLOAccessor):
     A class for accessing data from claims, the main data ingestion class if you may. 
     Eventually may allow modifying data as well, but the website is so shit I don't think it'll be reliable.
     '''
-    def getNotificationData(self: Self) -> List[SECLONotificationData]:
+    def getNotificationData(self: Self, gdeID: str | None = None) -> List[SECLONotificationData]:
         '''
         Gets the associated notification information for a given case. Its up to the caller to link those to a citation or stuff like that.
 
@@ -726,8 +734,11 @@ class SECLORecData(SECLOAccessor):
             List[SECLONotificationData]: The list of notification entries. 
         '''
 
-        self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
-        self._loadRec()
+        if gdeID:
+            self.setRecIDfromGDEID(gdeID=gdeID)
+        else:
+            self.driver.get('https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx')
+            self._loadRec()
 
         results = []
         table = WebDriverWait(self.driver, 3).until(EC.presence_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))

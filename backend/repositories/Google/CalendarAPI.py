@@ -51,7 +51,6 @@ def listEvents(googleCreds: dict, weeksBefore: int, weeksAfter: int) -> List[Goo
         events = events_result.get("items", [])
         googleEvents = []
         for event in events:
-            print(event)
             try:
                 googleEvents.append(GoogleEvent.model_validate(event))
             except ValidationError as e:
@@ -79,12 +78,16 @@ def createEvent(googleCreds: dict, event: GoogleEvent) -> GoogleEvent | None:
     creds = basicAuth()
     try:
         service = build("calendar", "v3", credentials = creds)
-        event_result = service.events().insert(calendarId="primary", body = event.model_dump(), conferenceDataVersion=1, sendUpdates = 'all', supportsAttachments = True).execute() # type: ignore
-        if not event_result: return
+        logger.info("Creating event")
+        logger.info(event.model_dump(exclude_none=True, exclude_unset = True))
+        event_result = service.events().insert(calendarId="primary", body = event.model_dump(exclude_none=True, exclude_unset = True), conferenceDataVersion=1, sendUpdates = 'all', supportsAttachments = True).execute() # type: ignore
+        if not event_result: 
+            logger.critical("Error creating event")
+            return
         return GoogleEvent.model_validate(event_result)
 
     except HttpError as e:
-        print("Shoot")
+        print(f"Shoot {e}")
     except ValidationError as e:
         logger.error(f"Error validating event {event_result}") # type: ignore
 

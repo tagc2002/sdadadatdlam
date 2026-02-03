@@ -12,8 +12,8 @@ class GoogleEventPerson(BaseModel):
     displayName: str | None = None
 
 class GoogleEventDate(BaseModel):
-    date: datetime | None = None
-    dateTime: datetime | None = None
+    date: str | None = None
+    dateTime: str | None = None
     timeZone: str | None = None
 
 class GoogleEventAttendee(BaseModel):
@@ -27,6 +27,9 @@ class GoogleEventAttendee(BaseModel):
     optional: bool | None = None
     comment: bool | None = None
     additionalGuests: int | None = None
+
+    def __hash__(self) -> int:
+        return hash(self.email)
 
 class GoogleEventConferenceDataEntryPoint(BaseModel):
     entryPointType: str | None = None
@@ -109,8 +112,8 @@ class GoogleEvent(BaseModel):
     id: str | None = None
     status: str | None = None
     htmlLink: str | None = None
-    created: datetime | None = None
-    updated: datetime | None = None
+    created: str | None = None
+    updated: str | None = None
     summary: str | None = None
     description: str | None = None
     colorId: int | None = None

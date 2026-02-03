@@ -68,12 +68,13 @@ class ProgressReport():
         logger.debug("GET PROGRESS")
         if self.subprogresses:
             self.progress = 0
+            progressStep = 1/self.steps if self.steps > 0 else 1/len(self.subprogresses)
             for (progress, message) in self.subprogresses:  
                 if progress.getCompletion():
                     self.progress += 1/len(self.subprogresses)
                 else:
                     currentProgress = progress.getProgress()  
-                    self.progress = currentProgress['progress']
+                    self.progress += currentProgress['progress']
                     self.message = message + ": " + currentProgress['message']
                     break
             else:

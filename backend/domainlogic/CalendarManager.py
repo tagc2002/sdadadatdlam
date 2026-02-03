@@ -6,25 +6,27 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
-from database.decorators import db, transactional
 from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
 from dataobjects.enums import CitationType
 from repositories.Google.CalendarAPI import createEvent, listEvents
 
+import logging
+logger = logging.getLogger(__name__)
 
 DEFAULT_DESCRIPTION = "No responder a este mail, consultas a <u>raqgonz@hotmail.com</u>"
 DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires'
+MALIGNA_NAME="Norma Raquel Gonzalez"
+MALIGNA_EMAIL="normitisaguda@gmail.com"
 
 class CalendarManager():
 
-    @db
-    def __getCalSummary(self: Self, localClaim: Claim, db: Session | None = None) -> str:
+    def __getCalSummary(self: Self, localClaim: Claim, db: Session | None) -> str:
         if not db: raise ValueError("Missing DB")
         summary = ""
-        lastCitation = db.scalars(select(Citation).where(Citation.recID == localClaim.recID and Citation.isCalendarPrimary == True)).one()
+        lastCitation = db.scalars(select(Citation).where(Citation.recID == localClaim.recID, Citation.isCalendarPrimary == True)).one()
         if lastCitation.agreement and lastCitation.agreement.secloEmailNotificationDate:
             summary += 'C/A '
-        elif lastCitation.nonagreement and lastCitation.nonagreement.sendDate:
+        elif lastCitation.nonagreement and lastCitation.nonagreement.sentDate:
             summary += 'S/A '
         else:
             summary += 'SECLO '
@@ -49,6 +51,7 @@ class CalendarManager():
     
     def __citationMembersToGoogleAttendees(self: Self, citation: Citation) -> List[GoogleEventAttendee]:
         attendees = []
+        logger.info(f'Total links {len(citation.lawyerToEmployee) + len(citation.lawyerToEmployer)}')
         for employee in citation.lawyerToEmployee + citation.lawyerToEmployer:
             attendees.extend(self.__citationMemberToGoogleAttendee(employee))
         return attendees
@@ -102,10 +105,9 @@ class CalendarManager():
         else:
             return GoogleColorList.RED
     
-    @transactional
     def calendarInsertMissingCitations(self: Self, db: Session | None = None):
         if not db: raise ValueError("Missing DB")
-        citations = db.scalars(select(Citation).where(Citation.citationType == CitationType.FIRST and Citation.isCalendarPrimary == True)) 
+        citations = db.scalars(select(Citation).where(Citation.citationType == CitationType.FIRST, Citation.isCalendarPrimary == True)) 
         calCitationsAlready = listEvents({}, 10, 20)
         for citation in citations:
             if not citation.claim.calID:
@@ -114,18 +116,47 @@ class CalendarManager():
                         citation.claim.calID = eventAlready.id
                         break
                 else:
-                    attendees = list(set(self.__citationMembersToGoogleAttendees(citation)))
-                    calEvent = GoogleEvent(summary = self.__getCalSummary(citation.claim), description = DEFAULT_DESCRIPTION, 
-                                    start=GoogleEventDate(dateTime = citation.citationDate, timeZone = DEFAULT_TIMEZONE),
-                                    end = GoogleEventDate(dateTime = (citation.citationDate or datetime.now()) + timedelta(minutes = 30), timeZone = DEFAULT_TIMEZONE),
-                                    attendees = attendees, colorId = self.__getEventColor(citation).value, 
-                                    conferenceData= GoogleEventConferenceData(
-                                        createRequest=GoogleEventConferenceDataCreateRequest(
-                                            conferenceSolutionKey=GoogleEventConferenceSolutionKey(type = 'hangoutsMeet'), 
-                                            requestId=str(uuid.uuid4())
-                                        )
-                                    )
-                                )
-                    calEvent = createEvent({}, calEvent)
-                    if calEvent:
-                        citation.claim.calID = calEvent.id
+                    calEvent = self.createCalEventForCitation(citation, db=db)
+    
+    def createCalEventForCitation(self: Self, citation: Citation, db:Session | None) -> GoogleEvent | None:
+        attendees = list(set(self.__citationMembersToGoogleAttendees(citation)))
+        attendees.append(GoogleEventAttendee(email=MALIGNA_EMAIL, displayName=MALIGNA_NAME, responseStatus='accepted'))
+        if not citation.citationDate:
+            raise ValueError("Citation doesn't have date")
+        calEvent = GoogleEvent(summary = self.__getCalSummary(citation.claim, db=db), description = DEFAULT_DESCRIPTION, 
+                        start=GoogleEventDate(dateTime = citation.citationDate.isoformat(), timeZone = DEFAULT_TIMEZONE),
+                        end = GoogleEventDate(dateTime = (citation.citationDate + timedelta(minutes = 30)).isoformat(), timeZone = DEFAULT_TIMEZONE),
+                        attendees = attendees, colorId = self.__getEventColor(citation).value, 
+                        conferenceData= GoogleEventConferenceData(
+                            createRequest=GoogleEventConferenceDataCreateRequest(
+                                conferenceSolutionKey=GoogleEventConferenceSolutionKey(type = 'hangoutsMeet'), 
+                                requestId=str(uuid.uuid4())
+                            )
+                        )
+                    )
+        calEvent = createEvent({}, calEvent)
+        if calEvent:
+            citation.claim.calID = calEvent.id
+        return calEvent
+
+    def getCalendarID(self: Self, recID: int, db: Session | None = None, withUpdate: bool = False) -> str:
+        if not db: raise ValueError("Missing DB")
+        claim = db.scalars(select(Claim).where(Claim.recID == recID)).one()
+        citation = db.scalars(select(Citation).where(Citation.recID == recID, Citation.isCalendarPrimary == True)).one()
+        claim.calID = None
+        if claim.calID:
+            return claim.calID or ''
+        else:
+            events = listEvents({}, 50, 20)
+            for event in events:
+                if claim.gdeID.split('-')[2] in (event.summary or ''):
+                    claim.calID = event.id
+                    return event.id or ''
+            else:
+                if withUpdate:
+                    event = self.createCalEventForCitation(citation, db=db)
+                    if event:
+                        claim.calID = event.id
+                        return event.id or ''
+                    else: raise ValueError(f"Couldn't create calendar citation for {recID}")
+        raise ValueError(f"Couldn't find calendar citation for {recID} and creation is disabled (would've made it for {citation.citationDate})")
