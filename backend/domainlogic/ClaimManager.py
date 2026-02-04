@@ -76,7 +76,7 @@ class ClaimManager:
                     primarize = True
                     if localCitation.citationStatus == CitationStatus.PENDING and localCitation.citationType == CitationType.FIRST:
                         for citation in localClaim.citations:
-                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.NTH:
+                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType != CitationType.FIRST:
                                 primarize = False
                             if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.FIRST and ((citation.citationDate or datetime.now()) > (localCitation.citationDate or datetime.now())):
                                 primarize = False
@@ -328,3 +328,9 @@ class ClaimManager:
         notifications = []
         notifications.extend(dbNotifications)
         return notifications
+    
+    def ingressTest(self: Self, recID: int, db: Session, creds: SECLOLoginCredentials):
+        with SECLORecData(creds, recID, None) as recData:
+            claimData = recData.getClaimData()
+            logger.warning(claimData)
+

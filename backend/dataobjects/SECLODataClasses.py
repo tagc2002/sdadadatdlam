@@ -103,22 +103,22 @@ class CitationResult:
 
 class SECLOAddressData():
     def __init__(self: Self, province: str, district: str, county: str, street: str, number: str | None = None, floor: str | None = None, apt: str | None = None, cpa: str | None = None, bonusData: str | None = None):
-        self.province = province
-        self.district = district
-        self.county = county
-        self.street = street
-        self.number = number
-        self.floor = floor
-        self.apt = apt
-        self.cpa = cpa
-        self.bonusData = bonusData
+        self.province = province.strip()
+        self.district = district.strip()
+        self.county = county.strip()
+        self.street = street.strip()
+        self.number = number.strip() if number else None
+        self.floor = floor.strip() if floor else None
+        self.apt = apt.strip() if apt else None
+        self.cpa = cpa.strip() if cpa else None
+        self.bonusData = bonusData.strip() if bonusData else None
     def __str__(self: Self):
-        return f'{self.street} {self.number}, {self.floor} {self.apt}, {self.county}, {self.district}, {self.province}, {self.cpa} {self.bonusData}'
+        return f'{self.street} {self.number}, {self.floor if self.floor else ""} {self.apt if self.apt else ""}{", " if self.floor or self.apt else ""}{self.county}, {self.district}, {self.province}, {self.cpa} {self.bonusData if self.bonusData else ""}'
     
  
 class SECLOCommonData():
     def __init__(self: Self, name: str, dni: str | None = None, cuil: str | None = None, validated: bool = False):
-        self.name: str = name
+        self.name: str = name.strip()
         self.address: SECLOAddressData | None = None
         self.mail: str | None = None
         self.phone: int | None = None
@@ -131,12 +131,12 @@ class SECLOCommonData():
         except ValueError:
             self.dni = None
 
-        self.cuil = cuil
+        self.cuil = cuil.strip().replace("-", "") if cuil else None
     
     def addAddress(self: Self, address: SECLOAddressData):
         self.address = address
     def addMail(self: Self, mail: str | None = None):
-        self.mail = mail
+        self.mail = mail.strip() if mail else None
     def addPhone(self: Self, phone: str | None):
         try:
             self.phone = int(phone or "")
@@ -188,8 +188,8 @@ class SECLOEmployeeData(SECLOCommonData):
         except ValueError:
             self.wage = 0
     def addType(self: Self, cct: str | None = None, category: str | None = None):
-        self.cct = cct
-        self.category = category
+        self.cct = cct.strip() if cct else None
+        self.category = category.strip() if category else None
     def addClaimAmount(self: Self, amount: str):
         try:
             self.claimAmount = int(amount)

@@ -79,12 +79,13 @@ class Documentation(Base):
     fileDriveID: Mapped[str | None]
     importedDate: Mapped[datetime | None]
     importedFromSeclo: Mapped[bool]
-    file: Mapped[bytes]
+    file: Mapped[bytes | None]
 
     employeeLink: Mapped[List["DocumentationEmployeeLink"]] = relationship(back_populates="document")
     employerLink: Mapped[List["DocumentationEmployerLink"]] = relationship(back_populates="document")
     lawyerLink: Mapped[List["DocumentationLawyerLink"]] = relationship(back_populates="document")
     agreementLink: Mapped[List["DocumentationAgreementLink"]] = relationship(back_populates="document")
+    nonagreementLink: Mapped[List["DocumentationNonagreementLink"]] = relationship(back_populates="document")
     homologation: Mapped["Homologation | None"] = relationship(back_populates="document")
     invoice: Mapped["Invoice | None"] = relationship(back_populates="document")
     payment: Mapped["Payment | None"] = relationship(back_populates="document")
@@ -124,7 +125,7 @@ class BankAccount(Base):
     alias: Mapped[str | None]
     accountNumber: Mapped[str | None]
     accountType: Mapped[str | None]
-    cuit: Mapped[int | None]
+    cuit: Mapped[str | None]
     isValidated: Mapped[bool]
     accountOwner: Mapped[str | None]
 
@@ -171,9 +172,9 @@ class Email(Base):
 
     emailID: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str]
-    registeredOn: Mapped[datetime]
-    registeredFrom: Mapped[str]
-    description: Mapped[str]
+    registeredOn: Mapped[datetime | None]
+    registeredFrom: Mapped[str | None]
+    description: Mapped[str | None]
 
     employees: Mapped[List["EmployeeEmailLink"]] = relationship(back_populates="email")
     employers: Mapped[List["EmployerEmailLink"]] = relationship(back_populates="email")
@@ -418,7 +419,7 @@ class DocumentationEmployeeLink(Base):
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'), primary_key=True)
     description: Mapped[str | None]
     isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime]
+    SECLOUploadedOn: Mapped[datetime | None]
 
     document: Mapped["Documentation"] = relationship(back_populates="employeeLink")
     employee: Mapped["Employee"] = relationship(back_populates="documentation")
@@ -430,7 +431,7 @@ class DocumentationEmployerLink(Base):
     employerID: Mapped[int] = mapped_column(ForeignKey('employer.employerID'), primary_key=True)
     description: Mapped[str | None]
     isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime]
+    SECLOUploadedOn: Mapped[datetime | None]
 
     document: Mapped["Documentation"] = relationship(back_populates="employerLink")
     employer: Mapped["Employer"] = relationship(back_populates="documentation")
@@ -442,7 +443,7 @@ class DocumentationLawyerLink(Base):
     lawyerID: Mapped[int] = mapped_column(ForeignKey('lawyer.lawyerID'), primary_key=True)
     description: Mapped[str | None]
     isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime]
+    SECLOUploadedOn: Mapped[datetime | None]
 
     document: Mapped["Documentation"] = relationship(back_populates="lawyerLink")
     lawyer: Mapped["Lawyer"] = relationship(back_populates="documentation")
@@ -693,6 +694,16 @@ class Nonagreement(Base):
     claim: Mapped["Claim"] = relationship(back_populates="nonagreements")
     citation: Mapped["Citation"] = relationship(back_populates="nonagreement")
     invoices: Mapped[List["NonagreementInvoiceLink"]] = relationship(back_populates="nonagreement")
+    documentationLink: Mapped[List["DocumentationNonagreementLink"]] = relationship(back_populates="nonagreement")
+
+class DocumentationNonagreementLink(Base):
+    __tablename__ = "documentationNonagreementLink"
+
+    nonID: Mapped[int] = mapped_column(primary_key=True)
+    docID: Mapped[int] = mapped_column(primary_key=True)
+
+    nonagreement: Mapped[Nonagreement] = relationship(back_populates="documentationLink")
+    documentation: Mapped[Documentation] = relationship(back_populates="nonagreementLink")
 
 class NonagreementSECLOInvoice(Base):
     __tablename__ = "nonagreementSECLOInvoice"

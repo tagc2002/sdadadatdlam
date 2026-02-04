@@ -787,10 +787,11 @@ class SECLORecData(SECLOAccessor):
                 self.progress.setSteps(2 + totalItems)
                 #CLAIM
                 self.progress.increaseProgress(1, "Getting claim data...")
+                initByEmployee = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked')
                 claimData = SECLOClaimData(
                     recid = self.recid or 0,
                     legalStuff = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_txtComentario').get_attribute('value') or "",
-                    initWorker = self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_optReclamante_0').get_attribute('checked') == True
+                    initWorker = initByEmployee == 'true' or initByEmployee == True
                 )
                 for row in self.driver.find_element(By.ID, 'ctl00_Center_ucReclamo_chkObjetoReclamo').find_elements(By.TAG_NAME, 'td'):
                     if row.find_element(By.TAG_NAME, 'input').get_attribute('checked'):
@@ -823,7 +824,7 @@ class SECLORecData(SECLOAccessor):
                     )
                     employee.addAddress(
                         SECLOAddressData(
-                            province=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value') or "",
+                            province=(self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtProvincia').get_attribute('value') or ""),
                             district=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtPartido').get_attribute('value') or "",
                             county=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtLocalidad').get_attribute('value') or "",
                             street=self.driver.find_element(By.ID, 'ctl00_Center_ctl00_Domicilio_direc_txtCalle').get_attribute('value') or "",

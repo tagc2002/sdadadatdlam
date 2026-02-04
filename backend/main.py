@@ -4,16 +4,19 @@ from threading import Thread
 from time import sleep
 
 import os
+from typing import Annotated
 from venv import create
 import alembic
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from alembic.config import Config
 from alembic import command
+from requests import Session
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import sessionmaker, Session
 
 from api.batch import ingress
-from database.decorators import initTransactionalAnnotation
+from database.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction
 
 sys.path.append('/usr/app/src')
 
@@ -21,9 +24,6 @@ from api.rest.claims import claims
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 
 load_dotenv()
-
-# TODO store and retrieve dynamically with user session
-cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
 
 postgresuser = os.getenv("POSTGRES_USER")
 postgrespass = os.getenv("POSTGRES_PASSWORD")
@@ -45,7 +45,11 @@ alembic_cfg.set_main_option('sqlalchemy.url', connect_string)
 command.upgrade(alembic_cfg, 'head')
 
 engine = create_engine(url = connect_string)
-initTransactionalAnnotation(engine)
+sm = sessionmaker(engine)
+
+dependsDB = Annotated[Session, Depends(getTransaction)]
+dependsSECLO = Annotated[SECLOLoginCredentials, Depends(getSECLOCredentials)]
+dependsGoogle = Annotated[dict, Depends(getGoogleCredentials)]
 
 app = FastAPI()
 app.include_router(claims.router)
