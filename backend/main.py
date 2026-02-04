@@ -16,7 +16,7 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from api.batch import ingress
-from database.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction
+from api.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction, initDBSession
 
 sys.path.append('/usr/app/src')
 
@@ -45,11 +45,7 @@ alembic_cfg.set_main_option('sqlalchemy.url', connect_string)
 command.upgrade(alembic_cfg, 'head')
 
 engine = create_engine(url = connect_string)
-sm = sessionmaker(engine)
-
-dependsDB = Annotated[Session, Depends(getTransaction)]
-dependsSECLO = Annotated[SECLOLoginCredentials, Depends(getSECLOCredentials)]
-dependsGoogle = Annotated[dict, Depends(getGoogleCredentials)]
+initDBSession(engine)
 
 app = FastAPI()
 app.include_router(claims.router)

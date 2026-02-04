@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from domainlogic.calendarmanager import CalendarManager
 from domainlogic.claimmanager import ClaimManager
 from api.dtos.DTOs import CitationDTO, ClaimDTO, NotificationDTO
-from main import dependsDB, dependsGoogle, dependsSECLO
+from api.dependencies import dependsDB, dependsGoogle, dependsSECLO
 
 import logging
 logger = logging.getLogger(__name__)

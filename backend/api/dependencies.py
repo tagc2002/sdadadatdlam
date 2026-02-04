@@ -1,11 +1,19 @@
 import os
+from typing import Annotated
+from fastapi import Depends
+from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 # TODO store and retrieve dynamically with user session
 cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
+sm: sessionmaker | None = None
 
-def getTransaction(sm: sessionmaker):
+def initDBSession(engine: Engine):
+    global sm
+    sm = sessionmaker(engine)
+
+def getTransaction():
     if not sm: raise ValueError("DB NOT INITIALIZED")
     session: Session = sm()
     try:
@@ -25,3 +33,7 @@ def getSECLOCredentials() -> SECLOLoginCredentials:
 def getGoogleCredentials() -> dict:
     #TODO Proper oauth scheme and retrieve credentials
     return {}
+
+dependsDB = Annotated[Session, Depends(getTransaction)]
+dependsSECLO = Annotated[SECLOLoginCredentials, Depends(getSECLOCredentials)]
+dependsGoogle = Annotated[dict, Depends(getGoogleCredentials)]
