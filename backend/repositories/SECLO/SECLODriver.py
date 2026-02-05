@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger('selenium').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.CRITICAL)
 logging.getLogger('WDM').setLevel(logging.CRITICAL)
-portalVersionSupported = '8.4.11.0'
+portalVersionSupported = '8.5.4.0'
 
 DEBUGMODE = os.getenv('DEBUGMODE', False)
 MAX_ATTEMPTS = 3
@@ -638,22 +638,23 @@ class SECLOFileManager(SECLOAccessor):
             logger.warning("FILE WON'T BE SAVED IN DEBUG MODE!")
         self.__getFiles()
     
-    def uploadRecord(self: Self, file: str, agreement: bool) -> None:
+    def uploadRecord(self: Self, file: str, agreement: bool, override: bool = False) -> None:
         '''
         Uploads a record to an already closed case.
         Parameters:
             file (str): Path to the desired record to upload.
             agreement (bool): Whether its an agreement or not, because the way of uploading them is different for some godforsaken reason. 
         '''
-        if (self.recid):
-            self.setGdeIdFromRecId(self.recid)
-        else:
-            raise InvalidParameterException("Missing recID")
+        if not self.gdeID:
+            if (self.recid):
+                self.setGdeIdFromRecId(self.recid)
+            else:
+                raise InvalidParameterException("Missing recID and gdeID")
         logger.info(self.gdeID)
         
         self.driver.get('https://conciliadores.trabajo.gob.ar/Novedades.aspx')
-        WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnActa'))).click()
-        loadNextPage = WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnBuscar')))
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnActa'))).click()
+        loadNextPage = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnBuscar')))
         if agreement:
             self.driver.find_element(By.ID, 'ctl00_Center_radTipo_0').click()
         else:
@@ -668,8 +669,12 @@ class SECLOFileManager(SECLOAccessor):
         
         for row in list:
             if row.find_elements(By.TAG_NAME, 'td')[0].text.strip() == self.gdeID:
-                #TODO verify if record has already been uploaded
-                #I need the site to have a pending case to upload, so later
+                try:
+                    row.find_elements(By.TAG_NAME, 'td')[2].find_element(By.TAG_NAME, 'input')
+                    logger.warning(f"Claim {self.gdeID} already has record uploaded ({'agreement' if agreement else 'nonagreement'})")
+                    if not override: return
+                except NoSuchElementException:
+                    continue    
                 row.find_elements(By.TAG_NAME, 'td')[3].find_element(By.TAG_NAME, 'input').send_keys(file)
                 found = True
                 break  
@@ -678,7 +683,7 @@ class SECLOFileManager(SECLOAccessor):
         
         if not DEBUGMODE:
             self.driver.find_element(By.ID, 'ctl00_Center_btnGenerar').click()
-            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+            WebDriverWait(self.driver, 15).until(EC.alert_is_present())
             self.driver.switch_to.alert.accept()
             WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_grdReclamos')))
         else: 
