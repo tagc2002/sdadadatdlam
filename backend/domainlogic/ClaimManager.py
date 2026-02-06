@@ -186,7 +186,7 @@ class ClaimManager:
                                     client.lawyerLink.append(lawyerEmployerLink)
                                     break
                             else:
-                                logger.critical(f'While ingesting recID {localClaim.recID}: Couldn\'t match lawyer {localLawyer.lawyerName} to client {represented[1]}. Execution will proceed')
+                                logger.warning(f'While ingesting recID {localClaim.recID}: Couldn\'t match lawyer {localLawyer.lawyerName} to client {represented[1]}. Execution will proceed')
             #TODO add others info
             localClaim.title = self.__getCalHeader(localClaim)
         return localClaim

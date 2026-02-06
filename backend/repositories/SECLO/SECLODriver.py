@@ -79,7 +79,7 @@ class SECLOAccessor:
         })
         logger.debug(f'Download path set to {self.downloadpath}')
         if DEBUGMODE:
-            logger.critical("WARNING! DEBUG mode enabled. Any requested changes will not be submitted.")
+            logger.warning("WARNING! DEBUG mode enabled. Any requested changes will not be submitted.")
 
         if os.getenv("CONTAINER", "FALSE") == "TRUE":
             self.chrome_options.add_argument("--no-sandbox")
@@ -310,7 +310,7 @@ class SECLOCitationManager(SECLOAccessor):
             WebDriverWait(self.driver, 10).until(EC.alert_is_present())
             self.driver.switch_to.alert.accept()
         else:
-            logger.critical("DEBUG MODE WON'T SUBMIT REOPENING REQUEST")
+            logger.warning("DEBUG MODE WON'T SUBMIT REOPENING REQUEST")
         self.progress.setCompletion("Done reopening")
         return self
 
@@ -503,7 +503,7 @@ class SECLOCitationManager(SECLOAccessor):
             self.driver.find_element(By.ID, 'ctl00_Center_btnGrabar').click()
             self.__validationErrorChecker()
         else:
-            logger.critical("DEBUG MODE WON'T PERSIST NEW CITATION. However, this citation will be marked as 'completed' rather than 'pending', to allow verifying this last stage")
+            logger.warning("DEBUG MODE WON'T PERSIST NEW CITATION. However, this citation will be marked as 'completed' rather than 'pending', to allow verifying this last stage")
         self.progress.setCompletion("Done new citation request")
 
     def closeCase(self: Self, items: set[CitationResult]):
@@ -530,7 +530,7 @@ class SECLOCitationManager(SECLOAccessor):
                 WebDriverWait(self.driver, 10).until(EC.alert_is_present())
                 self.driver.switch_to.alert.accept()
             else: 
-                logger.critical("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
+                logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
         self.progress.setCompletion("Done closing claim")
 
 class SECLOFileManager(SECLOAccessor):

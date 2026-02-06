@@ -84,7 +84,7 @@ def createEvent(googleCreds: dict, event: GoogleEvent) -> GoogleEvent | None:
         logger.info(event.model_dump(exclude_none=True, exclude_unset = True))
         event_result = service.events().insert(calendarId="primary", body = event.model_dump(exclude_none=True, exclude_unset = True), conferenceDataVersion=1, sendUpdates = 'all', supportsAttachments = True).execute() # type: ignore
         if not event_result: 
-            logger.critical("Error creating event")
+            logger.error("Error creating event")
             return
         return GoogleEvent.model_validate(event_result)
 
