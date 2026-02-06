@@ -6,7 +6,7 @@ from typing import List, Self
 from dataobjects.SECLODataClasses import SECLOAddressData
 from dataobjects.enums import ClaimType, CitationType, CitationStatus, DocType, PersonType, RequiredAsType, SECLONotificationType
 
-from sqlalchemy import BigInteger, ForeignKey, LargeBinary, create_engine
+from sqlalchemy import BigInteger, ForeignKey, LargeBinary, create_engine, null
 from sqlalchemy import text
 from sqlalchemy import Table, Column, Integer, String
 
@@ -699,11 +699,11 @@ class Nonagreement(Base):
 class DocumentationNonagreementLink(Base):
     __tablename__ = "documentationNonagreementLink"
 
-    nonID: Mapped[int] = mapped_column(primary_key=True)
-    docID: Mapped[int] = mapped_column(primary_key=True)
+    nonID: Mapped[int] = mapped_column(ForeignKey("nonagreement.nonID", ondelete="CASCADE", onupdate="CASCADE"), primary_key=True, nullable=False)
+    docID: Mapped[int] = mapped_column(ForeignKey("documentation.docID", ondelete="CASCADE", onupdate="CASCADE"), primary_key=True, nullable=False)
 
     nonagreement: Mapped[Nonagreement] = relationship(back_populates="documentationLink")
-    documentation: Mapped[Documentation] = relationship(back_populates="nonagreementLink")
+    document: Mapped[Documentation] = relationship(back_populates="nonagreementLink")
 
 class NonagreementSECLOInvoice(Base):
     __tablename__ = "nonagreementSECLOInvoice"

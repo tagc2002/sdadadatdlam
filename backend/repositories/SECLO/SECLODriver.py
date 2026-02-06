@@ -17,7 +17,7 @@ from selenium.common.exceptions import NoSuchElementException, InvalidElementSta
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.print_page_options import PrintOptions
 from webdriver_manager.chrome import ChromeDriverManager
-from dataobjects.enums import ClaimType, PersonType
+from dataobjects.enums import ClaimType, PersonType, SECLOFileType
 from repositories.SECLO.SECLOExceptions import AttemptsExceededException, UnauthorizedAccessException, UnknownReportedException, RecNotAccessibleException, ValidationException, InvalidCaseStateException, InvalidParameterException, FileDownloadTimeoutException
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 from dataobjects.SECLODataClasses import SECLOAddressData, SECLOCitation, SECLOClaimData, SECLOEmployeeData, SECLOEmployerData, SECLOLawyerData, SECLONotificationType, SECLONotificationData, SECLOOtherData, CitationResult
@@ -35,6 +35,7 @@ logging.getLogger('WDM').setLevel(logging.CRITICAL)
 portalVersionSupported = '8.5.4.0'
 
 DEBUGMODE = os.getenv('DEBUGMODE', False)
+DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 MAX_ATTEMPTS = 3
 
 class SECLOLoginCredentials:
@@ -59,11 +60,11 @@ class SECLOAccessor:
     def __init__(self, credentials: SECLOLoginCredentials, recid: int | None = None, progressReport: ProgressReport | None = ProgressReport()):
         self.chrome_options = Options()
         self.chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
-        self.downloadpath = Path(f'./temp/{uuid.uuid4()}')
+        self.downloadpath = Path(f'{DOWNLOADROOT}/{uuid.uuid4()}')
         self.downloadpath = self.downloadpath.resolve()
         if os.getenv('HEADLESS', 'TRUE') == 'TRUE':
             logger.debug("Headless flag set true")
-            self.chrome_options.add_argument('headless')
+            self.chrome_options.add_argument('headless=new')
         else:
             logger.debug("Headless flag set false")
 
@@ -91,7 +92,7 @@ class SECLOAccessor:
         self.printOptions.set_page_size(PrintOptions.A4)
 
     def __enter__(self: Self) -> Self:
-        for i in range(0,3):
+        for i in range(0,MAX_ATTEMPTS):
             if hasattr(self, 'driver') and self.driver:
                 self.driver.close()
             if os.getenv("CONTAINER", "FALSE") == "TRUE":
@@ -191,7 +192,7 @@ class SECLOAccessor:
         logger.debug(f'gdeYear: {gdeYear}')
         logger.debug(f'gdeFileNumber: {gdeFile}')
         lastException = None
-        for i in range(0, 3):
+        for i in range(0, MAX_ATTEMPTS):
             try:
                 findButton = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Busqueda_btnBuscar')))
                 self.driver.find_element(By.ID, 'ctl00_Busqueda_txtNro').send_keys(gdeFile)
@@ -531,14 +532,6 @@ class SECLOCitationManager(SECLOAccessor):
             else: 
                 logger.critical("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
         self.progress.setCompletion("Done closing claim")
-
-class SECLOFileType(Enum):
-    PODER = ('18', False)
-    DNI = ('20', False)
-    OTHER = ('21', True)
-    CREDENTIAL = ('33', False)
-    AUTH = ('34', False)
-    SIGNED = ('36', False)
 
 class SECLOFileManager(SECLOAccessor):
     '''
@@ -904,7 +897,7 @@ class SECLORecData(SECLOAccessor):
                     mobileprefix = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCodArea_Numerico').get_attribute('value')
                     mobilephone = self.driver.find_element(By.ID, 'ctl00_Center_ctl02_txtCel_Numerico').get_attribute('value')
 
-                    #name validation
+                    #name validation (unreliable!)
                     folio = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt')))
                     foliovalue = folio.get_property('value')
                     # folio.send_keys(Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + '0' + Keys.TAB)
@@ -1009,6 +1002,15 @@ class SECLORecData(SECLOAccessor):
                 logger.warning(e)
                 continue
         raise AttemptsExceededException(lastException)
+    
+    def getConciliadorData(self: Self) -> str:
+        self.driver.get(f"https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={self.recid}")
+        WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, "rcNroExpediente")))
+        try:
+            return self.driver.find_element(By.ID, "rcConciliador").text
+        except Exception:
+            return "UNKNOWN"
+
 
     def __addressFieldComplete(self: Self, field: WebElement, text: str) -> None:
         if not field.get_attribute('readOnly'):

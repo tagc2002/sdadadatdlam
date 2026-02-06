@@ -31,7 +31,7 @@ postgresdb = os.getenv("POSTGRES_DB")
 postgresdomain = os.getenv("POSTGRES_DOMAIN")
 alembic_script_location = './alembic'
 
-logging.basicConfig(filename="./logs/sdadadatdlam-backend.log", level=logging.DEBUG)
+logging.basicConfig(filename="./logs/sdadadatdlam-backend.log", level=logging.DEBUG, format="%(asctime)s %(levelname)s (%(filename)s:%(funcName)s:%(lineno)d@%(taskName)s): %(message)s")
 logging.getLogger().addHandler(logging.StreamHandler())
 logger = logging.getLogger(__name__)
 

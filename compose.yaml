@@ -1,6 +1,5 @@
 name: sdadadatdlam
 services:
-
     front:
         build: ./sdadadatdlam-frontend
         container_name: front
@@ -30,7 +29,7 @@ services:
                 condition: service_started
         volumes:
             - ./logs:/usr/app/src/logs
-            - ./downloads:/home/downloads
+            - ./temp:/temp
         env_file: ".env"
     postgres:
         image: postgres:alpine
@@ -70,7 +69,7 @@ services:
         volumes:
             - ./backend/config.toml:/opt/selenium/config.toml
             - /var/run/docker.sock:/var/run/docker.sock
-            - selenium-temp:/home/seluser/Downloads
+            - ./temp:/temp
             - selenium-temp:/opt/selenium/assets
         environment:
             - CONFIG_FILE=/opt/bin/config.toml

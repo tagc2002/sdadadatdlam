@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime, timedelta
+import os
 from re import L
 from typing import List, Self
 from sqlalchemy import Engine, select
@@ -15,6 +16,8 @@ from repositories.SECLO.SECLOProgressReporting import ProgressReport
 import logging
 logger = logging.getLogger(__name__)
 
+downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
+
 
 class ClaimManager:
     def batchVerifyAgenda(self: Self, creds: SECLOLoginCredentials, progress: ProgressReport | None = None, db: Session | None = None, weeksBefore: int = 0, weeksAfter: int = 20):
@@ -29,14 +32,6 @@ class ClaimManager:
         with SECLOCalendarParser(creds, None, firstStage) as calParser:
             calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
         firstStage.setCompletion("Done acquiring calendar data")
-
-        # for index, entry in enumerate(calendarInfo):
-        #     if CitationStatus.citationStringToEnum(entry.citationType) == CitationStatus.PENDING and CitationType.citationStringToEnum(entry.citationType) == CitationType.FIRST:
-        #         logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-        #         with open(f'/home/downloads/{entry.citationDate}.pdf', 'wb') as file:
-        #             file.write(base64.b64decode(entry.pdfString or ""))
-        #     else:
-        #         logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
 
         secondStage.setSteps(len(calendarInfo))
         with SECLORecData(creds, None, None) as recData:
@@ -65,6 +60,7 @@ class ClaimManager:
                         db.add(localClaim)
                     except RecNotAccessibleException as e:
                         logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
+                        counter -= 1
                         continue
 
                 if not localCitation:
@@ -94,6 +90,18 @@ class ClaimManager:
 
                 self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db)
                 db.commit()
+
+        
+        ##TODO Once the frontend is working, this will be done through an api call.
+        for index, entry in enumerate(calendarInfo):
+            claim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
+            if claim and not claim.isEvilized:
+                logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
+                with open(f'{downloadPath}/{entry.citationDate}.pdf', 'wb') as file:
+                    file.write(base64.b64decode(entry.pdfString or ""))
+                claim.isEvilized=True
+            else:
+                logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
         secondStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
@@ -191,11 +199,19 @@ class ClaimManager:
             self.__ingressEntryIfMissing(employee.headerName, employeeNames)    #TODO consignation must flip names!
         for employer in localClaim.employers:
             self.__ingressEntryIfMissing(employer.headerName, employerNames)
-        for index, name in enumerate(employeeNames):
-            header += (', ' if index > 0 else '') + name
-        header += ' c/ '
-        for index, name in enumerate(employerNames):
-            header += (', ' if index > 0 else '') + name
+
+        if localClaim.initByEmployee:
+            for index, name in enumerate(employeeNames):
+                header += (', ' if index > 0 else '') + name
+            header += ' c/ '
+            for index, name in enumerate(employerNames):
+                header += (', ' if index > 0 else '') + name
+        else:
+            for index, name in enumerate(employerNames):
+                header += (', ' if index > 0 else '') + name
+            header += ' c/ '
+            for index, name in enumerate(employeeNames):
+                header += (', ' if index > 0 else '') + name
         return header
     
     def __filter_rules(self: Self, name: str) -> str:
@@ -228,7 +244,7 @@ class ClaimManager:
                     localNotification.deliveryCode = int(notification.notificationCode)
                 except ValueError:
                     localNotification.deliveryCode = None
-                localNotification.deliveryDescription = notification.notificationStatus + f'(Leida en afip)' if notification.afipRead else ''
+                localNotification.deliveryDescription = notification.notificationStatus + (f' (Leida)' if notification.afipRead else ' (No leida)')
                 localNotification.citation.citationStatus = CitationStatus.citationStringToEnum(notification.citationStatus)
             else:
                 if not citation:
@@ -284,6 +300,7 @@ class ClaimManager:
                         else:
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
                     citation.notifications.append(localNotification)
+                    db.add(localNotification)
 
     def getClaims(self: Self, date: datetime | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")

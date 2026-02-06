@@ -134,6 +134,13 @@ class SECLONotificationType(Enum):
             return SECLONotificationType.CEDULE
         return SECLONotificationType.PERSONAL
         
+class SECLOFileType(Enum):
+    PODER = ('18', False)
+    DNI = ('20', False)
+    OTHER = ('21', True)
+    CREDENTIAL = ('33', False)
+    AUTH = ('34', False)
+    SIGNED = ('36', False)
 
 class CitationType(Enum):
     FIRST = 1

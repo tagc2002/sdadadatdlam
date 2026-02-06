@@ -2,6 +2,8 @@ from calendar import week
 import datetime
 import os.path
 from typing import List
+# import sys
+# sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -116,3 +118,6 @@ def getColors(googleCreds: dict):
         print("Shoot")
     except ValidationError as e:
         logger.error(f"Error validating event {event_result}") # type: ignore
+
+if __name__ == "__main__":
+    print(listEvents({}, 0, 1))

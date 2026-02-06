@@ -147,7 +147,7 @@ class CalendarManager():
         if claim.calID:
             return claim.calID or ''
         else:
-            events = listEvents({}, 50, 20)
+            events = listEvents({}, 20, 20)
             for event in events:
                 if claim.gdeID.split('-')[2] in (event.summary or ''):
                     claim.calID = event.id
