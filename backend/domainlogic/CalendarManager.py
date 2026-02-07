@@ -98,10 +98,10 @@ class CalendarManager():
             return GoogleColorList.WHITE
         elif (hasEmployerLawyerEmail and hasWorkerLawyerEmail):
             return GoogleColorList.BLUE
-        elif (hasEmployerLawyerEmail or hasWorkerLawyerEmail):
-            return GoogleColorList.LIGHT_ORANGE
         elif (hasEmployerEmail or hasWorkerEmail):
             return GoogleColorList.YELLOW
+        elif (hasEmployerLawyerEmail or hasWorkerLawyerEmail):
+            return GoogleColorList.LIGHT_ORANGE
         else:
             return GoogleColorList.RED
     
