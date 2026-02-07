@@ -5,6 +5,7 @@ from re import L
 from typing import List, Self
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
+from api.dtos.requestDTOs import claimFilterParams
 from dataobjects.SECLODataClasses import SECLONotificationData
 from repositories.SECLO.SECLOExceptions import RecNotAccessibleException
 from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, EmployeeRelationshipData, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
@@ -196,7 +197,7 @@ class ClaimManager:
         employeeNames = []
         employerNames = []
         for employee in localClaim.employees:
-            self.__ingressEntryIfMissing(employee.headerName, employeeNames)    #TODO consignation must flip names!
+            self.__ingressEntryIfMissing(employee.headerName, employeeNames)
         for employer in localClaim.employers:
             self.__ingressEntryIfMissing(employer.headerName, employerNames)
 
@@ -269,7 +270,7 @@ class ClaimManager:
                     localNotification = SecloNotification(citation = citation, notificationType = notification.notificationType,
                                                         secloPostalID = notification.id, emissionDate = notification.generatedDate,
                                                         receptionDate = notification.notifiedDate,
-                                                        deliveryDescription = notification.notificationStatus + '(Leida en afip)' if notification.afipRead else '')
+                                                        deliveryDescription = notification.notificationStatus + ' (Leida)' if notification.afipRead else ' (No leida)')
                     try:
                         localNotification.deliveryCode = int(notification.notificationCode)
                     except ValueError:
@@ -302,11 +303,19 @@ class ClaimManager:
                     citation.notifications.append(localNotification)
                     db.add(localNotification)
 
-    def getClaims(self: Self, date: datetime | None = None, db: Session | None = None) -> List[Claim]:
+    def getClaims(self: Self, params: claimFilterParams | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")
         statement = select(Claim)
-        if (date): 
-            statement = statement.where(Claim.initDate > date)
+        if (params): 
+            if params.initStartDate:
+                statement = statement.where(Claim.initDate > params.initStartDate)
+            if params.initEndDate:
+                statement = statement.where(Claim.initDate < params.initEndDate)
+            # if params.citationStartDate:
+            #     statement = statement.where(Claim.initDate > params.initStartDate)
+            # if params.initEndDate:
+            #     statement = statement.where(Claim.initDate < params.initEndDate)
+            
         dbclaims = db.scalars(statement).all()
         claims = []
         claims.extend(dbclaims)
@@ -345,9 +354,3 @@ class ClaimManager:
         notifications = []
         notifications.extend(dbNotifications)
         return notifications
-    
-    def ingressTest(self: Self, recID: int, db: Session, creds: SECLOLoginCredentials):
-        with SECLORecData(creds, recID, None) as recData:
-            claimData = recData.getClaimData()
-            logger.warning(claimData)
-

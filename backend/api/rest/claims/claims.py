@@ -1,7 +1,9 @@
 from datetime import datetime
 import os
-from typing import List
-from fastapi import APIRouter
+from typing import Annotated, List
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
+from api.dtos.requestDTOs import claimFilterParams
 from domainlogic.calendarmanager import CalendarManager
 from domainlogic.claimmanager import ClaimManager
 from api.dtos.DTOs import CitationDTO, ClaimDTO, NotificationDTO
@@ -16,8 +18,8 @@ claimManager = ClaimManager()
 calendarManager = CalendarManager()
 
 @router.get('')
-async def getClaims(db: dependsDB, date: datetime | None = None) -> List[ClaimDTO]:
-    return ClaimDTO.fromList(claimManager.getClaims(date, db=db))
+async def getClaims(db: dependsDB, params: Annotated[claimFilterParams, Query()]) -> List[ClaimDTO]:
+    return ClaimDTO.fromList(claimManager.getClaims(params, db=db))
 
 @router.get('/{recID}')
 async def getClaim(db: dependsDB, recID: int) -> ClaimDTO:
@@ -38,8 +40,3 @@ async def getNotifications(db: dependsDB, recID: int, citationID: int, withUpdat
 @router.get('/{recID}/calendar')
 async def getCalendar(db: dependsDB, recID: int, withUpdate: bool = False):
     return calendarManager.getCalendarID(recID = recID, db = db, withUpdate=withUpdate)
-
-@router.get("/{recID}/testIngress")
-async def testIngress(db: dependsDB, cred: dependsSECLO, recID: int):
-    claimManager.ingressTest(recID, db, cred)
-    return {}
