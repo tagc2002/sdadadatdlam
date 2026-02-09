@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 import sys
 from threading import Thread
 from time import sleep
@@ -31,8 +32,20 @@ postgresdb = os.getenv("POSTGRES_DB")
 postgresdomain = os.getenv("POSTGRES_DOMAIN")
 alembic_script_location = './alembic'
 
-logging.basicConfig(filename="./logs/sdadadatdlam-backend.log", level=logging.DEBUG, format="%(asctime)s %(levelname)s (%(filename)s:%(funcName)s:%(lineno)d@%(taskName)s): %(message)s")
-logging.getLogger().addHandler(logging.StreamHandler())
+fileHandler = TimedRotatingFileHandler(
+    filename='./logs/sdadadatdlam-backend.log',
+    backupCount=7,
+    when='midnight',
+    interval=1
+)
+fileFormat = logging.Formatter(fmt="%(asctime)s %(levelname)s (%(filename)s:%(funcName)s:%(lineno)d@%(taskName)s): %(message)s")
+fileHandler.setFormatter(fileFormat)
+
+rootLogger= logging.getLogger()
+rootLogger.addHandler(logging.StreamHandler())
+rootLogger.addHandler(fileHandler)
+rootLogger.setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@{postgresdomain}/{postgresdb}'
