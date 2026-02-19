@@ -451,8 +451,8 @@ class DocumentationLawyerLink(Base):
 class LawyerTelephone(Base):
     __tablename__ = "lawyerTelephone"
 
-    telID: Mapped[int] = mapped_column(primary_key=True)
-    lawyerID: Mapped[int] = mapped_column(ForeignKey("lawyer.lawyerID"), primary_key=True)
+    telID: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    lawyerID: Mapped[int] = mapped_column(ForeignKey("lawyer.lawyerID"))
     telephone: Mapped[int]
     prefix: Mapped[int]
     description: Mapped[str | None]
