@@ -12,7 +12,7 @@ from api.dependencies import dependsDB, dependsGoogle, dependsSECLO
 import logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix = '/api/claim')
+router = APIRouter(prefix = '/claim')
 
 claimManager = ClaimManager()
 calendarManager = CalendarManager()

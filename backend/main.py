@@ -60,6 +60,6 @@ command.upgrade(alembic_cfg, 'head')
 engine = create_engine(url = connect_string)
 initDBSession(engine)
 
-app = FastAPI()
+app = FastAPI(root_path="/api")
 app.include_router(claims.router)
 app.include_router(ingress.router)

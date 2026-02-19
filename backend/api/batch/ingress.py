@@ -3,7 +3,7 @@ from domainlogic.claimmanager import ClaimManager
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 from api.dependencies import dependsDB, dependsSECLO
 
-router = APIRouter(prefix = '/api/batch')
+router = APIRouter(prefix = '/batch')
 
 claimManager = ClaimManager()
 
