@@ -1,44 +1,46 @@
 from pydantic import HttpUrl
 from database.database import *
 
-baseURL = "http://localhost:8080" #TODO Wire actual URL!
+baseURL = "http://localhost:8080/api" #TODO Wire actual URL!
 
-def claimToUrl(recID: int) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{recID}')
+def claimToUrl(claim: Claim):
+    return baseURL + f'/claim/{claim.recID}'
 
+def citationsToUrl():
+    return baseURL + '/citation'
 
-def citationsToUrl(recID: int) -> HttpUrl:
-    return HttpUrl(baseURL + f'/citation?claim={recID}')
+def citationsClaimToUrl(claim: Claim):
+    return citationsToUrl() + f'?claim={claim.recID}'
 
-def citationToUrl(citation: Citation) -> HttpUrl:
-    return HttpUrl(baseURL + f'/citation/{citation.citationID}')
-
-
-def notificationsToUrl(citationID: int):
-    return HttpUrl(baseURL + f'/citation/{citationID}/notification')
-
-def notificationToUrl(citationID: int, notificationID):
-    return HttpUrl(baseURL + f'/citation/{citationID}/notification/{notificationID}')
-
-def employeesToUrl(recID: int) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{recID}/employee')
-
-def employeeToUrl(employee: Employee) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{employee.claim.recID}/employee/{employee.employeeID}')
+def citationToUrl(citation: Citation):
+    return baseURL + f'/citation/{citation.citationID}'
 
 
-def employersToUrl(recID: int) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{recID}/employer')
+def notificationsToUrl(citation: Citation):
+    return citationToUrl(citation) + '/notification'
 
-def employerToUrl(employer: Employer) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{employer.claim.recID}/employer/{employer.employerID}')
+def notificationToUrl(notification: SecloNotification):
+    return notificationsToUrl(notification.citation) + str(notification.notificationID)
+
+def employeesToUrl(claim: Claim):
+    return claimToUrl(claim) + '/employee'
+
+def employeeToUrl(employee: Employee):
+    return employeesToUrl(employee.claim) + f'{employee.employeeID}'
 
 
-def lawyersToUrl(recID: int) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{recID}/lawyer')
+def employersToUrl(claim: Claim):
+    return claimToUrl(claim) + '/employer'
 
-def lawyerToUrl(lawyer: Lawyer) -> HttpUrl:
-    return HttpUrl(baseURL + f'/claim/{lawyer.claim.recID}/lawyer/{lawyer.lawyerID}')
+def employerToUrl(employer: Employer):
+    return employersToUrl(employer.claim) + f'{employer.employerID}'
+
+
+def lawyersToUrl(claim: Claim):
+    return claimToUrl(claim) + 'lawyer'
+
+def lawyerToUrl(lawyer: Lawyer):
+    return lawyersToUrl(lawyer.claim) + f'{lawyer.lawyerID}'
 
 
 def agreementsToUrl(recID: int) -> HttpUrl:
@@ -95,3 +97,10 @@ def observationsToUrl(agreement: Agreement) -> HttpUrl:
 
 def observationToUrl(observation: Observation) -> HttpUrl:
     return HttpUrl(baseURL + f'/observation/{observation.obsID}')
+
+def employeeBankAccountToUrl(bankAccount: BankAccount) -> HttpUrl:
+    if not bankAccount.employee: raise ValueError(f"bank account {bankAccount.accountID} missing employee")
+    return HttpUrl(baseURL + f'/claim/{bankAccount.employee.recID}/employee/{bankAccount.employee.employeeID}/bankAccount')
+
+def employeeEmailsUrl(employee: Employee) -> HttpUrl:
+    return HttpUrl(baseURL + f'/claim/{employee.recID}/employee/')

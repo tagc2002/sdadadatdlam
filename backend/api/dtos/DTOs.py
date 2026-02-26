@@ -7,6 +7,7 @@ from api.dtos.UrlHelpers import *
 from dataobjects.enums import CitationStatus, CitationType, DocType, SECLONotificationType
 
 class ClaimDTO(BaseModel):
+    _claim:         Claim
     recID:          int
     gdeID:          str
     title:          str
@@ -21,22 +22,22 @@ class ClaimDTO(BaseModel):
     @computed_field
     @property
     def citations(self) -> HttpUrl:
-        return citationsToUrl(self.recID)
+        return HttpUrl(citationsClaimToUrl(self._claim))
     
     @computed_field
     @property
     def employees(self) -> HttpUrl:
-        return employeesToUrl(self.recID)
+        return HttpUrl(employeesToUrl(self._claim))
     
     @computed_field
     @property
     def employers(self) -> HttpUrl:
-        return employersToUrl(self.recID)
+        return HttpUrl(employersToUrl(self._claim))
 
     @computed_field
     @property
     def lawyers(self) -> HttpUrl:
-        return lawyersToUrl(self.recID)  
+        return HttpUrl(lawyersToUrl(self._claim))
 
     @computed_field
     @property
@@ -68,11 +69,12 @@ class ClaimDTO(BaseModel):
     def fromSQL(cls, sql: Claim) -> Self:
         return cls(recID=sql.recID, gdeID=sql.gdeID, initDate=sql.initDate, initByEmployee=sql.initByEmployee, 
                         claimType=sql.claimType, isEvilized=sql.isEvilized, legalStuff=sql.legalStuff,
-                        isDomestic=sql.isDomestic, calID=sql.calID, title=sql.title)
+                        isDomestic=sql.isDomestic, calID=sql.calID, title=sql.title, _claim=sql)
     
 class CitationDTO(BaseModel):
     citationID:         int
-    _recID:              int
+    _recID:             int
+    _citation:          Citation
     secloAudID:         int | None
     citationDate:       datetime | None
     citationType:       CitationType
@@ -89,12 +91,12 @@ class CitationDTO(BaseModel):
     @computed_field
     @property
     def claim(self) -> HttpUrl:
-        return claimToUrl(self._recID)
+        return HttpUrl(claimToUrl(self._citation.claim))
     
     @computed_field
     @property
     def notifications(self) -> HttpUrl:
-        return notificationsToUrl(self.citationID)
+        return HttpUrl(notificationsToUrl(self._citation))
     
     @computed_field
     @property
@@ -128,7 +130,7 @@ class CitationDTO(BaseModel):
         return cls(citationID=sql.citationID, _recID=sql.recID, secloAudID=sql.secloAudID, citationDate=sql.citationDate,
                    citationType=sql.citationType, citationStatus=sql.citationStatus, citationSummary=sql.citationSummary,
                    notes=sql.notes, isCalendarPrimary=sql.isCalendarPrimary, meetID=sql.meetID, _lawyerToEmployee=sql.lawyerToEmployee,
-                   _lawyerToEmployer=sql.lawyerToEmployer, _agreement=sql.agreement, _nonagreement=sql.nonagreement)
+                   _lawyerToEmployer=sql.lawyerToEmployer, _agreement=sql.agreement, _nonagreement=sql.nonagreement, _citation=sql)
 
     
 class NotificationDTO(BaseModel):
@@ -147,13 +149,13 @@ class NotificationDTO(BaseModel):
     @computed_field
     @property
     def citation(self) -> HttpUrl:
-        return citationToUrl(self._citation)
+        return HttpUrl(citationToUrl(self._citation))
     
     @computed_field
     @property
     def belongsTo(self) -> HttpUrl | None:
-        if (isinstance(self._link, SecloNotificationToEmployee)): return employeeToUrl(self._link.employee)
-        if (isinstance(self._link, SecloNotificationToEmployer)): employerToUrl(self._link.employer)
+        if (isinstance(self._link, SecloNotificationToEmployee)): return HttpUrl(employeeToUrl(self._link.employee))
+        if (isinstance(self._link, SecloNotificationToEmployer)): return HttpUrl(employerToUrl(self._link.employer))
         return None #Should never happen but it will complain about it otherwise
     @classmethod
     def fromList(cls, list: List[SecloNotification]) -> List[Self]:
@@ -179,7 +181,7 @@ class LawyerToEmployeeDTO(BaseModel):
     @computed_field
     @property
     def employee(self) -> HttpUrl:
-        return employeeToUrl(self._employee)
+        return HttpUrl(employeeToUrl(self._employee))
     
     @computed_field
     @property
@@ -189,7 +191,7 @@ class LawyerToEmployeeDTO(BaseModel):
     @computed_field
     @property
     def lawyer(self) -> HttpUrl:
-        return lawyerToUrl(self._lawyer)
+        return HttpUrl(lawyerToUrl(self._lawyer))
 
     @computed_field
     @property
@@ -199,7 +201,7 @@ class LawyerToEmployeeDTO(BaseModel):
     @computed_field
     @property
     def citation(self) -> HttpUrl:
-        return citationToUrl(self._citation)
+        return HttpUrl(citationToUrl(self._citation))
         
     @computed_field
     @property
@@ -230,7 +232,7 @@ class LawyerToEmployerDTO(BaseModel):
     @computed_field
     @property
     def employer(self) -> HttpUrl:
-        return employerToUrl(self._employer)
+        return HttpUrl(employerToUrl(self._employer))
     
     @computed_field
     @property
@@ -240,7 +242,7 @@ class LawyerToEmployerDTO(BaseModel):
     @computed_field
     @property
     def lawyer(self) -> HttpUrl:
-        return lawyerToUrl(self._lawyer)
+        return HttpUrl(lawyerToUrl(self._lawyer))
 
     @computed_field
     @property
@@ -250,7 +252,7 @@ class LawyerToEmployerDTO(BaseModel):
     @computed_field
     @property
     def citation(self) -> HttpUrl:
-        return citationToUrl(self._citation)
+        return HttpUrl(citationToUrl(self._citation))
         
     @computed_field
     @property
@@ -277,16 +279,16 @@ class DocumentationLinkDTO(BaseModel):
     @computed_field
     @property
     def belongsTo(self) -> HttpUrl | None:
-        if isinstance(self._belongsTo, Employee): employeeToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Employer): employerToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Lawyer): lawyerToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Agreement): agreementToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Homologation): homologationToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Invoice): invoiceToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Payment): paymentToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Observation): observationToUrl(self._belongsTo)
-        if isinstance(self._belongsTo, Claim): claimToUrl(self._belongsTo.recID)
-        if isinstance(self._belongsTo, Nonagreement): nonagreementToUrl(self._belongsTo)
+        if isinstance(self._belongsTo, Employee): return HttpUrl(employeeToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Employer): return HttpUrl(employerToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Lawyer): return HttpUrl(lawyerToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Agreement): return HttpUrl(agreementToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Homologation): return HttpUrl(homologationToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Invoice): return HttpUrl(invoiceToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Payment): return HttpUrl(paymentToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Observation): return HttpUrl(observationToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Claim): return HttpUrl(claimToUrl(self._belongsTo))
+        if isinstance(self._belongsTo, Nonagreement): return HttpUrl(nonagreementToUrl(self._belongsTo))
         return None
     
     @classmethod
@@ -384,7 +386,7 @@ class AddressDTO(BaseModel):
     @computed_field
     @property
     def belongsTo(self) -> List[HttpUrl]:
-        return [employeeToUrl(x.employee) for x in self._employees] + [employerToUrl(x.employer) for x in self._employers]
+        return [HttpUrl(employeeToUrl(x.employee)) for x in self._employees] + [HttpUrl(employerToUrl(x.employer)) for x in self._employers]
     
     @classmethod
     def fromSQL(cls, sql: Address) -> Self:
@@ -404,9 +406,9 @@ class BelongsDTO(BaseModel):
     @computed_field
     @property
     def owner(self) -> HttpUrl | None:
-        if isinstance(self._owner, Employee): return employeeToUrl(self._owner)
-        if isinstance(self._owner, Employer): return employerToUrl(self._owner)
-        if isinstance(self._owner, Lawyer): return lawyerToUrl(self._owner)
+        if isinstance(self._owner, Employee): return HttpUrl(employeeToUrl(self._owner))
+        if isinstance(self._owner, Employer): return HttpUrl(employerToUrl(self._owner))
+        if isinstance(self._owner, Lawyer): return HttpUrl(lawyerToUrl(self._owner))
     @classmethod
     def fromData(cls, owner: Employee | Employer | Lawyer, description: str | None) -> Self:
         return cls(_owner=owner, description=description)
@@ -453,3 +455,17 @@ class EmployeeDTO(BaseModel):
     _hemiagreement: Hemiagreement | None
     _relationshipData: List[EmployeeRelationshipData]
 
+    @computed_field
+    @property
+    def bankAccount(self: Self) -> HttpUrl | None:
+        return employeeBankAccountToUrl(self._bankAccount) if self._bankAccount else None
+    
+    @computed_field
+    @property
+    def claim(self: Self) -> HttpUrl:
+        return HttpUrl(claimToUrl(self._claim))
+    
+    # @computed_field
+    # @property
+    # def emails(self: Self) -> HttpUrl:
+    #     return HttpUrl(employeeEmailsUrl())
