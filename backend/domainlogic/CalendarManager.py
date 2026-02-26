@@ -8,7 +8,7 @@ from sqlalchemy import select
 from database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
 from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
 from dataobjects.enums import CitationType
-from repositories.Google.CalendarAPI import createEvent, listEvents
+from repositories.Google.CalendarAPI import createEvent, listEvents, searchEvents
 
 import logging
 logger = logging.getLogger(__name__)
@@ -147,9 +147,9 @@ class CalendarManager():
         if claim.calID:
             return claim.calID or ''
         else:
-            events = listEvents({}, 20, 20)
+            events = searchEvents({}, claim.gdeID.split('-')[2])
             for event in events:
-                if claim.gdeID.split('-')[2] in (event.summary or ''):
+                if claim.gdeID.split('-')[1] in (event.summary or ''):
                     claim.calID = event.id
                     return event.id or ''
             else:

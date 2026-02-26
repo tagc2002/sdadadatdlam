@@ -76,6 +76,20 @@ def getEvent(googleCreds: dict, eventID: str) -> GoogleEvent | None:
     except ValidationError as e:
         logger.error(f"Error validating event {event_result}") # type: ignore
 
+def searchEvents(googleCreds: dict, term: str) -> List[GoogleEvent]:
+    creds = basicAuth()
+    events: List[GoogleEvent] = []
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        apiEvents = service.events().list(calendarId="primary", q=term).execute()
+        for event in apiEvents: 
+            events.append(GoogleEvent.model_validate(event))
+    except HttpError as e:
+        print("Shoot")
+    except ValidationError as e:
+        logger.error(f"Error validating event {e}") # type: ignore
+    return events
+
 def createEvent(googleCreds: dict, event: GoogleEvent) -> GoogleEvent | None:
     creds = basicAuth()
     try:
