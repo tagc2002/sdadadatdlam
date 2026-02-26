@@ -300,8 +300,8 @@ class ClaimManager:
                                 break
                         else:
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
-                    citation.notifications.append(localNotification)
                     db.add(localNotification)
+                    citation.notifications.append(localNotification)
 
     def getClaims(self: Self, params: claimFilterParams | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")
