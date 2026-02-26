@@ -1,7 +1,6 @@
 #selenium webdriver-manager python_dotenv
 from enum import Enum
 from decimal import Decimal
-from math import e
 from pathlib import Path
 import re
 from time import sleep
