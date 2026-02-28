@@ -229,8 +229,8 @@ class EmployeeRelationshipData(Base):
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'))
     startDate: Mapped[datetime | None]
     endDate: Mapped[datetime | None]
-    wage: Mapped[Decimal]
-    claimAmount: Mapped[Decimal]
+    wage: Mapped[Decimal | None]
+    claimAmount: Mapped[Decimal | None]
     category: Mapped[str]
     cct: Mapped[str]
 
@@ -308,7 +308,6 @@ class Employer(Base):
             else: return False
         else:
             return False
-
 
 class EmployerAddressLink(Base):
     __tablename__ = "employerAddressLink"

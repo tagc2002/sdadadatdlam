@@ -1,13 +1,16 @@
 from datetime import datetime
+import logging
 from typing import List, Self
 
-from pydantic import BaseModel, ConfigDict, HttpUrl, computed_field
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, computed_field
 from database.database import *
-from api.dtos.UrlHelpers import *
 from dataobjects.enums import CitationStatus, CitationType, DocType, SECLONotificationType
 
+logger = logging.getLogger(__name__)
+
+baseURL = "http://localhost:8080/api" #TODO Wire actual URL!
+
 class ClaimDTO(BaseModel):
-    _claim:         Claim
     recID:          int
     gdeID:          str
     title:          str
@@ -19,62 +22,64 @@ class ClaimDTO(BaseModel):
     isDomestic:     bool | None
     calID:          str | None
 
-    @computed_field
-    @property
-    def citations(self) -> HttpUrl:
-        return HttpUrl(citationsClaimToUrl(self._claim))
-    
-    @computed_field
-    @property
-    def employees(self) -> HttpUrl:
-        return HttpUrl(employeesToUrl(self._claim))
-    
-    @computed_field
-    @property
-    def employers(self) -> HttpUrl:
-        return HttpUrl(employersToUrl(self._claim))
+    _sql:            Claim | None
 
     @computed_field
     @property
-    def lawyers(self) -> HttpUrl:
-        return HttpUrl(lawyersToUrl(self._claim))
-
-    @computed_field
-    @property
-    def agreements(self) -> HttpUrl:
-        return agreementsToUrl(self.recID)  
-
-    @computed_field
-    @property
-    def nonagreements(self) -> HttpUrl:
-        return nonagreementsToUrl(self.recID)
+    def citations(self) -> HttpUrl | None:
+        logger.critical(self.__pydantic_private__)
+        logger.critical(self.__private_attributes__)
+        return HttpUrl(citationsClaimToUrl(self._sql)) if self._sql else None
     
     @computed_field
     @property
-    def complaints(self) -> HttpUrl:
-        return complaintsToUrl(self.recID)
+    def employees(self) -> HttpUrl | None:
+        return HttpUrl(employeesToUrl(self._sql)) if self._sql else None
+    
+    @computed_field
+    @property
+    def employers(self) -> HttpUrl | None:
+        return HttpUrl(employersToUrl(self._sql)) if self._sql else None
 
     @computed_field
     @property
-    def documentation(self) -> HttpUrl:
-        return documentationToUrl(self.recID)
-    model_config = ConfigDict(from_attributes=True) 
+    def lawyers(self) -> HttpUrl | None:
+        return HttpUrl(lawyersToUrl(self._sql)) if self._sql else None
+
+    @computed_field
+    @property
+    def agreements(self) -> HttpUrl | None:
+        return HttpUrl(agreementsToUrl(self._sql)) if self._sql else None
+
+    @computed_field
+    @property
+    def nonagreements(self) -> HttpUrl | None:
+        return HttpUrl(nonagreementsToUrl(self._sql)) if self._sql else None
     
+    @computed_field
+    @property
+    def complaints(self) -> HttpUrl | None:
+        return HttpUrl(complaintsToUrl(self._sql)) if self._sql else None
+
+    @computed_field
+    @property
+    def documentation(self) -> HttpUrl | None:
+        return HttpUrl(documentationToUrl(self._sql)) if self._sql else None
+       
     @classmethod
     def fromList(cls, list: List[Claim]) -> List[Self]:
-        newList: List[Self] = [cls.fromSQL(x) for x in list]
-        return newList
+        return [cls.fromSQL(x) for x in list]
     
     @classmethod
     def fromSQL(cls, sql: Claim) -> Self:
-        return cls(recID=sql.recID, gdeID=sql.gdeID, initDate=sql.initDate, initByEmployee=sql.initByEmployee, 
-                        claimType=sql.claimType, isEvilized=sql.isEvilized, legalStuff=sql.legalStuff,
-                        isDomestic=sql.isDomestic, calID=sql.calID, title=sql.title, _claim=sql)
+        new = cls(recID=sql.recID, gdeID=sql.gdeID, initDate=sql.initDate, initByEmployee=sql.initByEmployee, 
+                   claimType=sql.claimType, isEvilized=sql.isEvilized, legalStuff=sql.legalStuff,
+                   isDomestic=sql.isDomestic, calID=sql.calID, title=sql.title, _sql=sql)
+        new._sql = sql
+        return new
     
 class CitationDTO(BaseModel):
     citationID:         int
-    _recID:             int
-    _citation:          Citation
     secloAudID:         int | None
     citationDate:       datetime | None
     citationType:       CitationType
@@ -84,42 +89,40 @@ class CitationDTO(BaseModel):
     isCalendarPrimary:  bool
     meetID:             str | None
     
-    _lawyerToEmployee: List[LawyerToEmployee]
-    _lawyerToEmployer: List[LawyerToEmployer]
-    _agreement: Agreement | None
-    _nonagreement: Nonagreement | None
+    _sql: Citation | None 
+
     @computed_field
     @property
-    def claim(self) -> HttpUrl:
-        return HttpUrl(claimToUrl(self._citation.claim))
+    def claim(self) -> HttpUrl | None:
+        return HttpUrl(claimToUrl(self._sql.claim)) if self._sql else None
     
     @computed_field
     @property
-    def notifications(self) -> HttpUrl:
-        return HttpUrl(notificationsToUrl(self._citation))
+    def notifications(self) -> HttpUrl | None:
+        return HttpUrl(notificationsToUrl(self._sql.claim)) if self._sql else None
     
     @computed_field
     @property
     def lawyerToEmployee(self) -> List["LawyerToEmployeeDTO"]:
-        return LawyerToEmployeeDTO.fromList(self._lawyerToEmployee)
+        return LawyerToEmployeeDTO.fromList(self._sql.lawyerToEmployee) if self._sql else []
     
     @computed_field
     @property
     def lawyerToEmployer(self) -> List["LawyerToEmployerDTO"]:
-        return LawyerToEmployerDTO.fromList(self._lawyerToEmployer)
+        return LawyerToEmployerDTO.fromList(self._sql.lawyerToEmployer) if self._sql else []
     
     @computed_field
     @property
     def agreement(self) -> HttpUrl | None:
-        if self._agreement: return agreementToUrl(self._agreement)
+        if self._sql and self._sql.agreement: return HttpUrl(agreementToUrl(self._sql.agreement))
         return None
     
     @computed_field
     @property
     def nonagreement(self) -> HttpUrl | None:
-        if self._nonagreement: return nonagreementToUrl(self._nonagreement)
+        if self._sql and self._sql.nonagreement: return HttpUrl(nonagreementToUrl(self._sql.nonagreement))
         return None    
-    
+
     @classmethod
     def fromList(cls, list: List[Citation]) -> List[Self]:
         newList: List[Self] = [cls.fromSQL(x) for x in list]
@@ -127,11 +130,11 @@ class CitationDTO(BaseModel):
     
     @classmethod
     def fromSQL(cls, sql: Citation) -> Self:
-        return cls(citationID=sql.citationID, _recID=sql.recID, secloAudID=sql.secloAudID, citationDate=sql.citationDate,
+        new = cls(citationID=sql.citationID, secloAudID=sql.secloAudID, citationDate=sql.citationDate,
                    citationType=sql.citationType, citationStatus=sql.citationStatus, citationSummary=sql.citationSummary,
-                   notes=sql.notes, isCalendarPrimary=sql.isCalendarPrimary, meetID=sql.meetID, _lawyerToEmployee=sql.lawyerToEmployee,
-                   _lawyerToEmployer=sql.lawyerToEmployer, _agreement=sql.agreement, _nonagreement=sql.nonagreement, _citation=sql)
-
+                   notes=sql.notes, isCalendarPrimary=sql.isCalendarPrimary, meetID=sql.meetID, _sql=sql)
+        new._sql = sql
+        return new
     
 class NotificationDTO(BaseModel):
     notificationID: int
@@ -143,132 +146,101 @@ class NotificationDTO(BaseModel):
     deliveryCode: int | None
     deliveryDescription: str | None
 
-    _citation: Citation
-    _link: SecloNotificationToEmployee | SecloNotificationToEmployer | None
+    _sql: SecloNotification | None
 
     @computed_field
     @property
-    def citation(self) -> HttpUrl:
-        return HttpUrl(citationToUrl(self._citation))
+    def citation(self) -> HttpUrl | None:
+        return HttpUrl(citationToUrl(self._sql.citation)) if self._sql else None
     
     @computed_field
     @property
     def belongsTo(self) -> HttpUrl | None:
-        if (isinstance(self._link, SecloNotificationToEmployee)): return HttpUrl(employeeToUrl(self._link.employee))
-        if (isinstance(self._link, SecloNotificationToEmployer)): return HttpUrl(employerToUrl(self._link.employer))
-        return None #Should never happen but it will complain about it otherwise
+        if self._sql:
+            if self._sql.employeeLink: return HttpUrl(employeeToUrl(self._sql.employeeLink.employee))
+            if self._sql.employerLink: return HttpUrl(employerToUrl(self._sql.employerLink.employer))
+        else: return None 
+
     @classmethod
     def fromList(cls, list: List[SecloNotification]) -> List[Self]:
-        newList: List[Self] = [cls.fromSQL(x) for x in list]
-        return newList
+        return [cls.fromSQL(x) for x in list]
     
     @classmethod
     def fromSQL(cls, sql: SecloNotification) -> Self:
-        return cls(notificationID=sql.notificationID, citationID=sql.citationID, notificationType=sql.notificationType,
+        new = cls(notificationID=sql.notificationID, citationID=sql.citationID, notificationType=sql.notificationType,
                    secloPostalID=sql.secloPostalID, emissionDate=sql.emissionDate, receptionDate=sql.receptionDate,
-                   deliveryCode=sql.deliveryCode, deliveryDescription=sql.deliveryDescription, 
-                   _link=sql.employeeLink or sql.employerLink, _citation=sql.citation)
-    
+                   deliveryCode=sql.deliveryCode, deliveryDescription=sql.deliveryDescription, _sql=sql)
+        new._sql = sql
+        return new
+        
 class LawyerToEmployeeDTO(BaseModel):
-    _employee: Employee
-    _lawyer: Lawyer
-    _citation: Citation
     isActualLawyer: bool
     isSelfRepresenting: bool
     clientAbsent: bool
     description: str
 
-    @computed_field
-    @property
-    def employee(self) -> HttpUrl:
-        return HttpUrl(employeeToUrl(self._employee))
-    
-    @computed_field
-    @property
-    def employeeID(self) -> int:
-        return self._employee.employeeID
-    
-    @computed_field
-    @property
-    def lawyer(self) -> HttpUrl:
-        return HttpUrl(lawyerToUrl(self._lawyer))
+    _sql: LawyerToEmployee | None
 
     @computed_field
     @property
-    def lawyerID(self) -> int:
-        return self._lawyer.lawyerID
+    def employee(self) -> HttpUrl | None:
+        return HttpUrl(employeeToUrl(self._sql.employee)) if self._sql else None
+
+    @computed_field
+    @property
+    def lawyer(self) -> HttpUrl | None:
+        return HttpUrl(lawyerToUrl(self._sql.lawyer)) if self._sql else None
     
     @computed_field
     @property
-    def citation(self) -> HttpUrl:
-        return HttpUrl(citationToUrl(self._citation))
-        
-    @computed_field
-    @property
-    def citationID(self) -> int:
-        return self._citation.citationID
-    
+    def citation(self) -> HttpUrl | None:
+        return HttpUrl(citationToUrl(self._sql.citation)) if self._sql else None
+
     @classmethod
     def fromSQL(cls, sql: LawyerToEmployee) -> Self:
-        return cls(_employee=sql.employee, _lawyer=sql.lawyer, _citation=sql.citation, 
-                   isActualLawyer=sql.isActualLawyer, isSelfRepresenting=sql.isSelfRepresenting,
-                   clientAbsent=sql.clientAbsent, description=sql.description)
+        new = cls(isActualLawyer=sql.isActualLawyer, isSelfRepresenting=sql.isSelfRepresenting,
+                   clientAbsent=sql.clientAbsent, description=sql.description, _sql=sql)
+        new._sql = sql
+        return new
     
     @classmethod
     def fromList(cls, list: List[LawyerToEmployee]) -> List[Self]:
-        newList: List[Self] = [cls.fromSQL(x) for x in list]
-        return newList
+        return [cls.fromSQL(x) for x in list]
     
 class LawyerToEmployerDTO(BaseModel):
-    _employer: Employer
-    _lawyer: Lawyer
-    _citation: Citation
     isActualLawyer: bool
     isEmpowered: bool
     isSelfRepresenting: bool
     clientAbsent: bool
     description: str
 
-    @computed_field
-    @property
-    def employer(self) -> HttpUrl:
-        return HttpUrl(employerToUrl(self._employer))
-    
-    @computed_field
-    @property
-    def employerID(self) -> int:
-        return self._employer.employerID
-    
-    @computed_field
-    @property
-    def lawyer(self) -> HttpUrl:
-        return HttpUrl(lawyerToUrl(self._lawyer))
+    _sql: LawyerToEmployer | None
 
     @computed_field
     @property
-    def lawyerID(self) -> int:
-        return self._lawyer.lawyerID
+    def employer(self) -> HttpUrl | None:
+        return HttpUrl(employerToUrl(self._sql.employer)) if self._sql else None
     
     @computed_field
     @property
-    def citation(self) -> HttpUrl:
-        return HttpUrl(citationToUrl(self._citation))
-        
+    def lawyer(self) -> HttpUrl | None:
+        return HttpUrl(lawyerToUrl(self._sql.lawyer)) if self._sql else None
+    
     @computed_field
     @property
-    def citationID(self) -> int:
-        return self._citation.citationID
+    def citation(self) -> HttpUrl | None:
+        return HttpUrl(citationToUrl(self._sql.citation)) if self._sql else None
     
     @classmethod
     def fromSQL(cls, sql: LawyerToEmployer) -> Self:
-        return cls(_employer=sql.employer, _lawyer=sql.lawyer, _citation=sql.citation, 
-                   isActualLawyer=sql.isActualLawyer, isSelfRepresenting=sql.isSelfRepresenting,
+        new = cls(isActualLawyer=sql.isActualLawyer, isSelfRepresenting=sql.isSelfRepresenting, _sql=sql,
                    clientAbsent=sql.clientAbsent, description=sql.description, isEmpowered=sql.isEmpowered)
+        new._sql = sql
+        return new
     
     @classmethod
     def fromList(cls, list: List[LawyerToEmployer]) -> List[Self]:
-        newList: List[Self] = [cls.fromSQL(x) for x in list]
-        return newList
+        return [cls.fromSQL(x) for x in list]
     
 class DocumentationLinkDTO(BaseModel):
     description: str | None
@@ -291,6 +263,7 @@ class DocumentationLinkDTO(BaseModel):
         if isinstance(self._belongsTo, Nonagreement): return HttpUrl(nonagreementToUrl(self._belongsTo))
         return None
     
+    #TODO this
     @classmethod
     def fromSQL(cls, sql: DocumentationEmployeeLink | DocumentationEmployerLink | DocumentationLawyerLink | DocumentationAgreementLink | DocumentationNonagreementLink | Homologation | Invoice | Payment | DocumentationObservationLink | DocumentationClaimLink) -> Self:
         if isinstance(sql, DocumentationEmployeeLink):
@@ -313,8 +286,11 @@ class DocumentationLinkDTO(BaseModel):
             return cls(description=sql.description, isRequired=None, SECLOUploadedOn=None, _belongsTo=sql.observation)
         if isinstance(sql, DocumentationClaimLink):
             return cls(description=None, isRequired=None, SECLOUploadedOn=None, _belongsTo=sql.claim)
+        
+    @classmethod
+    def fromList(cls, list: List) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
     
-
 class DocumentationDTO(BaseModel):
     docID: int
     docName: str
@@ -322,20 +298,23 @@ class DocumentationDTO(BaseModel):
     fileDriveID: str | None
     importedDate: datetime | None
     importedFromSECLO: bool
-    _docLinks: List[DocumentationEmployeeLink | DocumentationEmployerLink | DocumentationLawyerLink | DocumentationAgreementLink | DocumentationNonagreementLink | Homologation | Invoice | Payment | DocumentationObservationLink | DocumentationClaimLink]
+
+    _ogdocLinks: List[DocumentationEmployeeLink | DocumentationEmployerLink | DocumentationLawyerLink | DocumentationAgreementLink | DocumentationNonagreementLink | Homologation | Invoice | Payment | DocumentationObservationLink | DocumentationClaimLink]
 
     @computed_field
     @property
     def belongsTo(self) -> List[DocumentationLinkDTO]:
-        return [DocumentationLinkDTO.fromSQL(x) for x in self._docLinks]
-    
+        return [DocumentationLinkDTO.fromSQL(x) for x in self._ogdocLinks]
+
     @classmethod
     def fromSQL(cls, sql: Documentation) -> Self:
         docLinks = [sql.homologation, sql.invoice, sql.payment, sql.observationLink]
         docLinks.extend(sql.employeeLink + sql.employerLink + sql.lawyerLink + sql.agreementLink + sql.nonagreementLink + sql.claimLink)
-        return cls(docID=sql.docID, docName=sql.docName, docType=sql.docType, fileDriveID=sql.fileDriveID, 
+        new = cls(docID=sql.docID, docName=sql.docName, docType=sql.docType, fileDriveID=sql.fileDriveID, 
                    importedDate=sql.importedDate, importedFromSECLO=sql.importedFromSeclo,
-                   _docLinks=list(filter(None, docLinks)))
+                   _ogdocLinks=list(filter(None, docLinks)))
+        new._ogdocLinks = list(filter(None, docLinks))
+        return new
     
     @classmethod
     def fromList(cls, list: List[Documentation]) -> List[Self]:
@@ -351,23 +330,26 @@ class BankAccountDTO(BaseModel):
     cuit: str | None
     isValidated: bool
     accountOwner: str | None
-    _owner: List[Employee | Lawyer ]
+    
+    _sql: BankAccount | None
 
     @computed_field
     @property
     def belongsTo(self) -> List[HttpUrl]:
-        list = []
-        for entry in self._owner:
-            if isinstance(entry, Employee): list.append(employeeToUrl(entry))            
-            if isinstance(entry, Lawyer): list.append(lawyerToUrl(entry))
+        list: List[HttpUrl] = []
+        if self._sql:
+            if self._sql.employee: list.append(HttpUrl(employeeToUrl(self._sql.employee)))
+            else:
+                list = ([HttpUrl(lawyerToUrl(entry)) for entry in self._sql.lawyers])
         return list
     
     @classmethod
     def fromSQL(cls, sql: BankAccount) -> Self:
-        owner = [sql.employee] + sql.lawyers
-        return cls(accountID=sql.accountID, cbu=sql.cbu, bank=sql.bank, alias=sql.alias, accountType=sql.accountType,
-                   accountNumber=sql.accountNumber, cuit=sql.cuit, isValidated=sql.isValidated, 
-                   accountOwner=sql.accountOwner, _owner=list(filter(None, owner)))
+        new = cls(accountID=sql.accountID, cbu=sql.cbu, bank=sql.bank, alias=sql.alias, 
+                   accountType=sql.accountType, accountNumber=sql.accountNumber, cuit=sql.cuit, 
+                   isValidated=sql.isValidated, accountOwner=sql.accountOwner, _sql=sql)
+        new._sql = sql
+        return new
     
 class AddressDTO(BaseModel):
     addressID: int
@@ -380,38 +362,43 @@ class AddressDTO(BaseModel):
     apt: str
     cpa: str
     extra: str
-    _employees: List[EmployeeAddressLink]
-    _employers: List[EmployerAddressLink]
+
+    _sql: Address | None
 
     @computed_field
     @property
     def belongsTo(self) -> List[HttpUrl]:
-        return [HttpUrl(employeeToUrl(x.employee)) for x in self._employees] + [HttpUrl(employerToUrl(x.employer)) for x in self._employers]
-    
+        return [HttpUrl(employeeToUrl(x.employee)) for x in self._sql.employees] + \
+               [HttpUrl(employerToUrl(x.employer)) for x in self._sql.employers] if self._sql else []
+
     @classmethod
     def fromSQL(cls, sql: Address) -> Self:
-        return cls(addressID=sql.addressID, province=sql.province, district=sql.district,
+        new = cls(addressID=sql.addressID, province=sql.province, district=sql.district,
                    county=sql.county, street=sql.street, streetnumber=sql.streetnumber,
-                   floor=sql.floor, apt=sql.apt, cpa=sql.cpa, extra=sql.extra,
-                   _employees=sql.employees, _employers=sql.employers)
+                   floor=sql.floor, apt=sql.apt, cpa=sql.cpa, extra=sql.extra, _sql=sql)
+        new._sql = sql
+        return new
     
     @classmethod
     def fromList(cls, list: List[Address]) -> List[Self]:
         return [cls.fromSQL(x) for x in list]
     
 class BelongsDTO(BaseModel):
-    _owner: Employee | Employer | Lawyer
+    _ogowner: Employee | Employer | Lawyer
     description: str | None
 
     @computed_field
     @property
     def owner(self) -> HttpUrl | None:
-        if isinstance(self._owner, Employee): return HttpUrl(employeeToUrl(self._owner))
-        if isinstance(self._owner, Employer): return HttpUrl(employerToUrl(self._owner))
-        if isinstance(self._owner, Lawyer): return HttpUrl(lawyerToUrl(self._owner))
+        if isinstance(self._ogowner, Employee): return HttpUrl(employeeToUrl(self._ogowner))
+        if isinstance(self._ogowner, Employer): return HttpUrl(employerToUrl(self._ogowner))
+        if isinstance(self._ogowner, Lawyer): return HttpUrl(lawyerToUrl(self._ogowner))
+
     @classmethod
     def fromData(cls, owner: Employee | Employer | Lawyer, description: str | None) -> Self:
-        return cls(_owner=owner, description=description)
+        new = cls(_ogowner=owner, description=description)
+        new._ogowner = owner
+        return new
 
 class EmailDTO(BaseModel):
     emailID: int
@@ -419,19 +406,22 @@ class EmailDTO(BaseModel):
     registeredOn: datetime | None
     registeredFrom: str | None
     description: str | None
-    _employees: List[EmployeeEmailLink]
-    _employers: List[EmployerEmailLink]
-    _lawyers: List[LawyerEmailLink]
+
+    _sql: Email | None
 
     @computed_field
     @property
     def belongsTo(self) -> List[BelongsDTO]:
-        return [BelongsDTO.fromData(x.employee, x.description) for x in self._employees] + [BelongsDTO.fromData(x.employer, x.description) for x in self._employers] + [BelongsDTO.fromData(x.lawyer, x.description) for x in self._lawyers]
+        return [BelongsDTO.fromData(x.employee, x.description) for x in self._sql.employees] + \
+               [BelongsDTO.fromData(x.employer, x.description) for x in self._sql.employers] + \
+               [BelongsDTO.fromData(x.lawyer, x.description) for x in self._sql.lawyers] if self._sql else []
     
     @classmethod
     def fromSQL(cls, sql: Email) -> Self:
-        return cls(emailID=sql.emailID, email=sql.email, registeredOn=sql.registeredOn, registeredFrom=sql.registeredFrom,
-                   description=sql.description, _employees=sql.employees, _employers=sql.employers, _lawyers=sql.lawyers)
+        new = cls(emailID=sql.emailID, email=sql.email, registeredOn=sql.registeredOn, 
+                   registeredFrom=sql.registeredFrom, description=sql.description, _sql=sql)
+        new._sql = sql
+        return new
     
     @classmethod
     def fromList(cls, list: List[Email]) -> List[Self]:
@@ -446,26 +436,474 @@ class EmployeeDTO(BaseModel):
     isValidated: bool
     birthDate: datetime | None
 
-    _bankAccount: BankAccount | None
-    _claim: Claim
-    _emails: List[EmployeeEmailLink]
-    _notifications: List[SecloNotificationToEmployee]
-    _documentation: List[DocumentationEmployeeLink]
-    _lawyerLink: List[LawyerToEmployee]
-    _hemiagreement: Hemiagreement | None
-    _relationshipData: List[EmployeeRelationshipData]
+    _sql: Employee | None 
 
     @computed_field
     @property
     def bankAccount(self: Self) -> HttpUrl | None:
-        return employeeBankAccountToUrl(self._bankAccount) if self._bankAccount else None
+        return HttpUrl(employeeBankAccountToUrl(self._sql.bankAccount)) if self._sql and self._sql.bankAccount else None
     
     @computed_field
     @property
-    def claim(self: Self) -> HttpUrl:
-        return HttpUrl(claimToUrl(self._claim))
+    def claim(self: Self) -> HttpUrl | None:
+        return HttpUrl(claimToUrl(self._sql.claim)) if self._sql else None
     
-    # @computed_field
-    # @property
-    # def emails(self: Self) -> HttpUrl:
-    #     return HttpUrl(employeeEmailsUrl())
+    @computed_field
+    @property
+    def addresses(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(addressToUrl(x.address, employee = self)) for x in self._sql.addresses] if self._sql else []
+    
+    @computed_field
+    @property
+    def emails(self: Self) -> List[EmailDTO]:
+        return EmailDTO.fromList([x.email for x in self._sql.emails]) if self._sql else []
+    
+    @computed_field
+    @property
+    def notifications(self: Self) -> HttpUrl | None:
+        return HttpUrl(notificationsToUrl(self._sql.claim, employee = self)) if self._sql else None
+    
+    @computed_field
+    @property
+    def documentation(self: Self) -> List[DocumentationLinkDTO]:
+        return DocumentationLinkDTO.fromList(self._sql.documentation) if self._sql else []
+    
+    @computed_field
+    @property
+    def laywers(self: Self) -> List[LawyerToEmployeeDTO]:
+        return LawyerToEmployeeDTO.fromList(self._sql.lawyerLink) if self._sql else []
+    
+    @computed_field
+    @property
+    def hemiagreement(self: Self) -> HttpUrl | None:
+        return HttpUrl(hemiagreementToUrl(self._sql.hemiagreement)) if self._sql and self._sql.hemiagreement else None
+    
+    @computed_field
+    @property
+    def relationshipData(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(employeeRelationshipToUrl(x)) for x in self._sql.relationshipData] if self._sql else []
+
+    @classmethod
+    def fromSQL(cls, sql: Employee) -> Self:
+        new = cls(employeeID=sql.employeeID, employeeName=sql.employeeName, 
+                   headerName=sql.headerName, dni=sql.dni, cuil=sql.cuil, 
+                   isValidated=sql.isValidated, birthDate=sql.birthDate, _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[Employee]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+    
+class EmployeeRelationshipDataDTO(BaseModel):
+    employeeDataID: int
+    employeeID: int = Field(exclude=True)
+    startDate: datetime | None  
+    endDate: datetime | None
+    wage: Decimal | None
+    claimAmount: Decimal | None
+    category: str
+    cct: str
+
+    _sql: EmployeeRelationshipData | None 
+    
+    @computed_field
+    @property
+    def employee(self: Self) -> HttpUrl | None:
+        return HttpUrl(employeeToUrl(self._sql.employee)) if self._sql else None
+
+    @classmethod
+    def fromSQL(cls, sql: EmployeeRelationshipData) -> Self:
+        new = cls(employeeDataID=sql.employeeDataID, employeeID=sql.employeeID, 
+                   startDate=sql.startDate, endDate=sql.endDate, wage=sql.wage, 
+                   claimAmount=sql.claimAmount, category=sql.category, cct=sql.cct, _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[EmployeeRelationshipData]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+    
+class EmployerDTO(BaseModel):
+    employerID: int
+    employerName: str
+    headerName: str | None
+    cuil: str | None
+    personType: PersonType
+    requiredAs: RequiredAsType
+    SECLORegisterDate: datetime | None
+    mustRegisterSECLO: bool
+    isValidated: bool
+    isDesisted: bool
+
+    _sql: Employer | None 
+
+    @computed_field
+    @property
+    def claim(self: Self) -> HttpUrl | None:
+        return HttpUrl(claimToUrl(self._sql.claim)) if self._sql else None
+    
+    @computed_field
+    @property
+    def addresses(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(addressToUrl(x.address, employer=self)) for x in self._sql.addresses] if self._sql else []
+    
+    @computed_field
+    @property
+    def emails(self: Self) -> List[EmailDTO]:
+        return EmailDTO.fromList([x.email for x in self._sql.emails]) if self._sql else []
+    
+    @computed_field
+    @property
+    def notifications(self: Self) -> HttpUrl | None:
+        return HttpUrl(notificationsToUrl(self._sql.claim, employer=self)) if self._sql else None
+    
+    @computed_field
+    @property
+    def documentation(self: Self) -> List[DocumentationLinkDTO]:
+        return DocumentationLinkDTO.fromList(self._sql.documentation) if self._sql else []
+    
+    @computed_field
+    @property
+    def laywers(self: Self) -> List[LawyerToEmployerDTO]:
+        return LawyerToEmployerDTO.fromList(self._sql.lawyerLink) if self._sql else []
+
+    @classmethod
+    def fromSQL(cls, sql: Employer) -> Self:
+        new = cls(employerID=sql.employerID, employerName=sql.employerName, headerName=sql.headerName,
+                   cuil=sql.cuil, personType=sql.personType, requiredAs=sql.requiredAs, SECLORegisterDate=sql.SECLORegisterDate,
+                   mustRegisterSECLO=sql.mustRegisterSECLO, isValidated=sql.isValidated, isDesisted=sql.isDesisted, _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[Employer]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+    
+class TelephoneDTO(BaseModel):
+    telID: int
+    telephone: int
+    prefix: int
+    description: str | None
+    obtainedFrom: str | None
+
+    _sql: LawyerTelephone | None 
+
+    @computed_field
+    @property
+    def lawyer(self: Self) -> HttpUrl | None:
+        return HttpUrl(lawyerToUrl(self._sql.lawyer)) if self._sql and self._sql.lawyer else None
+
+    @classmethod
+    def fromSQL(cls, sql: LawyerTelephone) -> Self:
+        new = cls(telID=sql.telID, telephone=sql.telephone, prefix=sql.prefix, 
+                   description=sql.description, obtainedFrom=sql.obtainedFrom, _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[LawyerTelephone]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+
+class LawyerDTO(BaseModel):
+    lawyerID: int
+    lawyerName: str | None
+    t: int
+    f: int
+    registeredOn: datetime | None
+    registeredFrom: str | None
+    cuil: str | None
+    isValidated: bool
+    hasVAT: bool | None
+
+    _sql: Lawyer | None 
+
+    @computed_field
+    @property
+    def claim(self: Self) -> HttpUrl | None:
+        return HttpUrl(claimToUrl(self._sql.claim)) if self._sql else None
+    
+    @computed_field
+    @property
+    def bankAccount(self: Self) -> HttpUrl | None:
+        return HttpUrl(lawyerBankAccountToUrl(self._sql.bankAccount, self)) if self._sql and self._sql.bankAccount else None
+
+    @computed_field
+    @property
+    def emails(self: Self) -> List[EmailDTO]:
+        return EmailDTO.fromList([x.email for x in self._sql.emails]) if self._sql else []
+    
+    @computed_field
+    @property
+    def documentation(self: Self) -> List[DocumentationLinkDTO]:
+        return DocumentationLinkDTO.fromList(self._sql.documentation) if self._sql else []
+    
+    @computed_field
+    @property
+    def telephones(self: Self) -> List[TelephoneDTO]:
+        return TelephoneDTO.fromList([x for x in self._sql.telephones]) if self._sql else []
+    
+    @computed_field
+    @property
+    def employees(self: Self) -> List[LawyerToEmployeeDTO]:
+        return LawyerToEmployeeDTO.fromList(self._sql.employeeLink) if self._sql else []
+        
+    @computed_field
+    @property
+    def employers(self: Self) -> List[LawyerToEmployerDTO]:
+        return LawyerToEmployerDTO.fromList(self._sql.employerLink) if self._sql else []
+
+    @classmethod
+    def fromSQL(cls, sql: Lawyer) -> Self:
+        new = cls(lawyerID=sql.lawyerID, lawyerName=sql.lawyerName, t=sql.t, f=sql.f, 
+                   registeredOn=sql.registeredOn, registeredFrom=sql.registeredFrom, 
+                   cuil=sql.cuil, isValidated=sql.isValidated, hasVAT=sql.hasVAT, _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[Lawyer]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list] 
+    
+class AgreementDTO(BaseModel):
+    agreementID: int
+    malignaHonorary: Decimal
+    malignaHonoraryExpirationRelative: timedelta
+    isUncashable: bool
+    initReason: str
+    claimedObjects: str
+    isDomestic: bool
+    hasCertificateDelivery: bool
+    notes: str | None
+    initialSendDate: datetime | None
+    lastSendDate: datetime | None
+    isDraft: bool
+    secloEmailNotificationDate: datetime | None
+    signedSendDate: datetime | None
+
+    _sql: Agreement | None
+
+    @computed_field
+    @property
+    def claim(self: Self) -> HttpUrl | None:
+        return HttpUrl(claimToUrl(self._sql.claim)) if self._sql else None
+    
+    @computed_field
+    @property
+    def citation(self: Self) -> HttpUrl | None:
+        return HttpUrl(citationToUrl(self._sql.citation)) if self._sql and self._sql.citation else None
+
+    @computed_field
+    @property
+    def documentation(self: Self) -> List[DocumentationLinkDTO]:
+        return DocumentationLinkDTO.fromList(self._sql.documentationLink) if self._sql else [] 
+    
+    @computed_field
+    @property
+    def extension(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(employerToUrl(x.employer)) for x in self._sql.extension] if self._sql else []
+
+    @computed_field
+    @property
+    def desist(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(employerToUrl(x.employer)) for x in self._sql.desist] if self._sql else []
+    
+    @computed_field
+    @property
+    def hemiagreements(self: Self) -> List[HttpUrl]:
+        return [HttpUrl(hemiagreementToUrl(x)) for x in self._sql.hemiagreements] if self._sql else []
+    
+    @computed_field
+    @property
+    def homologations(self: Self) -> HttpUrl:
+        return HttpUrl(homologationsToUrl(self))
+    
+    @computed_field
+    @property
+    def invoices(self: Self) -> HttpUrl:
+        return HttpUrl(invoicesToUrl(self))
+
+    @computed_field
+    @property
+    def payments(self: Self) -> HttpUrl:
+        return HttpUrl(paymentsToUrl(self))
+
+    @computed_field
+    @property
+    def observations(self: Self) -> HttpUrl:
+        return HttpUrl(observationsToUrl(self))
+    
+    @computed_field
+    @property
+    def complaints(self: Self) -> HttpUrl | None:
+        return HttpUrl(complaintsToUrl(self._sql.claim, self)) if self._sql else None
+
+    @classmethod
+    def fromSQL(cls, sql: Agreement) -> Self:
+        new = cls(agreementID=sql.agreementID, malignaHonorary=sql.malignaHonorary, 
+                   malignaHonoraryExpirationRelative=sql.malignaHonoraryExpirationRelative,
+                   isUncashable=sql.isUncashable, initReason=sql.initReason, claimedObjects=sql.claimedObjects,
+                   isDomestic=sql.isDomestic, hasCertificateDelivery=sql.hasCertificateDelivery, notes=sql.notes,
+                   initialSendDate=sql.initialSendDate, lastSendDate=sql.lastSendDate, isDraft=sql.isDraft,
+                   secloEmailNotificationDate=sql.secloEmailNotificationDate, signedSendDate=sql.signedSendDate,
+                   _sql=sql)
+        new._sql = sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[Agreement]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+    
+class HemiagreementDTO(BaseModel):
+    hemiID: int
+
+
+###################################################
+####                URL HELPERS                ####
+###################################################
+
+
+def claimToUrl(claim: Claim):
+    return baseURL + f'/claim/{claim.recID}'
+
+def citationsToUrl():
+    return baseURL + '/citation'
+
+def citationsClaimToUrl(claim: Claim):
+    return citationsToUrl() + f'?claim={claim.recID}'
+
+def citationToUrl(citation: Citation):
+    return baseURL + f'/citation/{citation.citationID}'
+
+
+def notificationsToUrl(claim: Claim, employee: EmployeeDTO | None = None, employer: EmployerDTO | None = None):
+    url = claimToUrl(claim) + '/notification'
+    first = True
+    if employee:
+        url += ('?employee=' if first else '&employee=') + f'{employee.employeeID}'
+        first = False
+    if employer:
+        url += ('?employer=' if first else '&employer=') + f'{employer.employerID}'
+        first = False
+    return url
+
+def notificationToUrl(notification: SecloNotification):
+    return notificationsToUrl(notification.citation.claim) + str(notification.notificationID)
+
+
+def employeesToUrl(claim: Claim):
+    return claimToUrl(claim) + '/employee'
+
+def employeeToUrl(employee: Employee | EmployeeDTO):
+    if isinstance(employee, Employee): return (employeesToUrl(employee.claim)) + f'{employee.employeeID}'
+    elif employee._sql: return employeesToUrl(employee._sql.claim) + f'{employee.employeeID}'
+    else: raise ValueError("Provided DTO without employee")
+
+def employersToUrl(claim: Claim):
+    return claimToUrl(claim) + '/employer'
+
+def employerToUrl(employer: Employer | EmployerDTO):
+    if isinstance(employer, Employer): return (employersToUrl(employer.claim)) + f'{employer.employerID}'
+    elif employer._sql: return employersToUrl(employer._sql.claim) + f'{employer.employerID}'
+    else: raise ValueError("Provided DTO without employer")
+
+def lawyersToUrl(claim: Claim):
+    return claimToUrl(claim) + 'lawyer'
+
+def lawyerToUrl(lawyer: Lawyer | LawyerDTO):
+    if isinstance(lawyer, Lawyer): return (lawyersToUrl(lawyer.claim)) + f'{lawyer.lawyerID}'
+    elif lawyer._sql: return lawyersToUrl(lawyer._sql.claim) + f'{lawyer.lawyerID}'
+    else: raise ValueError("Provided DTO without lawyer")
+
+def agreementsToUrl(claim: Claim) -> str:
+    return baseURL + f'/agreement?claim={claim.recID}'
+
+def agreementToUrl(agreement: Agreement) -> str:
+    return baseURL + f'/agreement/{agreement.agreementID}'
+
+def hemiagreementToUrl(hemiagreement: Hemiagreement) -> str:
+    return agreementToUrl(hemiagreement.agreement) + f'/hemiagreement/{hemiagreement.hemiID}'
+
+
+def nonagreementsToUrl(claim: Claim):
+    return baseURL + f'/nonagreement?claim={claim.recID}'
+
+def nonagreementToUrl(nonagreement: Nonagreement):
+    return baseURL + f'/nonagreement/{nonagreement.nonID}'
+
+
+def complaintsToUrl(claim: Claim, agreement: Agreement | AgreementDTO | None = None) -> str:
+    url = baseURL + f'/complaint?claim={claim.recID}'
+    first = True
+    if agreement:
+        url += f'{('?agreement=' if first else '&agreement=')}{agreement.agreementID}'
+        first = False
+    return url
+
+def complaintToUrl(complaint: Complaint) -> str:
+    return baseURL + f'/complaint/{complaint.complaintID}'
+
+
+def documentationToUrl(claim: Claim, employee: EmployeeDTO | None = None, employer: EmployerDTO | None = None, lawyer: LawyerDTO | None = None) -> str:
+    url = baseURL + f'/documentation?claim={claim.recID}'
+    first = True
+    if employee:
+        url += f'{('?employee=' if first else '&employee=')}{employee.employeeID}'
+        first = False
+    if employer:
+        url += f'{('?employer=' if first else '&employer=')}{employer.employerID}'
+        first = False
+    if lawyer:
+        url += f'{('?lawyer=' if first else '&lawyer=')}{lawyer.lawyerID}'
+        first = False
+    return url
+
+def documentToUrl(documentation: Documentation) -> str:
+    return baseURL + f'/documentation/{documentation.docID}'
+
+
+def homologationsToUrl(agreement: Agreement | AgreementDTO) -> str:
+    return baseURL + f'/homologation?agreement={agreement.agreementID}'
+
+def homologationToUrl(homologation: Homologation) -> str:
+    return baseURL + f'/homologation/{homologation.homoID}'
+
+
+def invoicesToUrl(agreement: Agreement | AgreementDTO) -> str:
+    return baseURL + f'/invoice?agreement={agreement.agreementID}'
+
+def invoiceToUrl(invoice: Invoice) -> str:
+    return baseURL + f'/invoice/{invoice.invoiceID}'
+
+
+def paymentsToUrl(agreement: Agreement | AgreementDTO) -> str:
+    return baseURL + f'/payment?agreement={agreement.agreementID}'
+
+def paymentToUrl(payment: Payment) -> str:
+    return baseURL + f'/payment/{payment.paymentID}'
+
+
+def observationsToUrl(agreement: Agreement | AgreementDTO) -> str:
+    return baseURL + f'/observation?agreement={agreement.agreementID}'
+
+def observationToUrl(observation: Observation) -> str:
+    return baseURL + f'/observation/{observation.obsID}'
+
+def employeeBankAccountToUrl(bankAccount: BankAccount) -> str:
+    if not bankAccount.employee: raise ValueError(f"bank account {bankAccount.accountID} missing employee")
+    return employeeToUrl(bankAccount.employee) + '/bankAccount'
+
+def lawyerBankAccountToUrl(bankAccount: BankAccount, lawyer: LawyerDTO) -> str:
+    if not lawyer: raise ValueError(f"bank account {bankAccount.accountID} missing lawyer")
+    return lawyerToUrl(lawyer) + '/bankAccount'
+
+def employeeRelationshipToUrl(rel: EmployeeRelationshipData) -> str:
+    return employeeToUrl(rel.employee) + f'/relationship/{rel.employeeDataID}'
+
+def addressToUrl(address: Address, employee: EmployeeDTO | None = None, employer: EmployerDTO | None = None) -> str:
+    addressBit = f'/address/{address.addressID}'
+    if employee:
+        return employeeToUrl(employee) + addressBit
+    if employer:
+        return employerToUrl(employer) + addressBit
+    else: return ''
