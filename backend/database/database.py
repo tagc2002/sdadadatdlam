@@ -596,7 +596,7 @@ class Payment(Base):
     amount: Mapped[Decimal]
     paymentDate: Mapped[datetime | None]
     notifiedDate: Mapped[datetime | None]
-    notifiedBy: Mapped[datetime | None]
+    notifiedBy: Mapped[str | None]
     bankReference: Mapped[str | None]
     description: Mapped[str | None]
     isEvilified: Mapped[bool]
