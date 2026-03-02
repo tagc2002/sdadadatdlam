@@ -45,7 +45,7 @@ class ProgressReport():
         self.done = False
         if self.checked.locked():
             self.checked.release()    
-        logger.debug(f'INCREASE PROGRESS: {self.progress} {f'({message})' if message else ''}')
+        logger.debug(f'INCREASE PROGRESS: {(100*self.progress):.2f}% {f'({message})' if message else ''}')
         return self        
     
     def setMessage(self: Self, message: str) -> Self:
