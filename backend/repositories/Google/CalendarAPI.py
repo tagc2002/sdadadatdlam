@@ -5,46 +5,19 @@ from typing import List
 # import sys
 # sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import ValidationError
 
 from dataobjects.GoogleDataClasses import GoogleColors, GoogleEvent
 
-
 import logging
+
+from repositories.Google.AuthAPI import basicAuth
 logger = logging.getLogger(__name__)
 
-
-# If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
-
-def basicAuth():
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "google-credentials.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-    return creds
-
 def listEvents(googleCreds: dict, weeksBefore: int, weeksAfter: int) -> List[GoogleEvent]:
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     try:
         service = build("calendar", "v3", credentials = creds)
         timeMin = (datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=weeksBefore * 7)).isoformat()
@@ -64,7 +37,7 @@ def listEvents(googleCreds: dict, weeksBefore: int, weeksAfter: int) -> List[Goo
         return []
     
 def getEvent(googleCreds: dict, eventID: str) -> GoogleEvent | None:
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     try:
         service = build("calendar", "v3", credentials = creds)
         event_result = service.events().get(calendarId="primary", eventId=eventID).execute()
@@ -77,7 +50,7 @@ def getEvent(googleCreds: dict, eventID: str) -> GoogleEvent | None:
         logger.error(f"Error validating event {event_result}") # type: ignore
 
 def searchEvents(googleCreds: dict, term: str) -> List[GoogleEvent]:
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     events: List[GoogleEvent] = []
     try:
         service = build("calendar", "v3", credentials=creds)
@@ -91,7 +64,7 @@ def searchEvents(googleCreds: dict, term: str) -> List[GoogleEvent]:
     return events
 
 def createEvent(googleCreds: dict, event: GoogleEvent) -> GoogleEvent | None:
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     try:
         service = build("calendar", "v3", credentials = creds)
         logger.info("Creating event")
@@ -108,7 +81,7 @@ def createEvent(googleCreds: dict, event: GoogleEvent) -> GoogleEvent | None:
         logger.error(f"Error validating event {event_result}") # type: ignore
 
 def updateEvent(googleCreds: dict, eventId: str, event: GoogleEvent, notify: bool) -> GoogleEvent | None:
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     try:
         service = build("calendar", "v3", credentials = creds)
         event_result = service.events().update(calendarId="primary", eventId = eventId, body = event.model_dump(), conferenceDataVersion=1, sendUpdates = 'all' if notify else 'none', supportsAttachments = True).execute() # type: ignore
@@ -121,7 +94,7 @@ def updateEvent(googleCreds: dict, eventId: str, event: GoogleEvent, notify: boo
         logger.error(f"Error validating event {event_result}") # type: ignore
 
 def getColors(googleCreds: dict):
-    creds = basicAuth()
+    creds = basicAuth(googleCreds)
     try:
         service = build("calendar", "v3", credentials = creds)
         colors = service.colors().get().execute()
