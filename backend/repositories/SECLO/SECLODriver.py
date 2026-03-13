@@ -61,6 +61,7 @@ class SECLOAccessor:
         self.chrome_options.add_experimental_option("excludeSwitches", ['enable-logging'])
         self.downloadpath = Path(f'{DOWNLOADROOT}/{uuid.uuid4()}')
         self.downloadpath = self.downloadpath.resolve()
+        os.mkdir(self.downloadpath)
         if os.getenv('HEADLESS', 'TRUE') == 'TRUE':
             logger.debug("Headless flag set true")
             self.chrome_options.add_argument('headless=new')
@@ -137,6 +138,8 @@ class SECLOAccessor:
     
     def __exit__(self: Self, exception_type, exception_value, traceback):
         self.driver.quit()
+        os.rmdir(self.downloadpath)
+        #TODO delete dir contents before rmdir
 
     def _errorHandling(self):
         '''
@@ -231,6 +234,10 @@ class SECLOAccessor:
     
     def setProgress(self: Self, progress: ProgressReport) -> Self:
         self.progress = progress
+        return self
+    
+    def setRecId(self: Self, recID: int) -> Self:
+        self.recid=recID
         return self
 
 
@@ -1150,7 +1157,7 @@ class SECLOCalendarParser(SECLOAccessor):
                         table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
                         IDs.extend(self.__iterateCalendar(table))
                         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkDer'))).click()
-                    if weeksAfter > 0:
+                    if weeksBefore > 0:
                         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_btnAgenda'))).click()
 
                         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
@@ -1168,7 +1175,7 @@ class SECLOCalendarParser(SECLOAccessor):
                 for index, item in enumerate(IDs):
                     secondStage.increaseProgress(1, f'Loading citation data for {index + 1} of {len(IDs)}')
                     self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?AudId={item}&esPortal=1')
-                    gdeIDText = WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
+                    gdeIDText = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
                     initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
                     initDateTimeText = initDatetimeText.split()[0] + ' ' + initDatetimeText.split()[1].split(':')[0] + ':' + initDatetimeText.split()[1].split(':')[1]
                     calendarCitations.append(SECLOCitation(
