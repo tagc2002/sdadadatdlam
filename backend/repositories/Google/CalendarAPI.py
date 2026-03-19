@@ -2,8 +2,8 @@ from calendar import week
 import datetime
 import os.path
 from typing import List
-# import sys
-# sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
+import sys
+sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -55,8 +55,9 @@ def searchEvents(googleCreds: dict, term: str) -> List[GoogleEvent]:
     try:
         service = build("calendar", "v3", credentials=creds)
         apiEvents = service.events().list(calendarId="primary", q=term).execute()
-        for event in apiEvents: 
-            events.append(GoogleEvent.model_validate(event))
+        if 'items' in apiEvents:
+            for event in apiEvents['items']: 
+                events.append(GoogleEvent.model_validate(event))
     except HttpError as e:
         print("Shoot")
     except ValidationError as e:
