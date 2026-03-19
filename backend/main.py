@@ -12,16 +12,19 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from alembic.config import Config
 from alembic import command
+from redis import ConnectionPool, Redis
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
 from requests import Session
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from api.batch import ingress
-from api.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction, initDBSession
+from api.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction, initDBSession, initRedisSession
 
 sys.path.append('/usr/app/src')
 
-from api.rest.claims import claims
+from api.rest.claims import auth, claims
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 
 load_dotenv()
@@ -30,6 +33,10 @@ postgresuser = os.getenv("POSTGRES_USER")
 postgrespass = os.getenv("POSTGRES_PASSWORD")
 postgresdb = os.getenv("POSTGRES_DB")
 postgresdomain = os.getenv("POSTGRES_DOMAIN")
+redisdomain = os.getenv("REDIS_DOMAIN", 'localhost')
+redisport = int(os.getenv("REDIS_PORT", 6379))
+redisuser = os.getenv("REDIS_USER")
+redispass = os.getenv("REDIS_PASSWORD")
 alembic_script_location = './alembic'
 
 fileHandler = TimedRotatingFileHandler(
@@ -48,18 +55,22 @@ rootLogger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
-connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@{postgresdomain}/{postgresdb}'
+psql_connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@{postgresdomain}/{postgresdb}'
+redis_connect_string = ''
 
-
-logger.info('Running DB migrations in %r on %r', alembic_script_location, connect_string)
+logger.info('Running DB migrations in %r on %r', alembic_script_location, psql_connect_string)
 alembic_cfg = Config()
 alembic_cfg.set_main_option('script_location', alembic_script_location)
-alembic_cfg.set_main_option('sqlalchemy.url', connect_string)
+alembic_cfg.set_main_option('sqlalchemy.url', psql_connect_string)
 command.upgrade(alembic_cfg, 'head')
 
-engine = create_engine(url = connect_string)
+engine = create_engine(url = psql_connect_string)
 initDBSession(engine)
+
+redis = ConnectionPool(host=redisdomain, port=redisport, decode_responses=True, username=redisuser, password=redispass, retry=Retry(ExponentialBackoff(), 8))
+initRedisSession(redis)
 
 app = FastAPI(root_path="/api")
 app.include_router(claims.router)
 app.include_router(ingress.router)
+app.include_router(auth.router)
