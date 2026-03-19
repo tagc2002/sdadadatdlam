@@ -79,6 +79,7 @@ class Documentation(Base):
     fileDriveID: Mapped[str | None]
     importedDate: Mapped[datetime | None]
     importedFromSeclo: Mapped[bool]
+    mimeType: Mapped[str]
     file: Mapped[bytes | None]
 
     employeeLink: Mapped[List["DocumentationEmployeeLink"]] = relationship(back_populates="document")
@@ -452,7 +453,7 @@ class LawyerTelephone(Base):
 
     telID: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     lawyerID: Mapped[int] = mapped_column(ForeignKey("lawyer.lawyerID"))
-    telephone: Mapped[int]
+    telephone: Mapped[int] = mapped_column(BigInteger)
     prefix: Mapped[int]
     description: Mapped[str | None]
     obtainedFrom: Mapped[str | None]
