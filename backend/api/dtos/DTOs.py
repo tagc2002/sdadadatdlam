@@ -1,4 +1,5 @@
 from datetime import datetime
+from gettext import install
 import logging
 from typing import List, Self
 
@@ -683,22 +684,89 @@ class LawyerDTO(BaseModel):
     @classmethod
     def fromList(cls, list: List[Lawyer]) -> List[Self]:
         return [cls.fromSQL(x) for x in list] 
+
+class PaymentInstallmentDTO(BaseModel):
+    installmentID: int
+    amount: Decimal
+    expirationRelativeHomo: timedelta | None
+    expirationRelativeSign: timedelta | None
+    expirationAbsolute: datetime | None
+    wasPaidBefore: bool
+    customPaymentMethod: str | None
+
+    _sql: PaymentInstallment | None
+
+    @classmethod
+    def fromSQL(cls, sql: PaymentInstallment) -> Self:
+        new = cls(installmentID=sql.installmentID, amount=sql.amount, expirationRelativeHomo=sql.expirationRelativeHomo,
+                   expirationRelativeSign=sql.expirationRelativeSign, expirationAbsolute=sql.expirationAbsolute,
+                   wasPaidBefore=sql.wasPaidBefore, customPaymentMethod=sql.customPaymentMethod, _sql=sql)
+        new._sql = sql
+        return new
+
+    @classmethod
+    def fromList(cls, list: List[PaymentInstallment]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
     
+    def toSQL(self: Self) -> PaymentInstallment:
+        return PaymentInstallment(installmentID=self.installmentID, amount=self.amount, expirationRelativeHomo=self.expirationRelativeHomo,
+                                  expirationRelativeSign=self.expirationRelativeSign, expirationAbsolute=self.expirationAbsolute,
+                                  wasPaidBefore=self.wasPaidBefore, customPaymentMethod=self.customPaymentMethod)
+    
+class HemiagreementDTO(BaseModel):
+    hemiID: int | None
+    amountARS: Decimal
+    amountUSD: Decimal | None
+    honoraryRelative: int | None
+    honoraryAbsolute: Decimal | None
+    
+    installments: List[PaymentInstallmentDTO]
+    _sql: Hemiagreement | None
+
+    @computed_field
+    @property
+    def agreement(self: Self) -> HttpUrl | None:
+        return HttpUrl(agreementToUrl(self._sql.agreement)) if self._sql else None
+
+    @computed_field
+    @property
+    def employee(self: Self) -> HttpUrl | None:
+        return HttpUrl(employeeToUrl(self._sql.employee)) if self._sql else None
+    
+
+    @classmethod
+    def fromSQL(cls, sql: Hemiagreement) -> Self:
+        new = cls(hemiID=sql.hemiID, amountARS=sql.amountARS, amountUSD=sql.amountUSD, honoraryRelative=sql.honoraryRelative,
+                  honoraryAbsolute=sql.honoraryAbsolute, _sql=sql, installments=PaymentInstallmentDTO.fromList(sql.installments))
+        new._sql=sql
+        return new
+    
+    @classmethod
+    def fromList(cls, list: List[Hemiagreement]) -> List[Self]:
+        return [cls.fromSQL(x) for x in list]
+    
+    def toSQL(self: Self) -> Hemiagreement:
+        return Hemiagreement(hemiID=self.hemiID, amountARS=self.amountARS, amountUSD=self.amountUSD,
+                             honoraryAbsolute=self.honoraryAbsolute, honoraryRelative=self.honoraryRelative, 
+                             installments=[x.toSQL() for x in self.installments])
+     
 class AgreementDTO(BaseModel):
-    agreementID: int
+    agreementID: int | None
     malignaHonorary: Decimal
     malignaHonoraryExpirationRelative: timedelta
-    isUncashable: bool
+    isUncashable: bool = False
     initReason: str
     claimedObjects: str
-    isDomestic: bool
-    hasCertificateDelivery: bool
-    notes: str | None
-    initialSendDate: datetime | None
-    lastSendDate: datetime | None
-    isDraft: bool
-    secloEmailNotificationDate: datetime | None
-    signedSendDate: datetime | None
+    isDomestic: bool = False
+    hasCertificateDelivery: bool = False
+    notes: str | None = None
+    initialSendDate: datetime | None = None
+    lastSendDate: datetime | None = None
+    isDraft: bool = True
+    secloEmailNotificationDate: datetime | None = None
+    signedSendDate: datetime | None = None
+
+    hemiagreements: List[HemiagreementDTO] = []
 
     _sql: Agreement | None
 
@@ -726,11 +794,6 @@ class AgreementDTO(BaseModel):
     @property
     def desist(self: Self) -> List[HttpUrl]:
         return [HttpUrl(employerToUrl(x.employer)) for x in self._sql.desist] if self._sql else []
-    
-    @computed_field
-    @property
-    def hemiagreements(self: Self) -> List[HttpUrl]:
-        return [HttpUrl(hemiagreementToUrl(x)) for x in self._sql.hemiagreements] if self._sql else []
     
     @computed_field
     @property
@@ -765,7 +828,7 @@ class AgreementDTO(BaseModel):
                    isDomestic=sql.isDomestic, hasCertificateDelivery=sql.hasCertificateDelivery, notes=sql.notes,
                    initialSendDate=sql.initialSendDate, lastSendDate=sql.lastSendDate, isDraft=sql.isDraft,
                    secloEmailNotificationDate=sql.secloEmailNotificationDate, signedSendDate=sql.signedSendDate,
-                   _sql=sql)
+                   _sql=sql, hemiagreements=HemiagreementDTO.fromList(sql.hemiagreements))
         new._sql = sql
         return new
     
@@ -773,56 +836,12 @@ class AgreementDTO(BaseModel):
     def fromList(cls, list: List[Agreement]) -> List[Self]:
         return [cls.fromSQL(x) for x in list]
     
-class PaymentInstallmentDTO(BaseModel):
-    installmentID: int
-    amount: Decimal
-    expirationRelativeHomo: timedelta | None
-    expirationRelativeSign: timedelta | None
-    expirationAbsolute: datetime | None
-    wasPaidBefore: bool
-    customPaymentMethod: str | None
-
-    _sql: PaymentInstallment | None
-
-    @classmethod
-    def fromSQL(cls, sql: PaymentInstallment) -> Self:
-        new = cls(installmentID=sql.installmentID, amount=sql.amount, expirationRelativeHomo=sql.expirationRelativeHomo,
-                   expirationRelativeSign=sql.expirationRelativeSign, expirationAbsolute=sql.expirationAbsolute,
-                   wasPaidBefore=sql.wasPaidBefore, customPaymentMethod=sql.customPaymentMethod, _sql=sql)
-        new._sql = sql
-        return new
-
-    @classmethod
-    def fromList(cls, list: List[PaymentInstallment]) -> List[Self]:
-        return [cls.fromSQL(x) for x in list]
-    
-class HemiagreementDTO(BaseModel):
-    hemiID: int
-    amountARS: Decimal
-    amountUSD: Decimal | None
-    honoraryRelative: int | None
-    honoraryAbsolute: Decimal | None
-    
-    installments: List[PaymentInstallmentDTO]
-    _sql: Hemiagreement | None
-
-    @computed_field
-    @property
-    def agreement(self: Self) -> HttpUrl | None:
-        return HttpUrl(agreementToUrl(self._sql.agreement)) if self._sql else None
-
-    @computed_field
-    @property
-    def employee(self: Self) -> HttpUrl | None:
-        return HttpUrl(employeeToUrl(self._sql.employee)) if self._sql else None
-    
-
-    @classmethod
-    def fromSQL(cls, sql: Hemiagreement) -> Self:
-        new = cls(hemiID=sql.hemiID, amountARS=sql.amountARS, amountUSD=sql.amountUSD, honoraryRelative=sql.honoraryRelative,
-                  honoraryAbsolute=sql.honoraryAbsolute, _sql=sql, installments=PaymentInstallmentDTO.fromList(sql.installments))
-        new._sql=sql
-        return new
+    def toSQL(self: Self) -> Agreement:
+        return Agreement(agreementID=self.agreementID, malignaHonorary=self.malignaHonorary, isDraft=self.isDraft,
+                         malignaHonoraryExpirationRelative=self.malignaHonoraryExpirationRelative,
+                         isUncashable=self.isUncashable, initReason=self.initReason, claimedObjects=self.claimedObjects,
+                         isDomestic=self.isDomestic, hasCertificateDelivery=self.hasCertificateDelivery, notes=self.notes,
+                         hemiagreements=[x.toSQL() for x in self.hemiagreements])
     
 class HomologationDTO(BaseModel):
     homoID: int

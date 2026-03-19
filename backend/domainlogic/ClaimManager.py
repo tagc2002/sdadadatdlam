@@ -9,7 +9,6 @@ from api.dtos.requestDTOs import claimFilterParams
 from dataobjects.SECLODataClasses import SECLONotificationData
 from repositories.SECLO.SECLOExceptions import RecNotAccessibleException
 from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, EmployeeRelationshipData, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
-from dataobjects.GoogleDataClasses import GoogleColorList, GoogleEvent, GoogleEventAttendee, GoogleEventConferenceData, GoogleEventConferenceDataCreateRequest, GoogleEventConferenceSolutionKey, GoogleEventDate
 from dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType
 from repositories.Google.CalendarAPI import createEvent, listEvents
 from repositories.SECLO.SECLODriver import SECLOCalendarParser, SECLOLoginCredentials, SECLORecData
@@ -40,7 +39,11 @@ class ClaimManager:
                 entryProgress = ProgressReport()
                 secondStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
                 try:
-                    entry.notificationData = recData.setProgress(entryProgress).getNotificationData(gdeID=entry.gdeID)
+                    dbclaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
+                    if dbclaim:
+                        entry.notificationData = recData.setProgress(entryProgress).setRecId(dbclaim.recID).getNotificationData()
+                    else:
+                        entry.notificationData = recData.setProgress(entryProgress).getNotificationData(gdeID=entry.gdeID)
                 except RecNotAccessibleException as e:
                     logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
                     continue
@@ -275,7 +278,8 @@ class ClaimManager:
                         localNotification.deliveryCode = int(notification.notificationCode)
                     except ValueError:
                         localNotification.deliveryCode = 00 if notification.afipRead else None
-
+                    db.add(localNotification)
+                    citation.notifications.append(localNotification)
                     if notification.isEmployer:
                         for employer in citation.claim.employers:
                             isEmployer = True
@@ -287,6 +291,7 @@ class ClaimManager:
                                 localNotification.employerLink = SecloNotificationToEmployer(employer = employer, notification = localNotification)
                                 break
                         else:
+                            #TODO try updating claim
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employer \'{notification.person}\'. Execution will continue')
                     else:
                         for employee in citation.claim.employees:
@@ -299,9 +304,8 @@ class ClaimManager:
                                 localNotification.employeeLink = SecloNotificationToEmployee(employee = employee, notification = localNotification)
                                 break
                         else:
+                            #TODO try updating claim
                             logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
-                    db.add(localNotification)
-                    citation.notifications.append(localNotification)
 
     def getClaims(self: Self, params: claimFilterParams | None = None, db: Session | None = None) -> List[Claim]:
         if not db: raise ValueError("Missing DB")
@@ -311,6 +315,12 @@ class ClaimManager:
                 statement = statement.where(Claim.initDate > params.initStartDate)
             if params.initEndDate:
                 statement = statement.where(Claim.initDate < params.initEndDate)
+            if params.isIngressed is not None:
+                if not params.isIngressed:
+                    statement = statement.where(Claim.calID == None)
+                else:
+                    statement = statement.where(Claim.calID != None)
+
             # if params.citationStartDate:
             #     statement = statement.where(Claim.initDate > params.initStartDate)
             # if params.initEndDate:
