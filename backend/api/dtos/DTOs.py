@@ -178,7 +178,7 @@ class LawyerToEmployeeDTO(BaseModel):
     isActualLawyer: bool
     isSelfRepresenting: bool
     clientAbsent: bool
-    description: str
+    description: str | None
 
     _sql: LawyerToEmployee | None
 
@@ -213,7 +213,7 @@ class LawyerToEmployerDTO(BaseModel):
     isEmpowered: bool
     isSelfRepresenting: bool
     clientAbsent: bool
-    description: str
+    description: str | None
 
     _sql: LawyerToEmployer | None
 

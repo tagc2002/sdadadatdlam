@@ -34,8 +34,8 @@ async def getCitation(db: dependsDB, recID: int, citationID: int) -> CitationDTO
     return CitationDTO.fromSQL(claimManager.getCitation(citationID, db=db))
 
 @router.get('/{recID}/citation/{citationID}/notification')
-async def getNotifications(db: dependsDB, recID: int, citationID: int, withUpdate: bool = False):
-    return NotificationDTO.fromList(claimManager.getNotifications(recID = recID, citationID = citationID, withUpdate=withUpdate, db=db))
+async def getNotifications(db: dependsDB, creds: dependsSECLO, recID: int, citationID: int, withUpdate: bool = False):
+    return NotificationDTO.fromList(claimManager.getNotifications(recID = recID, citationID = citationID, withUpdate=withUpdate, db=db, creds=creds))
 
 @router.get('/{recID}/calendar')
 async def getCalendar(db: dependsDB, recID: int, withUpdate: bool = False):

@@ -745,7 +745,7 @@ class SECLORecData(SECLOAccessor):
             self._loadRec()
 
         results = []
-        table = WebDriverWait(self.driver, 3).until(EC.presence_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
+        table = WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.ID, 'ctl00_Center_grdNotificaciones')))
         for row in table.find_elements(By.CLASS_NAME, 'grdRowStyle'):
             results.append(SECLONotificationData(
                 id = int(row.find_elements(By.TAG_NAME, 'td')[0].text),

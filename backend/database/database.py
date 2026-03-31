@@ -237,6 +237,17 @@ class EmployeeRelationshipData(Base):
 
     employee: Mapped[Employee] = relationship(back_populates='relationshipData')
 
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, EmployeeRelationshipData):
+            if other.employeeID == self.employeeID and self.employeeID != None:
+                return True
+            else:
+                return self.employeeID == other.employeeID and self.startDate == other.startDate and \
+                    self.endDate == other.endDate and self.wage == other.wage and self.cct == other.cct and\
+                    self.claimAmount == other.claimAmount and self.category == other.category
+                
+        else:
+            return False
 class EmployeeAddressLink(Base):
     __tablename__ = "employeeAddressLink"
     employeeID: Mapped[int] = mapped_column(ForeignKey('employee.employeeID'), primary_key=True)
