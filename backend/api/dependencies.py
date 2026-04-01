@@ -18,7 +18,7 @@ def initDBSession(engine: Engine):
 
 def getTransaction():
     if not sm: raise ValueError("DB NOT INITIALIZED")
-    session: Session = sm()
+    session: Session = sm(autoflush=False)
     try:
         yield session
         session.commit()

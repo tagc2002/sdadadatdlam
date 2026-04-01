@@ -28,8 +28,6 @@ class ClaimDTO(BaseModel):
     @computed_field
     @property
     def citations(self) -> HttpUrl | None:
-        logger.critical(self.__pydantic_private__)
-        logger.critical(self.__private_attributes__)
         return HttpUrl(citationsClaimToUrl(self._sql)) if self._sql else None
     
     @computed_field

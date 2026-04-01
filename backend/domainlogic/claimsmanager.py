@@ -93,7 +93,7 @@ class ClaimManager:
                     for link in lawyer.employeeLink + lawyer.employerLink:
                         link.citation = localCitation
                         db.add(link)
-
+                db.flush()
                 self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db)
                 db.commit()
 
