@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from domainlogic.agreementmanager import AgreementManager
-from domainlogic.claimmanager import ClaimManager
+from domainlogic.claimsmanager import ClaimManager
 from domainlogic.homomanager import HomologationManager
 from repositories.SECLO.SECLOProgressReporting import ProgressReport
 from api.dependencies import dependsDB, dependsSECLO

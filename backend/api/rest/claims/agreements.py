@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from api.dtos.requestDTOs import claimFilterParams
 from domainlogic.agreementmanager import AgreementManager
 from domainlogic.calendarmanager import CalendarManager
-from domainlogic.claimmanager import ClaimManager
+from domainlogic.claimsmanager import ClaimManager
 from api.dtos.DTOs import AgreementDTO, CitationDTO, ClaimDTO, NotificationDTO
 from api.dependencies import dependsDB, dependsGoogle, dependsSECLO
 
