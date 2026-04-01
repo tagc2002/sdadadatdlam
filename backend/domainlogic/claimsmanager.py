@@ -135,7 +135,7 @@ class ClaimManager:
             logger.debug("FOUND")
             if not update: return localClaim
         except NoResultFound:
-            localClaim = Claim(recID = claimData.recid, gdeID = gdeID, initDate = initDate, initByEmployee = claimData.initWorker,
+            localClaim = Claim(recID = claimData.recid, gdeID = gdeID, initDate = initDate, initByEmployee = claimData.initWorker, title = "",
                                 claimType = ClaimType.enumsToInt(claimData.claims), legalStuff = claimData.legalStuff, isEvilized = False)
         for employee in claimData.employees:
             #try for local version
