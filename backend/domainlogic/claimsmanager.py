@@ -273,7 +273,7 @@ class ClaimManager:
                 entry = loadedEntry if entry == loadedEntry else entry
         return entry
     
-    def __mapNotificationToOwner(self: Self, notification: SECLONotificationData, localNotification: SecloNotification, list: List[Employee] | List[Employer] | List[Employee | Employer], retry: bool):
+    def __mapNotificationToOwner(self: Self, notification: SECLONotificationData, localNotification: SecloNotification, list: List[Employee] | List[Employer] | List[Employee | Employer], db: Session):
         for person in list:
             isEmployer = isinstance(person, Employer)
             fullname = person.employerName if isEmployer else person.employeeName
@@ -283,8 +283,10 @@ class ClaimManager:
             else:
                 if isEmployer:
                     localNotification.employerLink = SecloNotificationToEmployer(employer = person, notification = localNotification)
+                    db.add(localNotification.employerLink)
                 else:
                     localNotification.employeeLink = SecloNotificationToEmployee(employee = person, notification = localNotification)
+                    db.add(localNotification.employeeLink)
                 return True
         else:
             return False
@@ -307,7 +309,7 @@ class ClaimManager:
                     localNotification.deliveryDescription = notification.notificationStatus + (f' (Leida)' if notification.afipRead else ' (No leida)') if notification.notificationType == SECLONotificationType.AFIP else ''
                     localNotification.citation.citationStatus = CitationStatus.citationStringToEnum(notification.citationStatus)
                     if not localNotification.employeeLink and not localNotification.employerLink and citation:
-                        if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers + citation.claim.employees, retry=retry):
+                        if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers + citation.claim.employees, db=db):
                             if not retry:
                                 logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to person \'{notification.person}\'. Will try updating claim data')
                                 self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
@@ -346,7 +348,7 @@ class ClaimManager:
                         db.add(localNotification)
                         citation.notifications.append(localNotification)
                         if notification.isEmployer:
-                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, retry=retry):
+                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
                                 if not retry:
                                     logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
                                     self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
@@ -355,7 +357,7 @@ class ClaimManager:
                                 else:
                                     logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
                         else:
-                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, retry=retry):
+                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
                                 if not retry:
                                     logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
                                     self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
