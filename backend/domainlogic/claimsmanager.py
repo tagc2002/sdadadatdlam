@@ -94,7 +94,7 @@ class ClaimManager:
                         link.citation = localCitation
                         db.add(link)
                 db.flush()
-                self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db)
+                self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db, seclo=recData)
                 db.commit()
 
         
@@ -111,11 +111,14 @@ class ClaimManager:
         secondStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
-    def __updateClaimStandalone(self: Self, citation: Citation, creds: SECLOLoginCredentials, recID: int, progress: ProgressReport, db: Session) -> Claim:
-        with SECLORecData(creds, recID, progress) as seclo:
+    def __updateClaimStandalone(self: Self, citation: Citation, creds: SECLOLoginCredentials, recID: int, progress: ProgressReport, db: Session, seclo: SECLORecData | None = None) -> Claim:
+        if seclo:
             claim = self.__ingressClaim(recID = recID, initDate = None, recData = seclo, progress=progress, db = db, update = True, citation=citation)
-            db.commit()
-            return claim
+        else:
+            with SECLORecData(creds, recID, progress) as seclo:
+                claim = self.__ingressClaim(recID = recID, initDate = None, recData = seclo, progress=progress, db = db, update = True, citation=citation)
+        db.commit()
+        return claim
 
     def __ingressClaim(self: Self, initDate: datetime | None, recData: SECLORecData, citation: Citation | None, progress: ProgressReport, db: Session, update: bool = False, gdeID: str | None = None, recID: int | None = None) -> Claim:
         localAddresses: List[Address] = []
@@ -291,11 +294,14 @@ class ClaimManager:
         else:
             return False
     
-    def __updateNotifications(self: Self, recID: int, creds: SECLOLoginCredentials, db: Session, progress: ProgressReport | None = None, citation: Citation | None = None, notificationData: List[SECLONotificationData] | None = None):
+    def __updateNotifications(self: Self, recID: int, creds: SECLOLoginCredentials, db: Session, progress: ProgressReport | None = None, citation: Citation | None = None, notificationData: List[SECLONotificationData] | None = None, seclo: SECLORecData | None = None):
         if not progress: progress = ProgressReport()
         if not notificationData:
-            with SECLORecData(creds, recID, progress) as secloData:
-                notificationData = secloData.getNotificationData()
+            if seclo:
+                notificationData = seclo.getNotificationData()
+            else:
+                with SECLORecData(creds, recID, progress) as secloData:
+                    notificationData = secloData.getNotificationData()
         retry = False
         while(True):
             for notification in notificationData:
@@ -351,7 +357,7 @@ class ClaimManager:
                             if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
                                 if not retry:
                                     logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
-                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
+                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation, seclo=seclo)
                                     retry = True
                                     break
                                 else:
@@ -360,7 +366,7 @@ class ClaimManager:
                             if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
                                 if not retry:
                                     logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
-                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
+                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation, seclo=seclo)
                                     retry = True
                                     break
                                 else:
