@@ -144,6 +144,10 @@ class ClaimManager:
             #try for local version
             try:
                 localEmployee = db.scalars(select(Employee).where(Employee.recID == localClaim.recID).where(Employee.cuil == employee.cuil)).one()
+                localEmployee.employeeName = employee.name
+                localEmployee.dni = employee.dni or 0
+                localEmployee.cuil = employee.cuil
+                localEmployee.isValidated = employee.validated
             except NoResultFound:
                 localEmployee = Employee(employeeName = employee.name, dni = employee.dni, cuil = employee.cuil, isValidated = employee.validated, 
                                         birthDate = employee.birthDate,  claim = localClaim, headerName = employee.name.replace(',', '').split(" ")[0])
@@ -168,6 +172,9 @@ class ClaimManager:
         for employer in claimData.employers:
             try:
                 localEmployer = db.scalars(select(Employer).where(Employer.recID == localClaim.recID).where(or_(Employer.cuil == employer.cuil, Employer.employerName == employer.name))).one()
+                localEmployer.employerName = employer.name
+                localEmployer.cuil = employer.cuil
+                localEmployer.isValidated = employer.validated
             except NoResultFound:
                 localEmployer = Employer(claim = localClaim, employerName = employer.name, cuil = employer.cuil, personType = employer.personType,
                                         requiredAs = RequiredAsType.UNKNOWN, SECLORegisterDate = initDate, mustRegisterSECLO = False, isValidated = employer.validated,
