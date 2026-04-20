@@ -43,12 +43,12 @@ def initRedisSession(r: ConnectionPool):
 
 def getRedisSession():
     if not redispool: raise ValueError("REDIS NOT READY")
-    redis: Pipeline = Redis.from_pool(redispool).pipeline(transaction=True)
+    redis: Redis = Redis.from_pool(redispool)
     try:
         yield redis
-        redis.execute()
+        #redis.execute()
     except Exception as e:
-        redis.discard()
+        #redis.discard()
         raise
     finally:
         redis.close()
@@ -57,4 +57,4 @@ def getRedisSession():
 dependsDB = Annotated[Session, Depends(getTransaction)]
 dependsSECLO = Annotated[SECLOLoginCredentials, Depends(getSECLOCredentials)]
 dependsGoogle = Annotated[dict, Depends(getGoogleCredentials)]
-dependsRedis = Annotated[dict, Depends(getRedisSession)]
+dependsRedis = Annotated[Pipeline, Depends(getRedisSession)]

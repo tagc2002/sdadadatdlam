@@ -2,17 +2,22 @@ import logging
 from threading import Lock
 from typing import List, Self, Dict, Tuple
 
+from domainlogic.taskmanager import TaskManager
+
 logger = logging.getLogger(__name__)
 class ProgressReport():
-    #TODO composable behavior
-    def __init__(self, isComposable:bool = False):
+    def __init__(self, isComposable:bool = False, taskmanager: TaskManager | None = None):
         self.progress = 0.0
         self.steps = 0
         self.message = ''
         self.checked = Lock()
         self.done = False
         self.subprogresses: List[Tuple['ProgressReport', str]] = []
+        if taskmanager: 
+            self.taskmanager = taskmanager
 
+    def __set_parent(self: Self, parent: 'ProgressReport'):
+        self.parent = parent
 
     def setSteps(self: Self, steps: int) -> Self:
         logger.debug(f'SET STEPS {steps}')
@@ -23,16 +28,23 @@ class ProgressReport():
     def compose(self: Self, subprogress: 'ProgressReport', message: str = "") -> Self:
         logger.debug(f"COMPOSE {f'({message})' if message else ''}")
         self.subprogresses.append((subprogress, message))
+        subprogress.__set_parent(self)
         return self
     
     def setProgress(self, step: float, message) -> Self:
         if (len(self.subprogresses)) > 0:
             raise AttributeError("Can't set progress on a composed report")
+        self.steps = max(self.steps, 1)
         self.progress = step / self.steps
         self.message = message
         self.done = False
+
         if self.checked.locked():
             self.checked.release() 
+
+        if hasattr(self, 'parent'):
+            self.parent.__notifyProgress(self)
+
         logger.debug(f'SET PROGRESS {self.progress} {f'({message})' if message else ''}')
         return self 
 
@@ -43,8 +55,13 @@ class ProgressReport():
         if message != None:
             self.message = message
         self.done = False
+
         if self.checked.locked():
-            self.checked.release()    
+            self.checked.release()  
+
+        if hasattr(self, 'parent'):
+            self.parent.__notifyProgress(self)  
+
         logger.debug(f'INCREASE PROGRESS: {(100*self.progress):.2f}% {f'({message})' if message else ''}')
         return self        
     
@@ -53,6 +70,8 @@ class ProgressReport():
         self.message = message
         if self.checked.locked():
             self.checked.release()
+        if hasattr(self, 'parent'):
+            self.parent.__notifyProgress(self)
         return self
     
     def setCompletion(self: Self, message: str) -> Self:
@@ -62,6 +81,8 @@ class ProgressReport():
         self.message = message
         if self.checked.locked():
             self.checked.release()  
+        if hasattr(self, 'parent'):
+            self.parent.__notifyProgress(self)
         return self
 
     def getProgress(self: Self) -> Dict:
@@ -81,9 +102,19 @@ class ProgressReport():
                 self.message = self.subprogresses[-1][1] + ": " + self.subprogresses[-1][0].message
                 self.done = True
         else:
-            self.checked.acquire()
+            #self.checked.acquire()
+            pass
         return {'progress': self.progress, 'message': self.message}
     
     def getCompletion(self: Self) -> bool:
         logger.debug("GET COMPLETION")
         return self.done
+    
+    def __notifyProgress(self: Self, child: 'ProgressReport'):
+        progress = self.getProgress()
+        if hasattr(self, 'parent'): self.parent.__notifyProgress(self)
+        if hasattr(self, 'taskmanager'):
+            self.taskmanager.updateTaskSlotProgress(progress)
+
+    def __str__(self: Self) -> str:
+        return f""

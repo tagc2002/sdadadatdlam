@@ -881,7 +881,7 @@ class SECLORecData(SECLOAccessor):
                             bonusData=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_Domicilio_direc_txtAdicional').get_attribute('value')
                         )
                     )
-                    employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtTelefono_txt').get_attribute('value'))
+                    employer.addMail(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtEmail_txt').get_attribute('value'))
                     for item in self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cmbTipoSociedad_cmb').find_elements(By.TAG_NAME, 'option'):
                         if item.get_attribute('selected'):
                             employer.addPersonType(PersonType.fromString(item.text))

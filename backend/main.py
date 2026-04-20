@@ -24,7 +24,7 @@ from api.dependencies import getGoogleCredentials, getSECLOCredentials, getTrans
 
 sys.path.append('/usr/app/src')
 
-from api.rest.claims import auth, claims
+from api.rest.claims import auth, claims, liveupdates
 from repositories.SECLO.SECLODriver import SECLOLoginCredentials
 
 load_dotenv()
@@ -67,10 +67,11 @@ command.upgrade(alembic_cfg, 'head')
 engine = create_engine(url = psql_connect_string)
 initDBSession(engine)
 
-redis = ConnectionPool(host=redisdomain, port=redisport, decode_responses=True, username=redisuser, password=redispass, retry=Retry(ExponentialBackoff(), 8))
+redis = ConnectionPool(host=redisdomain, port=redisport, decode_responses=True, retry=Retry(ExponentialBackoff(), 8))
 initRedisSession(redis)
 
 app = FastAPI(root_path="/api")
 app.include_router(claims.router)
 app.include_router(ingress.router)
 app.include_router(auth.router)
+app.include_router(liveupdates.router)
