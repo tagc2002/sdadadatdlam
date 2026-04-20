@@ -28,7 +28,7 @@ class ClaimManager:
         thirdStage = ProgressReport()
         if not progress:
             progress = ProgressReport()
-        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Aquiring notification data').compose(thirdStage, 'Registering new claims')
+        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Acquiring notification data').compose(thirdStage, 'Registering new claims')
 
         with SECLOCalendarParser(creds, None, firstStage) as calParser:
             calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
@@ -38,7 +38,7 @@ class ClaimManager:
         with SECLORecData(creds, None, None) as recData:
             for index, entry in enumerate(calendarInfo):
                 entryProgress = ProgressReport()
-                secondStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
+                secondStage.compose(entryProgress, f'{index+1} of {len(calendarInfo)}')
                 try:
                     dbclaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
                     if dbclaim:
@@ -48,12 +48,14 @@ class ClaimManager:
                 except RecNotAccessibleException as e:
                     logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
                     continue
+                entryProgress.setCompletion("")
         secondStage.setCompletion("Done aquiring notification data")
+        thirdStage.setSteps(len(calendarInfo)).setMessage("Mapping citations to claims")
         counter = 0
         with SECLORecData(creds, None, None) as recData:
             for index, entry in enumerate(calendarInfo):
                 entryProgress = ProgressReport()
-                thirdStage.compose(entryProgress, f'{index} of {len(calendarInfo)}')
+                thirdStage.compose(entryProgress, f'{index+1} of {len(calendarInfo)}')
                 localCitation = db.scalars(select(Citation).where(Citation.secloAudID == entry.citationID)).one_or_none()
                 localClaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
                 if not localClaim:
@@ -67,6 +69,7 @@ class ClaimManager:
                         logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
                         counter -= 1
                         continue
+                    ingressProgress.setCompletion("")
 
                 if not localCitation:
                     localCitation = Citation(secloAudID = entry.citationID, 
@@ -96,7 +99,7 @@ class ClaimManager:
                 db.flush()
                 self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db, seclo=recData)
                 db.commit()
-
+                entryProgress.setCompletion("Done loading claim data")
         
         ##TODO Once the frontend is working, this will be done through an api call.
         for index, entry in enumerate(calendarInfo):
@@ -108,7 +111,7 @@ class ClaimManager:
                 claim.isEvilized=True
             else:
                 logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-        secondStage.setCompletion("Finished registering new claims")
+        thirdStage.setCompletion("Finished registering new claims")
         progress.setCompletion("Finished registering new claims")
 
     def __updateClaimStandalone(self: Self, citation: Citation, creds: SECLOLoginCredentials, recID: int, progress: ProgressReport, db: Session, seclo: SECLORecData | None = None) -> Claim:
@@ -379,6 +382,7 @@ class ClaimManager:
                                 else:
                                     logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
             else:
+                progress.setCompletion("")
                 break
 
 
