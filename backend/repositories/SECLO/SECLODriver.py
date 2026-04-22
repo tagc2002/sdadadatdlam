@@ -765,7 +765,7 @@ class SECLORecData(SECLOAccessor):
                 citationStatus = row.find_elements(By.TAG_NAME, 'td')[11].text,
             ))
 
-        self.progress.setCompletion("")
+        self.progress.setCompletion(f"Found notif data for {self.recid}")
         return results
 
     def getClaimData(self: Self) -> SECLOClaimData:
@@ -866,11 +866,12 @@ class SECLORecData(SECLOAccessor):
 
                     WebDriverWait(self.driver, 5).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl01_cuit_txtRS')))
                     self.progress.increaseProgress(1, f'Getting employer data for {self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value')} ({i + 1} of {listLen})...')
+                    cuil = (self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value') or "").replace('-','')
                     employer = SECLOEmployerData(
                         name=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtRS').get_attribute('value') or "",
                         dni=self.driver.find_element(By.ID, 'ctl00_Center_ctl01_txtNroDocumento_txt').get_attribute('value'),
-                        cuil=(self.driver.find_element(By.ID, 'ctl00_Center_ctl01_cuit_txtC').get_attribute('value') or "").replace('-',''),
-                        validated = seclodbOK
+                        cuil=cuil,
+                        validated = seclodbOK and (len(cuil) > 0)
                     )
                     employer.addAddress(
                         SECLOAddressData(
@@ -1150,13 +1151,13 @@ class SECLOCalendarParser(SECLOAccessor):
                         Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + Keys.ARROW_LEFT + date.strftime("%d/%m/%Y")
                     )
                     WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_btnConsultar'))).click()
-                    firstStage.increaseProgress(1, f'Parsing calendar week of {date.strftime("%d/%m/%Y")}')
+                    firstStage.increaseProgress(1, f'Week of {date.strftime("%d/%m/%Y")}')
                     WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
                     table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
                     IDs.extend(self.__iterateCalendar(table))
                 else:
                     for i in range(0, weeksAfter):
-                        firstStage.increaseProgress(1, f'Parsing calendar week {i+1} of {weeksBefore + weeksAfter}')
+                        firstStage.increaseProgress(1, f'{i+1} of {weeksBefore + weeksAfter}')
                         WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
                         table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
                         IDs.extend(self.__iterateCalendar(table))
@@ -1167,17 +1168,17 @@ class SECLOCalendarParser(SECLOAccessor):
                         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkSusp'))).click()
                         WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_chkReal'))).click()
                         for i in range(0, weeksBefore):
-                            firstStage.increaseProgress(1, f'Parsing calendar week {i + weeksAfter+1} of {weeksBefore + weeksAfter}')
+                            firstStage.increaseProgress(1, f'{i + weeksAfter+1} of {weeksBefore + weeksAfter}')
                             WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'ctl00_Center_DayPilotCalendar1')))
                             table = self.driver.find_element(By.ID, 'ctl00_Center_DayPilotCalendar1').find_element(By.TAG_NAME, 'tr')
                             IDs.extend(self.__iterateCalendar(table))
                             WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, 'ctl00_Center_lnkIzq'))).click()
                 secondStage.setSteps(len(IDs))
                 secondStage.setMessage("Loading citation data")
-                firstStage.setCompletion("Finished loading calendar weeks")
+                firstStage.setCompletion("Done")
                 calendarCitations = []
                 for index, item in enumerate(IDs):
-                    secondStage.increaseProgress(1, f'Loading citation data for {index + 1} of {len(IDs)}')
+                    secondStage.increaseProgress(1, f'{index + 1} of {len(IDs)}')
                     self.driver.get(f'https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?AudId={item}&esPortal=1')
                     gdeIDText = WebDriverWait(self.driver, 10).until(EC.visibility_of_element_located((By.ID, 'rcNroExpediente'))).text
                     initDatetimeText = self.driver.find_element(By.ID, 'rcFecha').text
@@ -1190,7 +1191,7 @@ class SECLOCalendarParser(SECLOAccessor):
                         citationType = self.driver.find_element(By.ID, 'auTipoYEstado').text,
                         pdfString = self.driver.print_page(self.printOptions)
                         ))
-                secondStage.setCompletion("Finished loading calendar info")
+                secondStage.setCompletion("Done")
                 return calendarCitations
             except Exception as e:
                 attempts += 1

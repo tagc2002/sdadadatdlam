@@ -28,7 +28,7 @@ class ClaimManager:
         thirdStage = ProgressReport()
         if not progress:
             progress = ProgressReport()
-        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Acquiring notification data').compose(thirdStage, 'Registering new claims')
+        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Acquiring notification data').compose(thirdStage, 'Mapping citations to claims')
 
         with SECLOCalendarParser(creds, None, firstStage) as calParser:
             calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
@@ -48,9 +48,8 @@ class ClaimManager:
                 except RecNotAccessibleException as e:
                     logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
                     continue
-                entryProgress.setCompletion("")
-        secondStage.setCompletion("Done aquiring notification data")
-        thirdStage.setSteps(len(calendarInfo)).setMessage("Mapping citations to claims")
+        secondStage.setCompletion("Done acquiring notification data")
+        thirdStage.setSteps(len(calendarInfo))
         counter = 0
         with SECLORecData(creds, None, None) as recData:
             for index, entry in enumerate(calendarInfo):
@@ -69,7 +68,6 @@ class ClaimManager:
                         logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
                         counter -= 1
                         continue
-                    ingressProgress.setCompletion("")
 
                 if not localCitation:
                     localCitation = Citation(secloAudID = entry.citationID, 
@@ -111,8 +109,8 @@ class ClaimManager:
                 claim.isEvilized=True
             else:
                 logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-        thirdStage.setCompletion("Finished registering new claims")
-        progress.setCompletion("Finished registering new claims")
+        thirdStage.setCompletion("Finished linking claims")
+        progress.setCompletion("DONE")
 
     def __updateClaimStandalone(self: Self, citation: Citation, creds: SECLOLoginCredentials, recID: int, progress: ProgressReport, db: Session, seclo: SECLORecData | None = None) -> Claim:
         if seclo:
