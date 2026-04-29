@@ -45,11 +45,10 @@ class TaskManager():
 
     async def awaitTask(self: Self) -> str | None:
         if hasattr(self, 'pubsub'):
-                message = self.pubsub.get_message()
-                if message and message['type'] == 'message':
-                    logger.debug(message)
-                    return str(message['data']) + '\n'
-                await asyncio.sleep(0.1)
+            message = self.pubsub.get_message()
+            if message and message['type'] == 'message':
+                return str(message['data']) + '\n'
+            await asyncio.sleep(0.1)
             #self.closeSub()
         return None
 
