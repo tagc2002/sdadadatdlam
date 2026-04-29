@@ -93,18 +93,19 @@ class ProgressReport():
         if self.subprogresses:
             self.progress = 0
             progressStep = 1/self.steps if self.steps > 0 else 1/len(self.subprogresses)
-            for (progress, message) in self.subprogresses:  
-                if progress.getCompletion():
-                    self.progress += 1 * progressStep
+            if not self.done:
+                for (progress, message) in self.subprogresses:  
+                    if progress.getCompletion():
+                        self.progress += 1 * progressStep
+                    else:
+                        currentProgress = progress.getProgress()  
+                        self.progress += currentProgress['progress'] * progressStep
+                        self.message = message + ((": " + currentProgress['message']) if len(currentProgress['message'])>0 else "")
+                        break
                 else:
-                    currentProgress = progress.getProgress()  
-                    self.progress += currentProgress['progress'] * progressStep
-                    self.message = message + ((": " + currentProgress['message']) if len(currentProgress['message'])>0 else "")
-                    break
-            else:
-                self.message = self.subprogresses[-1][1] + ((": " + self.subprogresses[-1][0].message) if len(self.subprogresses[-1][0].message) else "")
-                if self.steps != 0 and self.steps <= len(self.subprogresses):
-                    self.done = True
+                    self.message = self.subprogresses[-1][1] + ((": " + self.subprogresses[-1][0].message) if len(self.subprogresses[-1][0].message) else "")
+                    if self.steps != 0 and self.steps <= len(self.subprogresses):
+                        self.done = True
         else:
             #self.checked.acquire()
             pass
