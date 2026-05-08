@@ -20,7 +20,7 @@ from dataobjects.googledataclasses import (
     GoogleEventDate,
 )
 from dataobjects.enums import CitationType
-from repositories.google.google_calendar import create_event, list_events, search_events
+from repositories.google2.google_calendar import create_event, list_events, search_events
 
 import logging
 
