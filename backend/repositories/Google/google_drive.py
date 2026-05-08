@@ -1,8 +1,8 @@
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import sys
-sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
-from repositories.Google.AuthAPI import basicAuth
+from repositories.google.google_auth import basic_auth
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 def upload_basic():
     """Insert new file.
@@ -12,7 +12,7 @@ def upload_basic():
     TODO(developer) - See https://developers.google.com/identity
     for guides on implementing OAuth2 for the application.
     """
-    creds = basicAuth({})
+    creds = basic_auth()
 
     try:
         # create drive api client
@@ -22,7 +22,7 @@ def upload_basic():
         media = MediaFileUpload("download.jpeg", mimetype="image/jpeg")
         # pylint: disable=maybe-no-member
         file = (
-            service.files()
+            service.files() # type: ignore
             .create(body=file_metadata, media_body=media, fields="id")
             .execute()
         )
@@ -35,7 +35,7 @@ def upload_basic():
     return file.get("id")
 
 def test():
-    creds = basicAuth({})
+    creds = basic_auth()
 
     try:
         service = build("drive", "v3", credentials=creds)

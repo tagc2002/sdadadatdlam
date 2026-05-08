@@ -1,172 +1,238 @@
+"""Dataclasses to use with google API"""
+
 from datetime import datetime
 from enum import Enum
-from typing import Any, List
-from attr import dataclass
+from typing import Any, List, Optional
 from pydantic import BaseModel
 
 
 class GoogleEventPerson(BaseModel):
-    id: str | None = None
-    email: str | None = None
-    self: bool | None = None
-    displayName: str | None = None
+    """Person object for creator/organizer."""
+
+    id: Optional[str] = None
+    email: Optional[str] = None
+    self: Optional[bool] = None
+    displayName: Optional[str] = None
+
 
 class GoogleEventDate(BaseModel):
-    date: str | None = None
-    dateTime: str | None = None
-    timeZone: str | None = None
+    """Date object for events."""
+
+    date: Optional[str] = None
+    dateTime: Optional[str] = None
+    timeZone: Optional[str] = None
+
 
 class GoogleEventAttendee(BaseModel):
-    id: str | None = None
-    email: str | None = None
-    displayName: str | None = None
-    responseStatus: str | None = None
-    organizer: bool | None = None
-    self: bool | None = None
-    resource: bool | None = None
-    optional: bool | None = None
-    comment: bool | None = None
-    additionalGuests: int | None = None
+    """Attendee object for google events"""
+
+    id: Optional[str] = None
+    email: Optional[str] = None
+    displayName: Optional[str] = None
+    responseStatus: Optional[str] = None
+    organizer: Optional[bool] = None
+    self: Optional[bool] = None
+    resource: Optional[bool] = None
+    optional: Optional[bool] = None
+    comment: Optional[bool] = None
+    additionalGuests: Optional[int] = None
 
     def __hash__(self) -> int:
         return hash(self.email)
 
+
 class GoogleEventConferenceDataEntryPoint(BaseModel):
-    entryPointType: str | None = None
-    uri: str | None = None
-    label: str | None = None
+    """Entry point (url, phone#, etc.) for google event conference."""
+
+    entryPointType: Optional[str] = None
+    uri: Optional[str] = None
+    label: Optional[str] = None
+
 
 class GoogleEventConferenceSolutionKey(BaseModel):
-    type: str | None = None
+    """Conference solution to be used."""
+
+    type: Optional[str] = None
+
 
 class GoogleEventConferenceSolution(BaseModel):
+    """Meeting info for google events."""
+
     key: GoogleEventConferenceSolutionKey | None = None
-    name: str | None = None
-    iconUri: str | None = None
+    name: Optional[str] = None
+    iconUri: Optional[str] = None
+
 
 class GoogleEventConfererenceSolutionStatus(BaseModel):
-    statusCode: str | None = None
+    """Concefence creation status."""
+
+    statusCode: Optional[str] = None
+
 
 class GoogleEventConferenceDataCreateRequest(BaseModel):
-    requestId: str | None = None
-    conferenceSolutionKey: GoogleEventConferenceSolutionKey | None = None
-    status: GoogleEventConfererenceSolutionStatus | None = None
+    """Conference creation request."""
+
+    requestId: Optional[str] = None
+    conferenceSolutionKey: Optional[GoogleEventConferenceSolutionKey] = None
+    status: Optional[GoogleEventConfererenceSolutionStatus] = None
+
 
 class GoogleEventConferenceData(BaseModel):
-    createRequest: GoogleEventConferenceDataCreateRequest | None = None
-    entryPoints: List[GoogleEventConferenceDataEntryPoint] | None = None
-    conferenceSolution: GoogleEventConferenceSolution | None = None
-    conferenceId: str | None = None
-    signature: str | None = None
-    notes: str | None = None
+    """Event conference info."""
+
+    createRequest: Optional[GoogleEventConferenceDataCreateRequest] = None
+    entryPoints: Optional[List[GoogleEventConferenceDataEntryPoint]] = None
+    conferenceSolution: Optional[GoogleEventConferenceSolution] = None
+    conferenceId: Optional[str] = None
+    signature: Optional[str] = None
+    notes: Optional[str] = None
+
 
 class GoogleEventReminderOverrides(BaseModel):
-    method: str | None = None
-    minutes: int | None = None
+    """Special reminders for event."""
+
+    method: Optional[str] = None
+    minutes: Optional[int] = None
+
 
 class GoogleEventReminder(BaseModel):
-    useDefault: bool | None = None
-    overrides: List[GoogleEventReminderOverrides] | None = None
+    """Event reminders."""
+
+    useDefault: Optional[bool] = None
+    overrides: Optional[List[GoogleEventReminderOverrides]] = None
+
 
 class GoogleEventSource(BaseModel):
-    url: str | None  = None
-    title: str | None = None
+    """Event source"""
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+
 
 class GoogleEventLocation(BaseModel):
-    label: str | None = None
-    buildingId: str | None = None
-    floorId: str | None = None
-    floorSectionId: str | None = None
-    deskId: str | None = None
+    """Event location (unused here)"""
+
+    label: Optional[str] = None
+    buildingId: Optional[str] = None
+    floorId: Optional[str] = None
+    floorSectionId: Optional[str] = None
+    deskId: Optional[str] = None
+
 
 class GoogleEventWorkingLocationProperties(BaseModel):
-    type: str | None = None
+    """Event working location (unused here)"""
+
+    type: Optional[str] = None
     homeOffice: Any | None = None
-    customLocation: GoogleEventLocation | None = None
-    officeLocation: GoogleEventLocation | None = None
+    customLocation: Optional[GoogleEventLocation] = None
+    officeLocation: Optional[GoogleEventLocation] = None
+
 
 class GoogleEventOutOfOfficeProperties(BaseModel):
-    autoDeclineMode: str | None = None
-    declineMessage: str | None = None
+    """Out of office config (unused here)"""
+
+    autoDeclineMode: Optional[str] = None
+    declineMessage: Optional[str] = None
+
 
 class GoogleEventFocusTimeProperties(BaseModel):
-    autoDeclineMode: str | None = None
-    declineMessage: str | None = None
-    chatStatus: str | None = None
+    """Focus time properties (unused here)"""
+
+    autoDeclineMode: Optional[str] = None
+    declineMessage: Optional[str] = None
+    chatStatus: Optional[str] = None
+
 
 class GoogleEventAttachment(BaseModel):
-    fileUrl: str | None = None
-    title: str | None = None
-    mimeType: str | None = None
-    iconLink: str | None = None
-    fileId: str | None = None
+    """Attachment info for events"""
+
+    fileUrl: Optional[str] = None
+    title: Optional[str] = None
+    mimeType: Optional[str] = None
+    iconLink: Optional[str] = None
+    fileId: Optional[str] = None
+
 
 class GoogleEventBirthdayProperties(BaseModel):
-    contact: str | None = None
-    type: str | None = None
-    customTypeName: str | None = None
+    """Birthday info (?)"""
+
+    contact: Optional[str] = None
+    type: Optional[str] = None
+    customTypeName: Optional[str] = None
+
 
 class GoogleEvent(BaseModel):
-    kind: str | None = None
-    etag: str | None = None
-    id: str | None = None
-    status: str | None = None
-    htmlLink: str | None = None
-    created: str | None = None
-    updated: str | None = None
-    summary: str | None = None
-    description: str | None = None
-    colorId: int | None = None
-    creator: GoogleEventPerson | None = None
-    organizer: GoogleEventPerson | None = None
-    start: GoogleEventDate | None = None
-    end: GoogleEventDate | None     = None
-    originalStartTime: GoogleEventDate | None = None
-    endTimeUnspecified: bool | None = None
+    """Main event dataclass for calendar API."""
+
+    kind: Optional[str] = None
+    etag: Optional[str] = None
+    id: Optional[str] = None
+    status: Optional[str] = None
+    htmlLink: Optional[str] = None
+    created: Optional[str] = None
+    updated: Optional[str] = None
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    colorId: Optional[int] = None
+    creator: Optional[GoogleEventPerson] = None
+    organizer: Optional[GoogleEventPerson] = None
+    start: Optional[GoogleEventDate] = None
+    end: Optional[GoogleEventDate] = None
+    originalStartTime: Optional[GoogleEventDate] = None
+    endTimeUnspecified: Optional[bool] = None
     recurrence: List[str] | None = None
-    recurringEventId: str | None = None
-    transparency: str | None = None
-    visibility: str | None = None
-    iCalUid: str | None = None
-    sequence: int | None = None
-    attendees: List[GoogleEventAttendee] | None = None
-    hangoutLink: str | None = None
-    conferenceData: GoogleEventConferenceData | None = None
+    recurringEventId: Optional[str] = None
+    transparency: Optional[str] = None
+    visibility: Optional[str] = None
+    iCalUid: Optional[str] = None
+    sequence: Optional[int] = None
+    attendees: Optional[List[GoogleEventAttendee]] = None
+    hangoutLink: Optional[str] = None
+    conferenceData: Optional[GoogleEventConferenceData] = None
     gadget: None = None
-    anyoneCanAddSelf: bool | None = None
-    guestsCanInviteOthers: bool | None = None
-    guestsCanModify: bool | None = None
-    guestsCanSeeOtherGuests: bool | None = None
-    privateCopy: bool | None = None
-    locked: bool | None = None
-    reminders: GoogleEventReminder | None = None
-    source: GoogleEventSource | None = None
-    workingLocationProperties: GoogleEventWorkingLocationProperties | None = None
-    outOfOfficeProperties: GoogleEventOutOfOfficeProperties | None = None
-    focusTimeProperties: GoogleEventFocusTimeProperties | None = None
-    attachments: List[GoogleEventAttachment] | None = None
-    birthdayProperties: GoogleEventBirthdayProperties | None = None
-    eventType: str | None = None
+    anyoneCanAddSelf: Optional[bool] = None
+    guestsCanInviteOthers: Optional[bool] = None
+    guestsCanModify: Optional[bool] = None
+    guestsCanSeeOtherGuests: Optional[bool] = None
+    privateCopy: Optional[bool] = None
+    locked: Optional[bool] = None
+    reminders: Optional[GoogleEventReminder] = None
+    source: Optional[GoogleEventSource] = None
+    workingLocationProperties: Optional[GoogleEventWorkingLocationProperties] = None
+    outOfOfficeProperties: Optional[GoogleEventOutOfOfficeProperties] = None
+    focusTimeProperties: Optional[GoogleEventFocusTimeProperties] = None
+    attachments: Optional[List[GoogleEventAttachment]] = None
+    birthdayProperties: Optional[GoogleEventBirthdayProperties] = None
+    eventType: Optional[str] = None
+
 
 class GoogleColorItem(BaseModel):
-    foreground: str | None
-    background: str | None
+    """Color item for calendar events"""
+
+    foreground: Optional[str]
+    background: Optional[str]
+
 
 class GoogleColors(BaseModel):
-    kind: str | None
-    updated: datetime | None
-    calendar: dict[int, GoogleColorItem]    
+    """Colors returned by google"""
+
+    kind: Optional[str]
+    updated: Optional[datetime]
+    calendar: dict[int, GoogleColorItem]
     event: dict[int, GoogleColorItem]
 
+
 class GoogleColorList(Enum):
-    LIGHT_BLUE =    1
-    LIGHT_GREEN =   2
-    LIGHT_PURPLE =  3
-    SALMON =        4
-    YELLOW =        5
-    LIGHT_ORANGE =  6
-    TURQ =          7
-    WHITE =         8
-    BLUE =          9
-    GREEN =         10
-    RED =           11
+    """List of possible colors to choose from, hardcoded here for simplicity"""
+
+    LIGHT_BLUE = 1
+    LIGHT_GREEN = 2
+    LIGHT_PURPLE = 3
+    SALMON = 4
+    YELLOW = 5
+    LIGHT_ORANGE = 6
+    TURQ = 7
+    WHITE = 8
+    BLUE = 9
+    GREEN = 10
+    RED = 11

@@ -1,29 +1,51 @@
+"""Module for batch ingesting data from SECLO"""
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks
-from domainlogic import taskmanager
-from domainlogic.agreementmanager import AgreementManager
-from domainlogic.claimsmanager import ClaimManager
-from domainlogic.homomanager import HomologationManager
 from domainlogic.taskmanager import TaskManager
-from repositories.SECLO.SECLOProgressReporting import ProgressReport
-from api.dependencies import dependsDB, dependsSECLO, dependsRedis
+from domainlogic.claimsmanager import batch_verify_agenda
+from domainlogic.homomanager import batch_check_homologations
+from repositories.seclo.progress import ProgressReport
+from api.dependencies import DependsDb, DependsSeclo, DependsRedis
 
-router = APIRouter(prefix = '/batch')
+router = APIRouter(prefix="/batch")
 
-claimManager = ClaimManager()
-agreementManager = AgreementManager()
-homologationManager = HomologationManager()
 
-@router.get("/ingressClaims")
-def ingressClaims(db: dependsDB, creds: dependsSECLO, redis: dependsRedis, backgroundTask: BackgroundTasks) -> str:
+@router.get("/ingressClaims",tags=['batch', 'claims'])
+async def ingress_claims(
+    db: DependsDb,
+    creds: DependsSeclo,
+    redis: DependsRedis,
+    background_task: BackgroundTasks,
+) -> str:
+    """Batch API method for registering new claims from SECLO agenda. 
+
+    Will check agenda and load any missing claims, as well as update
+    notification info for the rest. 
+
+    Returns:
+        str: Background task UUID.
+    """
     taskmanager = TaskManager(redis)
-    task_id = taskmanager.getNewTaskSlot()
+    task_id = await taskmanager.get_new_task_slot()
     if task_id:
         pr = ProgressReport(taskmanager=taskmanager)
-        backgroundTask.add_task(claimManager.batchVerifyAgenda, creds=creds, progress = pr, weeksBefore=0, weeksAfter=20, db=db)   
+        background_task.add_task(
+            batch_verify_agenda_wrapper,
+            creds=creds,
+            progress=pr,
+            weeks_before=0,
+            weeks_after=20,
+            db=db,
+        )
     return task_id
-    
+
+def batch_verify_agenda_wrapper(creds, progress, weeks_before, weeks_after, db):
+    asyncio.run(batch_verify_agenda(creds=creds, progress=progress, weeks_before=weeks_before, weeks_after=weeks_after, db=db))
+
 
 @router.get("/homologations")
-def checkHomologations(db: dependsDB, creds: dependsSECLO) -> None:
+def check_homologations(db: DependsDb, creds: DependsSeclo) -> None:
+    # TODO implement properly
     pr = ProgressReport()
-    homologationManager.batchCheckHomologations(creds=creds, progress=pr, db=db)
+    batch_check_homologations(creds=creds, progress=pr, db=db)

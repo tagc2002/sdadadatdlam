@@ -1,14 +1,21 @@
+"Module for handling authentication to Google API."
 import json
 import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google.oauth2 import id_token
+from google.auth.exceptions import GoogleAuthError
 from google_auth_oauthlib.flow import InstalledAppFlow, Flow
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
 
-def basicAuth(googleCreds: dict):
+def basic_auth():
+    """Authenticates locally.
+
+    Returns:
+        Credentials: credentials object returned by Google API
+    """
     creds = None
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
@@ -25,16 +32,18 @@ def basicAuth(googleCreds: dict):
             )
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open("token.json", "w") as token:
+        with open("token.json", "w", encoding='ascii') as token:
             token.write(creds.to_json())
     return creds
 
-def OAuth(token: str):
-    # (Receive token by HTTPS POST)
-    # ...
+def oauth_login_token(token: str):
+    """Receives OAuth token and so far does not do much with it.
 
+    Args:
+        token (str): OAuth token returned by Google
+    """
     try:
-        with open("google-credentials-web.json") as googlecredentials:
+        with open("google-credentials-web.json",encoding='ascii') as googlecredentials:
             client_creds = json.load(googlecredentials)
         # Specify the WEB_CLIENT_ID of the app that accesses the backend:
         print(client_creds)
@@ -55,16 +64,23 @@ def OAuth(token: str):
         userid = idinfo['sub']
         print(idinfo)
         print(userid)
-    except Exception as e:
+    except (ValueError, GoogleAuthError) as e:
         print(f'Error: {e}')
-        pass
 
-def createGoogleToken(email: str) -> str:
+def create_google_token(email: str) -> str:
+    """Creates a login token for performing OAuth with Google.
+
+    Args:
+        email (str): optional email for hinting google
+
+    Returns:
+        str: url to redirect the user to
+    """
     flow = Flow.from_client_secrets_file('client_secret_web.json', SCOPES)
     flow.redirect_uri = 'http://localhost:8080/api/GoogleTokenAuth'
     # Generate URL for request to Google's OAuth 2.0 server.
     # Use kwargs to set optional request parameters.
-    authorization_url, state = flow.authorization_url(
+    authorization_url, _ = flow.authorization_url(
         # Recommended, enable offline access so that you can refresh an access token without
         # re-prompting the user for permission. Recommended for web server apps.
         access_type='offline',
@@ -77,7 +93,15 @@ def createGoogleToken(email: str) -> str:
         prompt='consent')
     return authorization_url
 
-def tokenFromGoogleAuth(code: str):
+def token_from_google_auth(code: str):
+    """Obtain credentials from user token.
+
+    Args:
+        code (str): User login token
+
+    Returns:
+        Credentials: credentials object returned by Google
+    """
     flow = Flow.from_client_secrets_file(
         'google-credentials-web.json',
         scopes=SCOPES,

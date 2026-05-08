@@ -1,26 +1,14 @@
-from datetime import datetime
-import os
-from typing import Annotated, List
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
-from api.dtos.requestDTOs import claimFilterParams
-from domainlogic.agreementmanager import AgreementManager
-from domainlogic.calendarmanager import CalendarManager
-from domainlogic.claimsmanager import ClaimManager
-from api.dtos.DTOs import AgreementDTO, CitationDTO, ClaimDTO, NotificationDTO
-from api.dependencies import dependsDB, dependsGoogle, dependsSECLO
-
+"""Module for managing agreements."""
 import logging
+
+from fastapi import APIRouter
+from api.dtos.DTOs import AgreementDTO
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix = '/claim/{recID}/agreement')
 
-claimManager = ClaimManager()
-calendarManager = CalendarManager()
-agreementManager = AgreementManager()
-
-
 @router.post('')
-def createAgreement(recID: int, agreementData: AgreementDTO):
+def create_agreement(rec_id: int, agreement_data: AgreementDTO):
     #agreementManager.createAgreement(recID, agreementData.toSQL())
     return 

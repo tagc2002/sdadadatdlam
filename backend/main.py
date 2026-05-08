@@ -1,76 +1,91 @@
 import logging
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 import sys
-from threading import Thread
-from time import sleep
 
 import os
-from typing import Annotated
-from venv import create
-import alembic
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from alembic.config import Config
 from alembic import command
-from redis import ConnectionPool, Redis
+from redis.asyncio import ConnectionPool
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
-from requests import Session
-from sqlalchemy import Engine, create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine
 
-from api.batch import ingress
-from api.dependencies import getGoogleCredentials, getSECLOCredentials, getTransaction, initDBSession, initRedisSession
+from api.batch import ingress, liveupdates
+from api.dependencies import init_db_session, init_redis_session
+from api.rest.claims import auth, claims
 
 sys.path.append('/usr/app/src')
 
-from api.rest.claims import auth, claims, liveupdates
-from repositories.SECLO.SECLODriver import SECLOLoginCredentials
-
 load_dotenv()
 
-postgresuser = os.getenv("POSTGRES_USER")
-postgrespass = os.getenv("POSTGRES_PASSWORD")
-postgresdb = os.getenv("POSTGRES_DB")
-postgresdomain = os.getenv("POSTGRES_DOMAIN")
-redisdomain = os.getenv("REDIS_DOMAIN", 'localhost')
-redisport = int(os.getenv("REDIS_PORT", 6379))
-redisuser = os.getenv("REDIS_USER")
-redispass = os.getenv("REDIS_PASSWORD")
-alembic_script_location = './alembic'
+PSQL_USER = os.getenv("POSTGRES_USER")
+PSQL_PASS = os.getenv("POSTGRES_PASSWORD")
+PSQL_DB = os.getenv("POSTGRES_DB")
+PSQL_DOMAIN = os.getenv("POSTGRES_DOMAIN")
+REDIS_DOMAIN = os.getenv("REDIS_DOMAIN", 'localhost')
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_USER = os.getenv("REDIS_USER")
+REDIS_PASS = os.getenv("REDIS_PASSWORD")
+ALEMBIC_SCRIPT_LOCATION = './alembic'
 
-fileHandler = TimedRotatingFileHandler(
+logger_file_handler = TimedRotatingFileHandler(
     filename='./logs/sdadadatdlam-backend.log',
     backupCount=7,
     when='midnight',
     interval=1
 )
-fileFormat = logging.Formatter(fmt="%(asctime)s %(levelname)s (%(filename)s:%(funcName)s:%(lineno)d@%(taskName)s): %(message)s")
-fileHandler.setFormatter(fileFormat)
+logger_format = logging.Formatter(fmt="%(asctime)s %(levelname)s " +\
+        "(%(filename)s:%(funcName)s:%(lineno)d@%(taskName)s): %(message)s")
+logger_file_handler.setFormatter(logger_format)
 
-rootLogger= logging.getLogger()
-rootLogger.addHandler(logging.StreamHandler())
-rootLogger.addHandler(fileHandler)
-rootLogger.setLevel(logging.DEBUG)
+root_logger= logging.getLogger()
+root_logger.addHandler(logging.StreamHandler())
+root_logger.addHandler(logger_file_handler)
+root_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
-psql_connect_string = f'postgresql+psycopg2://{postgresuser}:{postgrespass}@{postgresdomain}/{postgresdb}'
-redis_connect_string = ''
+PSQL_CONN_STR = f'postgresql+psycopg2://{PSQL_USER}:{PSQL_PASS}@{PSQL_DOMAIN}/{PSQL_DB}'
+REDIS_CONN_STR = ''
 
-logger.info('Running DB migrations in %r on %r', alembic_script_location, psql_connect_string)
+logger.info('Running DB migrations in %r on %r', ALEMBIC_SCRIPT_LOCATION, PSQL_CONN_STR)
 alembic_cfg = Config()
-alembic_cfg.set_main_option('script_location', alembic_script_location)
-alembic_cfg.set_main_option('sqlalchemy.url', psql_connect_string)
+alembic_cfg.set_main_option('script_location', ALEMBIC_SCRIPT_LOCATION)
+alembic_cfg.set_main_option('sqlalchemy.url', PSQL_CONN_STR)
 command.upgrade(alembic_cfg, 'head')
 
-engine = create_engine(url = psql_connect_string)
-initDBSession(engine)
+engine = create_engine(url = PSQL_CONN_STR)
+init_db_session(engine)
 
-redis = ConnectionPool(host=redisdomain, port=redisport, decode_responses=True, retry=Retry(ExponentialBackoff(), 8))
-initRedisSession(redis)
+redis_retry = Retry(ExponentialBackoff(), 8)
+redis = ConnectionPool(host=REDIS_DOMAIN, port=REDIS_PORT, decode_responses=True, retry=redis_retry)
+init_redis_session(redis)
 
-app = FastAPI(root_path="/api")
+tags_metadata = [
+    {
+        "name": "claims",
+        "description": "Operations with claims",
+    },
+    {
+        "name": "citations",
+        "description": "Operations with citations and notifications",
+    },
+    {
+        "name": "agreements",
+        "description": "Operations with agreements",
+    },
+    {
+        "name": "batch",
+        "description": "Batch operations to run asynchronously",
+    },
+]
+
+app = FastAPI(
+    title="SDADADATDLAM 2.0",
+    summary="Sistema de administracion de audiencias de alta tecnologia de la anciana maligna",
+    root_path="/api", openapi_tags=tags_metadata)
 app.include_router(claims.router)
 app.include_router(ingress.router)
 app.include_router(auth.router)

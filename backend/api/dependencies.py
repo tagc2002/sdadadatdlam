@@ -1,60 +1,59 @@
 import os
 from typing import Annotated
 from fastapi import Depends
-from redis import Redis, ConnectionPool
-from redis.client import Pipeline
+from redis.asyncio import Redis, ConnectionPool
+from redis.asyncio.client import Pipeline
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker, Session
 
-from repositories.SECLO.SECLODriver import SECLOLoginCredentials
+from repositories.seclo.driver import SECLOLoginCredentials
 # TODO store and retrieve dynamically with user session
 cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
-sm: sessionmaker | None = None
-redis: ConnectionPool | None = None
+SM: sessionmaker | None = None
+REDIS: ConnectionPool | None = None
 
-def initDBSession(engine: Engine):
-    global sm
-    sm = sessionmaker(engine)
+def init_db_session(engine: Engine):
+    global SM
+    SM = sessionmaker(engine)
 
-def getTransaction():
-    if not sm: raise ValueError("DB NOT INITIALIZED")
-    session: Session = sm(autoflush=False)
+def get_transaction():
+    if not SM:
+        raise ValueError("DB NOT INITIALIZED")
+    session: Session = SM(autoflush=False)
     try:
         yield session
         session.commit()
         return
-    except Exception as e:
+    except Exception:
         session.rollback()
         raise
     finally:
         session.close()
 
-def getSECLOCredentials() -> SECLOLoginCredentials:
+def get_seclo_credentials() -> SECLOLoginCredentials:
     #TODO Use user info to retrieve credentials
     return cred
 
-def getGoogleCredentials() -> dict:
+def get_google_credentials() -> dict:
     #TODO Proper oauth scheme and retrieve credentials
     return {}
 
-def initRedisSession(r: ConnectionPool):
-    global redispool
-    redispool = r
+def init_redis_session(r: ConnectionPool):
+    global REDIS
+    REDIS = r
 
-def getRedisSession():
-    if not redispool: raise ValueError("REDIS NOT READY")
-    redis: Redis = Redis.from_pool(redispool)
+async def get_redis_session():
+    if not REDIS:
+        raise ValueError("REDIS NOT READY")
+    redis: Redis = Redis.from_pool(REDIS)
     try:
         yield redis
         #redis.execute()
-    except Exception as e:
-        #redis.discard()
-        raise
     finally:
-        redis.close()
+        await redis.close()
 
 
-dependsDB = Annotated[Session, Depends(getTransaction)]
-dependsSECLO = Annotated[SECLOLoginCredentials, Depends(getSECLOCredentials)]
-dependsGoogle = Annotated[dict, Depends(getGoogleCredentials)]
-dependsRedis = Annotated[Pipeline, Depends(getRedisSession)]
+DependsDb = Annotated[Session, Depends(get_transaction)]
+DependsSeclo = Annotated[SECLOLoginCredentials, Depends(get_seclo_credentials)]
+DependsGoogle = Annotated[dict, Depends(get_google_credentials)]
+DependsRedis = Annotated[Pipeline, Depends(get_redis_session)]

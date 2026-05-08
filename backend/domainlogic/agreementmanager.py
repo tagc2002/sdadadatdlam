@@ -1,22 +1,20 @@
-from typing import Self
-from sqlalchemy import and_, or_, select
+'''
+Logic for handling agreement registration and retrieval.
+'''
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from database.database import Agreement, Claim, Hemiagreement, Homologation
-from repositories.SECLO.SECLODriver import SECLOFileManager, SECLOLoginCredentials
-from repositories.SECLO.SECLOProgressReporting import ProgressReport
+from database.database import Agreement, Claim, Hemiagreement
 
-class AgreementManager():
-    def createAgreement(self: Self, recID: int, agreement: Agreement, db: Session) -> Agreement:
-        if not db: raise ValueError("MISSING DB")
-        claim = db.scalars(select(Claim).where(Claim.recID==recID)).one()
-        db.add(agreement)
-        claim.agreements.append(agreement)
-        return agreement
+def create_agreement(rec_id: int, agreement: Agreement, db: Session) -> Agreement:
+    claim = db.scalars(select(Claim).where(Claim.recID==rec_id)).one()
+    db.add(agreement)
+    claim.agreements.append(agreement)
+    return agreement
 
-    def createHemiagreement(self: Self, recID: int, agreementID: int, hemi: Hemiagreement, db: Session) -> Hemiagreement:
-        if not db: raise ValueError("MISSING DB")
-        agreement = db.scalars(select(Agreement).where(Agreement.recID==recID).where(Agreement.agreementID==agreementID)).one()
-        db.add(hemi)
-        agreement.hemiagreements.append(hemi)
-        return hemi        
-    
+def create_hemiagreement(rec_id: int, agreement_id: int, hemi: Hemiagreement, db: Session) -> Hemiagreement:
+    agreement = db.scalars(
+        select(Agreement).where(Agreement.recID==rec_id).where(Agreement.agreementID==agreement_id)
+    ).one()
+    db.add(hemi)
+    agreement.hemiagreements.append(hemi)
+    return hemi        

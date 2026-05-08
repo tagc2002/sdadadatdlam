@@ -1,442 +1,966 @@
+"""
+Module for managing claims, especially fancy stuff like ingress.
+"""
+
 import base64
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 import os
-from re import L
-from typing import List, Self
-from sqlalchemy import Engine, or_, select
+from typing import List, Optional
+from sqlalchemy import null, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session
 from api.dtos.requestDTOs import claimFilterParams
-from dataobjects.SECLODataClasses import SECLONotificationData
-from repositories.SECLO.SECLOExceptions import RecNotAccessibleException
-from database.database import Address, Citation, Claim, Email, Employee, EmployeeAddressLink, EmployeeEmailLink, EmployeeRelationshipData, Employer, EmployerAddressLink, EmployerEmailLink, Lawyer, LawyerEmailLink, LawyerTelephone, LawyerToEmployee, LawyerToEmployer, SecloNotification, SecloNotificationToEmployee, SecloNotificationToEmployer
-from dataobjects.enums import CitationStatus, CitationType, ClaimType, PersonType, RequiredAsType, SECLONotificationType
-from repositories.Google.CalendarAPI import createEvent, listEvents
-from repositories.SECLO.SECLODriver import SECLOCalendarParser, SECLOLoginCredentials, SECLORecData
-from repositories.SECLO.SECLOProgressReporting import ProgressReport
-import logging
+from dataobjects.seclodataclasses import SECLONotificationData
+from dataobjects.enums import (
+    CitationStatus,
+    CitationType,
+    ClaimType,
+    PersonType,
+    RequiredAsType,
+    SECLONotificationType,
+)
+from database.database import (
+    Address,
+    Citation,
+    Claim,
+    Email,
+    Employee,
+    EmployeeAddressLink,
+    EmployeeEmailLink,
+    EmployeeRelationshipData,
+    Employer,
+    EmployerAddressLink,
+    EmployerEmailLink,
+    Lawyer,
+    LawyerEmailLink,
+    LawyerTelephone,
+    LawyerToEmployee,
+    LawyerToEmployer,
+    SecloNotification,
+    SecloNotificationToEmployee,
+    SecloNotificationToEmployer,
+)
+from repositories.seclo.exceptions import RecNotAccessibleException
+from repositories.seclo.driver import (
+    SECLOCalendarParser,
+    SECLOLoginCredentials,
+    SECLORecData,
+)
+from repositories.seclo.progress import ProgressReport
+
 logger = logging.getLogger(__name__)
 
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 
 
-class ClaimManager:
-    def batchVerifyAgenda(self: Self, creds: SECLOLoginCredentials, progress: ProgressReport | None = None, db: Session | None = None, weeksBefore: int = 0, weeksAfter: int = 20):
-        if not db: raise ValueError("Missing DB")
-        firstStage = ProgressReport()
-        secondStage = ProgressReport()
-        thirdStage = ProgressReport()
-        if not progress:
-            progress = ProgressReport()
-        progress.compose(firstStage, 'Acquiring calendar data').compose(secondStage, 'Acquiring notification data').compose(thirdStage, 'Mapping citations to claims')
+async def batch_verify_agenda(
+    creds: SECLOLoginCredentials,
+    db: Session,
+    progress: Optional[ProgressReport] = None,
+    weeks_before: int = 0,
+    weeks_after: int = 20,
+):
+    """Iterates over SECLO agenda. 
+    Registers any missing citations (for now only from SECLO to sdadadatdlam)
+    and ingresses any missing claims. 
+    Also updates notifications for existing citations.
 
-        with SECLOCalendarParser(creds, None, firstStage) as calParser:
-            calendarInfo = calParser.getCalendar(weeksBefore = weeksBefore, weeksAfter = weeksAfter)
-        firstStage.setCompletion("Done acquiring calendar data")
+    Args:
+        creds (SECLOLoginCredentials): Credentials to use for SECLO
+        db (Session): database session to check status and store changes.
+        progress (Optional[ProgressReport], optional): 
+            Progress report object to share status with user. Defaults to None.
+        weeks_before (int, optional): How many weeks before today to check. 
+            Defaults to 0.
+        weeks_after (int, optional): How many weeks after today to check. 
+            Defaults to 20.
+    """
+    first_stage = ProgressReport()
+    second_stage = ProgressReport()
+    third_stage = ProgressReport()
+    if not progress:
+        progress = ProgressReport()
+    (
+        progress.compose(first_stage, "Acquiring calendar data")
+        .compose(second_stage, "Acquiring notification data")
+        .compose(third_stage, "Mapping citations to claims")
+    )
 
-        secondStage.setSteps(len(calendarInfo))
-        with SECLORecData(creds, None, None) as recData:
-            for index, entry in enumerate(calendarInfo):
-                entryProgress = ProgressReport()
-                secondStage.compose(entryProgress, f'{index+1} of {len(calendarInfo)}')
+    with SECLOCalendarParser(creds, None, first_stage) as calendar_parser:
+        calendar_info = calendar_parser.get_calendar(
+            weeks_before=weeks_before, weeks_after=weeks_after
+        )
+    first_stage.set_completion("Done acquiring calendar data")
+
+    second_stage.set_steps(len(calendar_info))
+    with SECLORecData(creds, None, None) as rec_data:
+        for index, entry in enumerate(calendar_info):
+            entry_progress = ProgressReport()
+            second_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
+            try:
+                dbclaim = db.scalars(
+                    select(Claim).where(Claim.gdeID == entry.gdeID)
+                ).one_or_none()
+                if dbclaim:
+                    entry.notificationData = (
+                        rec_data.set_progress(entry_progress)
+                        .set_rec_id(dbclaim.recID)
+                        .get_notification_data()
+                    )
+                else:
+                    entry.notificationData = rec_data.set_progress(
+                        entry_progress
+                    ).get_notification_data(gde_id=entry.gdeID)
+            except RecNotAccessibleException:
+                logger.warning(
+                    "Claim %s with citation %s (%s) can't be mapped. Skipping...",
+                    entry.gdeID,
+                    entry.citationDate,
+                    entry.citationType,
+                )
+                continue
+    second_stage.set_completion("Done acquiring notification data")
+    third_stage.set_steps(len(calendar_info))
+    counter = 0
+    with SECLORecData(creds, None, None) as rec_data:
+        for index, entry in enumerate(calendar_info):
+            entry_progress = ProgressReport()
+            third_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
+            local_citation = db.scalars(
+                select(Citation).where(Citation.secloAudID == entry.citationID)
+            ).one_or_none()
+            local_claim = db.scalars(
+                select(Claim).where(Claim.gdeID == entry.gdeID)
+            ).one_or_none()
+            if not local_claim:
+                counter += 1
+                ingress_progress = ProgressReport()
+                entry_progress.compose(
+                    ingress_progress,
+                    f"Found {counter} new claim{'s' if counter > 1 else ''}",
+                )
                 try:
-                    dbclaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
-                    if dbclaim:
-                        entry.notificationData = recData.setProgress(entryProgress).setRecId(dbclaim.recID).getNotificationData()
-                    else:
-                        entry.notificationData = recData.setProgress(entryProgress).getNotificationData(gdeID=entry.gdeID)
-                except RecNotAccessibleException as e:
-                    logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
+                    local_claim = __ingress_claim(
+                        gde_id=entry.gdeID,
+                        init_date=entry.initDate,
+                        progress=ingress_progress,
+                        db=db,
+                        rec_data=rec_data,
+                        citation=None,
+                    )
+                    db.add(local_claim)
+                except RecNotAccessibleException:
+                    logger.warning(
+                        "Claim %s with citation %s (%s) can't be mapped. Skipping...",
+                        entry.gdeID,
+                        entry.citationDate,
+                        entry.citationType,
+                    )
+                    counter -= 1
                     continue
-        secondStage.setCompletion("Done acquiring notification data")
-        thirdStage.setSteps(len(calendarInfo))
-        counter = 0
-        with SECLORecData(creds, None, None) as recData:
-            for index, entry in enumerate(calendarInfo):
-                entryProgress = ProgressReport()
-                thirdStage.compose(entryProgress, f'{index+1} of {len(calendarInfo)}')
-                localCitation = db.scalars(select(Citation).where(Citation.secloAudID == entry.citationID)).one_or_none()
-                localClaim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
-                if not localClaim:
-                    counter += 1
-                    ingressProgress = ProgressReport()
-                    entryProgress.compose(ingressProgress, f'Found {counter} new claim{'s' if counter > 1 else ''}')
-                    try:
-                        localClaim = self.__ingressClaim(gdeID=entry.gdeID, initDate=entry.initDate, progress=ingressProgress, db=db, recData=recData, citation = None)
-                        db.add(localClaim)
-                    except RecNotAccessibleException as e:
-                        logger.error(f"Claim {entry.gdeID} with citation {entry.citationDate} ({entry.citationType}) can't be mapped. Skipping...")
-                        counter -= 1
-                        continue
 
-                if not localCitation:
-                    localCitation = Citation(secloAudID = entry.citationID, 
-                                            citationDate = entry.citationDate, recID = localClaim.recID,
-                                            citationType = CitationType.citationStringToEnum(entry.citationType),
-                                            citationStatus = CitationStatus.citationStringToEnum(entry.citationType),
-                                            )
-                    primarize = True
-                    if localCitation.citationStatus == CitationStatus.PENDING and localCitation.citationType == CitationType.FIRST:
-                        for citation in localClaim.citations:
-                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType != CitationType.FIRST:
-                                primarize = False
-                            if citation.isCalendarPrimary and citation.citationStatus == CitationStatus.PENDING and citation.citationType == CitationType.FIRST and ((citation.citationDate or datetime.now()) > (localCitation.citationDate or datetime.now())):
-                                primarize = False
-                        if primarize:
-                            for citation in localClaim.citations:
-                                citation.isCalendarPrimary = False
-                    localCitation.isCalendarPrimary = primarize
-                    db.add(localCitation)                
-                notificationProgress = ProgressReport()
-                entryProgress.compose(notificationProgress, 'Loading notification data')
+            if not local_citation:
+                local_citation = Citation(
+                    secloAudID=entry.citationID,
+                    citationDate=entry.citationDate,
+                    recID=local_claim.recID,
+                    citationType=CitationType.citation_string_to_enum(entry.citationType),
+                    citationStatus=CitationStatus.citation_string_to_enum(
+                        entry.citationType
+                    ),
+                )
+                primarize = True
+                if (
+                    local_citation.citationStatus == CitationStatus.PENDING
+                    and local_citation.citationType == CitationType.FIRST
+                ):
+                    for citation in local_claim.citations:
+                        if (
+                            citation.isCalendarPrimary
+                            and citation.citationStatus == CitationStatus.PENDING
+                            and citation.citationType != CitationType.FIRST
+                        ):
+                            primarize = False
+                        if (
+                            citation.isCalendarPrimary
+                            and citation.citationStatus == CitationStatus.PENDING
+                            and citation.citationType == CitationType.FIRST
+                            and (
+                                (citation.citationDate or datetime.now())
+                                > (local_citation.citationDate or datetime.now())
+                            )
+                        ):
+                            primarize = False
+                    if primarize:
+                        for citation in local_claim.citations:
+                            citation.isCalendarPrimary = False
+                local_citation.isCalendarPrimary = primarize
+                db.add(local_citation)
+            notification_progress = ProgressReport()
+            entry_progress.compose(notification_progress, "Loading notification data")
 
-                for lawyer in localClaim.lawyers:
-                    for link in lawyer.employeeLink + lawyer.employerLink:
-                        link.citation = localCitation
-                        db.add(link)
-                db.flush()
-                self.__updateNotifications(recID=localCitation.recID, creds=creds, progress=notificationProgress, citation=localCitation, notificationData=entry.notificationData, db=db, seclo=recData)
-                db.commit()
-                entryProgress.setCompletion("Done loading claim data")
-        
-        ##TODO Once the frontend is working, this will be done through an api call.
-        for index, entry in enumerate(calendarInfo):
-            claim = db.scalars(select(Claim).where(Claim.gdeID == entry.gdeID)).one_or_none()
-            if claim and not claim.isEvilized:
-                logger.debug(f"PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-                with open(f'{downloadPath}/{entry.citationDate}.pdf', 'wb') as file:
-                    file.write(base64.b64decode(entry.pdfString or ""))
-                claim.isEvilized=True
-            else:
-                logger.debug(f"NOT PRINTING entry {index} of {len(calendarInfo)} at {entry.citationDate} ({entry.citationType})")
-        thirdStage.setCompletion("Finished linking claims")
-        progress.setCompletion("DONE")
+            for lawyer in local_claim.lawyers:
+                for link in lawyer.employeeLink + lawyer.employerLink:
+                    link.citation = local_citation
+                    db.add(link)
+            db.flush()
+            __update_notifications(
+                rec_id=local_citation.recID,
+                creds=creds,
+                progress=notification_progress,
+                citation=local_citation,
+                notification_data=entry.notificationData,
+                db=db,
+                seclo=rec_data,
+            )
+            db.commit()
+            entry_progress.set_completion("Done loading claim data")
 
-    def __updateClaimStandalone(self: Self, citation: Citation, creds: SECLOLoginCredentials, recID: int, progress: ProgressReport, db: Session, seclo: SECLORecData | None = None) -> Claim:
-        if seclo:
-            claim = self.__ingressClaim(recID = recID, initDate = None, recData = seclo, progress=progress, db = db, update = True, citation=citation)
+    ##TODO Once the frontend is working, this will be done through an api call.
+    for index, entry in enumerate(calendar_info):
+        claim = db.scalars(
+            select(Claim).where(Claim.gdeID == entry.gdeID)
+        ).one_or_none()
+        if claim and not claim.isEvilized:
+            logger.debug(
+                "PRINTING entry %d of %d at %s (%s)",
+                index,
+                len(calendar_info),
+                entry.citationDate,
+                entry.citationType,
+            )
+            with open(f"{downloadPath}/{entry.citationDate}.pdf", "wb") as file:
+                file.write(base64.b64decode(entry.pdfString or ""))
+            claim.isEvilized = True
         else:
-            with SECLORecData(creds, recID, progress) as seclo:
-                claim = self.__ingressClaim(recID = recID, initDate = None, recData = seclo, progress=progress, db = db, update = True, citation=citation)
-        db.commit()
-        return claim
+            logger.debug(
+                "NOT PRINTING entry %d of %d at %s (%s)",
+                index,
+                len(calendar_info),
+                entry.citationDate,
+                entry.citationType,
+            )
+    third_stage.set_completion("Finished linking claims")
+    progress.set_completion("DONE")
 
-    def __ingressClaim(self: Self, initDate: datetime | None, recData: SECLORecData, citation: Citation | None, progress: ProgressReport, db: Session, update: bool = False, gdeID: str | None = None, recID: int | None = None) -> Claim:
-        localAddresses: List[Address] = []
-        localMails: List[Email] = []
-        localPhones: List[LawyerTelephone] = []
-        statement = select(Claim).where(or_(Claim.gdeID == gdeID, Claim.recID == recID))
 
-        recData.setProgress(progress)
-        if recID:
-            recData.setRecId(recID)
-        elif gdeID:
-            recData.setRecIDfromGDEID(gdeID)
-        else: raise ValueError("Missing recID and gdeID")
-        claimData = recData.getClaimData()
+def __update_claim_standalone(
+    citation: Citation,
+    creds: SECLOLoginCredentials,
+    rec_id: int,
+    progress: ProgressReport,
+    db: Session,
+    seclo: Optional[SECLORecData] = None,
+) -> Claim:
+    if seclo:
+        claim = __ingress_claim(
+            rec_id=rec_id,
+            init_date=None,
+            rec_data=seclo,
+            progress=progress,
+            db=db,
+            update=True,
+            citation=citation,
+        )
+    else:
+        with SECLORecData(creds, rec_id, progress) as seclo:
+            claim = __ingress_claim(
+                rec_id=rec_id,
+                init_date=None,
+                rec_data=seclo,
+                progress=progress,
+                db=db,
+                update=True,
+                citation=citation,
+            )
+    db.commit()
+    return claim
+
+
+def __ingress_claim(
+    init_date: Optional[datetime],
+    rec_data: SECLORecData,
+    citation: Optional[Citation],
+    progress: ProgressReport,
+    db: Session,
+    update: bool = False,
+    gde_id: Optional[str] = None,
+    rec_id: Optional[int] = None,
+) -> Claim:
+    local_addresses: List[Address] = []
+    local_mails: List[Email] = []
+    local_phones: List[LawyerTelephone] = []
+    statement = select(Claim).where(or_(Claim.gdeID == gde_id, Claim.recID == rec_id))
+
+    rec_data.set_progress(progress)
+    if rec_id:
+        rec_data.set_rec_id(rec_id)
+    elif gde_id:
+        rec_data.set_rec_id_from_gde_id(gde_id)
+    else:
+        raise ValueError("Missing recID and gdeID")
+    claim_data = rec_data.get_claim_data()
+    try:
+        local_claim = db.scalars(statement).one()
+        logger.debug("FOUND")
+        if not update:
+            return local_claim
+    except NoResultFound:
+        local_claim = Claim(
+            recID=claim_data.recid,
+            gdeID=gde_id,
+            initDate=init_date,
+            initByEmployee=claim_data.init_by_worker,
+            title="",
+            claimType=ClaimType.enums_to_int(claim_data.claims),
+            legalStuff=claim_data.legal_stuff,
+            isEvilized=False,
+        )
+    for employee in claim_data.employees:
+        # try for local version
         try:
-            localClaim = db.scalars(statement).one()
-            logger.debug("FOUND")
-            if not update: return localClaim
+            local_employee = db.scalars(
+                select(Employee)
+                .where(Employee.recID == local_claim.recID)
+                .where(Employee.cuil == employee.cuil)
+            ).one()
+            local_employee.employeeName = employee.name
+            local_employee.dni = employee.dni or 0
+            local_employee.cuil = employee.cuil
+            local_employee.isValidated = employee.validated
         except NoResultFound:
-            localClaim = Claim(recID = claimData.recid, gdeID = gdeID, initDate = initDate, initByEmployee = claimData.initWorker, title = "",
-                                claimType = ClaimType.enumsToInt(claimData.claims), legalStuff = claimData.legalStuff, isEvilized = False)
-        for employee in claimData.employees:
-            #try for local version
-            try:
-                localEmployee = db.scalars(select(Employee).where(Employee.recID == localClaim.recID).where(Employee.cuil == employee.cuil)).one()
-                localEmployee.employeeName = employee.name
-                localEmployee.dni = employee.dni or 0
-                localEmployee.cuil = employee.cuil
-                localEmployee.isValidated = employee.validated
-            except NoResultFound:
-                localEmployee = Employee(employeeName = employee.name, dni = employee.dni, cuil = employee.cuil, isValidated = employee.validated, 
-                                        birthDate = employee.birthDate,  claim = localClaim, headerName = employee.name.replace(',', '').split(" ")[0])
-                
-            #rest of data
-            relData = EmployeeRelationshipData(startDate = employee.startDate, endDate = employee.endDate, wage = employee.wage,
-                                               claimAmount = employee.claimAmount, category = employee.category, cct = employee.cct)
-            self.__ingressEntryIfMissing(relData, localEmployee.relationshipData)
-            localEmployee = self.__ingressEntryIfMissing(localEmployee, localClaim.employees)
-            
-            localAddress = self.__ingressEntryIfMissing(Address.fromAddressData(employee.address), localAddresses)
-            employeeAddressLink = EmployeeAddressLink(employee = localEmployee, address = localAddress)
-            if employeeAddressLink not in localEmployee.addresses: localEmployee.addresses.append(employeeAddressLink)
-            db.add(employeeAddressLink)
+            local_employee = Employee(
+                employeeName=employee.name,
+                dni=employee.dni,
+                cuil=employee.cuil,
+                isValidated=employee.validated,
+                birthDate=employee.birth_date,
+                claim=local_claim,
+                headerName=employee.name.replace(",", "").split(" ")[0],
+            )
 
-            if (employee.mail):
-                localMail = self.__ingressEntryIfMissing(Email(email = employee.mail, registeredOn = initDate, registeredFrom = "SECLO"), localMails)
-                employeeEmailLink = EmployeeEmailLink(email = localMail, employee = localEmployee)
-                if employeeEmailLink not in localEmployee.emails: localEmployee.emails.append(employeeEmailLink)
-                db.add(employeeEmailLink)
-        
-        for employer in claimData.employers:
-            try:
-                localEmployer = db.scalars(select(Employer).where(Employer.recID == localClaim.recID).where(or_(Employer.cuil == employer.cuil, Employer.employerName == employer.name))).one()
-                localEmployer.employerName = employer.name
-                localEmployer.cuil = employer.cuil
-                localEmployer.isValidated = employer.validated
-            except NoResultFound:
-                localEmployer = Employer(claim = localClaim, employerName = employer.name, cuil = employer.cuil, personType = employer.personType,
-                                        requiredAs = RequiredAsType.UNKNOWN, SECLORegisterDate = initDate, mustRegisterSECLO = False, isValidated = employer.validated,
-                                        headerName = employer.name.split(" ")[0] if employer.personType == PersonType.PERSON else self.__filter_rules(employer.name),
-                                        )
-            localEmployer = self.__ingressEntryIfMissing(localEmployer, localClaim.employers)
+        # rest of data
+        rel_data = EmployeeRelationshipData(
+            startDate=employee.start_date,
+            endDate=employee.end_date,
+            wage=employee.wage,
+            claimAmount=employee.claim_amount,
+            category=employee.category,
+            cct=employee.cct,
+        )
+        __ingress_entry_if_missing(rel_data, local_employee.relationshipData)
+        local_employee = __ingress_entry_if_missing(
+            local_employee, local_claim.employees
+        )
 
-            localAddress = self.__ingressEntryIfMissing(Address.fromAddressData(employer.address), localAddresses)
-            employerAddressLink = EmployerAddressLink(employer = localEmployer, address = localAddress)
-            if employerAddressLink not in localEmployer.addresses: localEmployer.addresses.append(employerAddressLink)
-            db.add(employerAddressLink)
+        local_address = __ingress_entry_if_missing(
+            Address.from_address_data(employee.address), local_addresses
+        )
+        employee_address_link = EmployeeAddressLink(
+            employee=local_employee, address=local_address
+        )
+        if employee_address_link not in local_employee.addresses:
+            local_employee.addresses.append(employee_address_link)
+        db.add(employee_address_link)
 
-            if (employer.mail):
-                localMail = self.__ingressEntryIfMissing(Email(email = employer.mail, registeredOn = initDate, registeredFrom = "SECLO"), localMails)
-                employerEmailLink = EmployerEmailLink(email = localMail, employer = localEmployer)
-                if employerEmailLink not in localEmployer.emails: localEmployer.emails.append(employerEmailLink)
-                db.add(employerEmailLink)
-            
-        for lawyer in claimData.lawyers:
-            localLawyer = Lawyer(claim = localClaim, lawyerName = lawyer.name, t = lawyer.t, f = lawyer.f, registeredOn = initDate,
-                                registeredFrom = 'SECLO', isValidated = lawyer.validated)  #TODO MISSING CUIL
-            localLawyer = self.__ingressEntryIfMissing(localLawyer, localClaim.lawyers)
+        if employee.mail:
+            local_mail = __ingress_entry_if_missing(
+                Email(
+                    email=employee.mail, registeredOn=init_date, registeredFrom="SECLO"
+                ),
+                local_mails,
+            )
+            employee_email_link = EmployeeEmailLink(
+                email=local_mail, employee=local_employee
+            )
+            if employee_email_link not in local_employee.emails:
+                local_employee.emails.append(employee_email_link)
+            db.add(employee_email_link)
 
-            if (lawyer.mail):
-                localMail = self.__ingressEntryIfMissing(Email(email = lawyer.mail, registeredOn = initDate, registeredFrom = 'SECLO'), localMails)
-                lawyerEmailLink = LawyerEmailLink(email = localMail, lawyer = localLawyer)
-                if lawyerEmailLink not in localLawyer.emails: localLawyer.emails.append(lawyerEmailLink)
-                db.add(lawyerEmailLink)
-            if (lawyer.phone):
-                localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = lawyer.phone, obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
-                if localPhone not in localLawyer.telephones: localLawyer.telephones.append(localPhone)
-                db.add(localPhone)
-            if (lawyer.mobilePhone):
-                localPhone = self.__ingressEntryIfMissing(LawyerTelephone(telephone = lawyer.mobilePhone[1], prefix = lawyer.mobilePhone[0], obtainedFrom = 'SECLO', lawyer = localLawyer), localPhones)
-                if localPhone not in localLawyer.telephones: localLawyer.telephones.append(localPhone)
-                db.add(localPhone)
+    for employer in claim_data.employers:
+        try:
+            local_employer = db.scalars(
+                select(Employer)
+                .where(Employer.recID == local_claim.recID)
+                .where(
+                    or_(
+                        Employer.cuil == employer.cuil,
+                        Employer.employerName == employer.name,
+                    )
+                )
+            ).one()
+            local_employer.employerName = employer.name
+            local_employer.cuil = employer.cuil
+            local_employer.isValidated = employer.validated
+        except NoResultFound:
+            local_employer = Employer(
+                claim=local_claim,
+                employerName=employer.name,
+                cuil=employer.cuil,
+                personType=employer.person_type,
+                requiredAs=RequiredAsType.UNKNOWN,
+                SECLORegisterDate=init_date,
+                mustRegisterSECLO=False,
+                isValidated=employer.validated,
+                headerName=(
+                    employer.name.split(" ")[0]
+                    if employer.person_type == PersonType.PERSON
+                    else __filter_rules(employer.name)
+                ),
+            )
+        local_employer = __ingress_entry_if_missing(
+            local_employer, local_claim.employers
+        )
 
-            for represented in lawyer.represents:
-                for client in localClaim.employees:
-                    isRepresented = True
-                    for name in client.employeeName.replace(',', '').split():
-                        if name not in represented[1]: isRepresented = False
-                    if isRepresented:
-                        lawyerEmployeeLink = LawyerToEmployee(lawyer = localLawyer, employee = client, citation = citation, isActualLawyer = True, isSelfRepresenting = localLawyer.lawyerName == client.employeeName, clientAbsent = False)
-                        if (lawyer.cuil == client.cuil or lawyer.name == client.employeeName):
-                            lawyerEmployeeLink.isSelfRepresenting = True
-                        client.lawyerLink.append(lawyerEmployeeLink)
-                        if citation:
-                            db.add(lawyerEmployeeLink)
-                        break
-                    else:
-                        for client in localClaim.employers:
-                            isRepresented = True
-                            for name in client.employerName.replace(',', '').split():
-                                if name and name not in represented[1]: isRepresented = False
-                            if isRepresented:
-                                lawyerEmployerLink = LawyerToEmployer(lawyer = localLawyer, employer = client, citation = citation, isActualLawyer = True, isSelfRepresenting = localLawyer.lawyerName == client.employerName, isEmpowered = False, clientAbsent = False)
-                                if (lawyer.cuil == client.cuil or lawyer.name == client.employerName):
-                                    lawyerEmployerLink.isSelfRepresenting = True
-                                client.lawyerLink.append(lawyerEmployerLink)
-                                if citation:
-                                    db.add(lawyerEmployerLink)
-                                break
-                        else:
-                            logger.warning(f'While ingesting recID {localClaim.recID}: Couldn\'t match lawyer {localLawyer.lawyerName} to client {represented[1]}. Execution will proceed')
-        #TODO add others info
-        localClaim.title = self.__getCalHeader(localClaim)
-        return localClaim
-    
-    def __getCalHeader(self: Self, localClaim: Claim) -> str:
-        header = ""
-        employeeNames = []
-        employerNames = []
-        for employee in localClaim.employees:
-            self.__ingressEntryIfMissing(employee.headerName, employeeNames)
-        for employer in localClaim.employers:
-            self.__ingressEntryIfMissing(employer.headerName, employerNames)
+        local_address = __ingress_entry_if_missing(
+            Address.from_address_data(employer.address), local_addresses
+        )
+        employer_address_link = EmployerAddressLink(
+            employer=local_employer, address=local_address
+        )
+        if employer_address_link not in local_employer.addresses:
+            local_employer.addresses.append(employer_address_link)
+        db.add(employer_address_link)
 
-        if localClaim.initByEmployee:
-            for index, name in enumerate(employeeNames):
-                header += (', ' if index > 0 else '') + name
-            header += ' c/ '
-            for index, name in enumerate(employerNames):
-                header += (', ' if index > 0 else '') + name
-        else:
-            for index, name in enumerate(employerNames):
-                header += (', ' if index > 0 else '') + name
-            header += ' c/ '
-            for index, name in enumerate(employeeNames):
-                header += (', ' if index > 0 else '') + name
-        return header
-    
-    def __filter_rules(self: Self, name: str) -> str:
-        # TODO apply rules
-        return name
+        if employer.mail:
+            local_mail = __ingress_entry_if_missing(
+                Email(
+                    email=employer.mail, registeredOn=init_date, registeredFrom="SECLO"
+                ),
+                local_mails,
+            )
+            employer_email_link = EmployerEmailLink(
+                email=local_mail, employer=local_employer
+            )
+            if employer_email_link not in local_employer.emails:
+                local_employer.emails.append(employer_email_link)
+            db.add(employer_email_link)
 
-    @staticmethod  
-    def __ingressEntryIfMissing[T](entry: T, list: List[T]) -> T:
-        #only add address if not added already (one address entry can be used for multiple people)
-        if (entry not in list):
-            list.append(entry)
-            #logger.debug(f'Appended {T} to list')
-        else:
-            #logger.debug(f'{T} not appended to list')
-            for loadedEntry in list:
-                entry = loadedEntry if entry == loadedEntry else entry
-        return entry
-    
-    def __mapNotificationToOwner(self: Self, notification: SECLONotificationData, localNotification: SecloNotification, list: List[Employee] | List[Employer] | List[Employee | Employer], db: Session):
-        for person in list:
-            isEmployer = isinstance(person, Employer)
-            fullname = person.employerName if isEmployer else person.employeeName
-            for name in fullname.split():
-                if name not in notification.person:
+    for lawyer in claim_data.lawyers:
+        local_lawyer = Lawyer(
+            claim=local_claim,
+            lawyerName=lawyer.name,
+            t=lawyer.t,
+            f=lawyer.f,
+            registeredOn=init_date,
+            registeredFrom="SECLO",
+            isValidated=lawyer.validated,
+        )  # TODO MISSING CUIL
+        local_lawyer = __ingress_entry_if_missing(local_lawyer, local_claim.lawyers)
+
+        if lawyer.mail:
+            local_mail = __ingress_entry_if_missing(
+                Email(
+                    email=lawyer.mail, registeredOn=init_date, registeredFrom="SECLO"
+                ),
+                local_mails,
+            )
+            lawyer_email_link = LawyerEmailLink(email=local_mail, lawyer=local_lawyer)
+            if lawyer_email_link not in local_lawyer.emails:
+                local_lawyer.emails.append(lawyer_email_link)
+            db.add(lawyer_email_link)
+        if lawyer.phone:
+            local_phone = __ingress_entry_if_missing(
+                LawyerTelephone(
+                    telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
+                ),
+                local_phones,
+            )
+            if local_phone not in local_lawyer.telephones:
+                local_lawyer.telephones.append(local_phone)
+            db.add(local_phone)
+        if lawyer.mobile_phone:
+            local_phone = __ingress_entry_if_missing(
+                LawyerTelephone(
+                    telephone=lawyer.mobile_phone[1],
+                    prefix=lawyer.mobile_phone[0],
+                    obtainedFrom="SECLO",
+                    lawyer=local_lawyer,
+                ),
+                local_phones,
+            )
+            if local_phone not in local_lawyer.telephones:
+                local_lawyer.telephones.append(local_phone)
+            db.add(local_phone)
+
+        for represented in lawyer.represents:
+            for client in local_claim.employees:
+                is_represented = True
+                for name in client.employeeName.replace(",", "").split():
+                    if name not in represented[1]:
+                        is_represented = False
+                if is_represented:
+                    lawyer_employee_link = LawyerToEmployee(
+                        lawyer=local_lawyer,
+                        employee=client,
+                        citation=citation,
+                        isActualLawyer=True,
+                        isSelfRepresenting=local_lawyer.lawyerName
+                        == client.employeeName,
+                        clientAbsent=False,
+                    )
+                    if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
+                        lawyer_employee_link.isSelfRepresenting = True
+                    client.lawyerLink.append(lawyer_employee_link)
+                    if citation:
+                        db.add(lawyer_employee_link)
                     break
-            else:
-                if isEmployer:
-                    localNotification.employerLink = SecloNotificationToEmployer(employer = person, notification = localNotification)
-                    db.add(localNotification.employerLink)
+                for client in local_claim.employers:
+                    is_represented = True
+                    for name in client.employerName.replace(",", "").split():
+                        if name and name not in represented[1]:
+                            is_represented = False
+                    if is_represented:
+                        lawyer_employer_link = LawyerToEmployer(
+                            lawyer=local_lawyer,
+                            employer=client,
+                            citation=citation,
+                            isActualLawyer=True,
+                            isSelfRepresenting=local_lawyer.lawyerName
+                            == client.employerName,
+                            isEmpowered=False,
+                            clientAbsent=False,
+                        )
+                        if (
+                            lawyer.cuil == client.cuil
+                            or lawyer.name == client.employerName
+                        ):
+                            lawyer_employer_link.isSelfRepresenting = True
+                        client.lawyerLink.append(lawyer_employer_link)
+                        if citation:
+                            db.add(lawyer_employer_link)
+                        break
                 else:
-                    localNotification.employeeLink = SecloNotificationToEmployee(employee = person, notification = localNotification)
-                    db.add(localNotification.employeeLink)
-                return True
-        else:
-            return False
-    
-    def __updateNotifications(self: Self, recID: int, creds: SECLOLoginCredentials, db: Session, progress: ProgressReport | None = None, citation: Citation | None = None, notificationData: List[SECLONotificationData] | None = None, seclo: SECLORecData | None = None):
-        if not progress: progress = ProgressReport()
-        if not notificationData:
-            if seclo:
-                notificationData = seclo.getNotificationData()
-            else:
-                with SECLORecData(creds, recID, progress) as secloData:
-                    notificationData = secloData.getNotificationData()
-        retry = False
-        while(True):
-            for notification in notificationData:
-                localNotification = db.scalars(select(SecloNotification).where(SecloNotification.secloPostalID == notification.id)).one_or_none()
-                if (localNotification):
-                    localNotification.receptionDate = notification.notifiedDate
-                    try:
-                        localNotification.deliveryCode = int(notification.notificationCode)
-                    except ValueError:
-                        localNotification.deliveryCode = None
-                    localNotification.deliveryDescription = notification.notificationStatus + (f' (Leida)' if notification.afipRead else ' (No leida)') if notification.notificationType == SECLONotificationType.AFIP else ''
-                    localNotification.citation.citationStatus = CitationStatus.citationStringToEnum(notification.citationStatus)
-                    if not localNotification.employeeLink and not localNotification.employerLink and citation:
-                        if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers + citation.claim.employees, db=db):
-                            if not retry:
-                                logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to person \'{notification.person}\'. Will try updating claim data')
-                                self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation)
-                                retry = True
-                                break
-                            else:
-                                logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to person \'{notification.person}\'. Execution will continue')
-                else:
-                    if not citation:
-                        with SECLOCalendarParser(creds, None, None) as cal:
-                            calCitations = cal.getCalendar(0,0,notification.citationDate)
-                            for calCitation in calCitations:
-                                if calCitation.citationDate == notification.citationDate and CitationStatus.citationStringToEnum(calCitation.citationType) == CitationStatus.citationStringToEnum(notification.citationStatus):
-                                    citation = Citation(
-                                        secloAudID = calCitation.citationID, citationDate = calCitation.citationDate, 
-                                        citationType = CitationType.citationStringToEnum(calCitation.citationType), 
-                                        citationStatus = CitationStatus.citationStringToEnum(calCitation.citationType),
-                                        isCalendarPrimary = True, recID = recID, claim = db.scalar(select(Claim).where(Claim.recID == recID))
-                                    )
-                                    oldCitation = db.scalars(select(Citation).where(Citation.recID == recID, Citation.isCalendarPrimary)).one_or_none()
-                                    if oldCitation:
-                                        oldCitation.isCalendarPrimary = False
-                                    db.add(citation)
-                                    break
-                            else:
-                                continue
-                    if (citation.citationDate == notification.citationDate):
-                        localNotification = SecloNotification(citation = citation, notificationType = notification.notificationType,
-                                                            secloPostalID = notification.id, emissionDate = notification.generatedDate,
-                                                            receptionDate = notification.notifiedDate,
-                                                            deliveryDescription = notification.notificationStatus + (f' (Leida)' if notification.afipRead else ' (No leida)') if notification.notificationType == SECLONotificationType.AFIP else '')
-                        try:
-                            localNotification.deliveryCode = int(notification.notificationCode)
-                        except ValueError:
-                            localNotification.deliveryCode = 00 if notification.afipRead else None
-                        db.add(localNotification)
-                        citation.notifications.append(localNotification)
-                        if notification.isEmployer:
-                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
-                                if not retry:
-                                    logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
-                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation, seclo=seclo)
-                                    retry = True
-                                    break
-                                else:
-                                    logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
-                        else:
-                            if not self.__mapNotificationToOwner(notification=notification, localNotification=localNotification, list=citation.claim.employers, db=db):
-                                if not retry:
-                                    logger.info(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Will try updating claim data')
-                                    self.__updateClaimStandalone(creds=creds, recID=recID, progress=progress, db=db, citation=citation, seclo=seclo)
-                                    retry = True
-                                    break
-                                else:
-                                    logger.warning(f'while ingesting recID {citation.recID}: Couldn\'t match notification ID {localNotification.secloPostalID} to employee \'{notification.person}\'. Execution will continue')
-            else:
-                progress.setCompletion("")
+                    logger.warning(
+                        "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
+                        local_claim.recID,
+                        local_lawyer.lawyerName,
+                        represented[1],
+                    )
+    # TODO add others info
+    local_claim.title = get_cal_header(local_claim)
+    return local_claim
+
+
+def get_cal_header(local_claim: Claim) -> str:
+    """Generates a calendar header for given claim
+    formatted like (SOMEONE c/ SOMEONE ELSE) 
+
+    Args:
+        local_claim (Claim): claim to generate a header for.
+
+    Returns:
+        str: the header string
+    """
+    header = ""
+    employee_names = []
+    employer_names = []
+    for employee in local_claim.employees:
+        __ingress_entry_if_missing(employee.headerName, employee_names)
+    for employer in local_claim.employers:
+        __ingress_entry_if_missing(employer.headerName, employer_names)
+
+    if local_claim.initByEmployee:
+        for index, name in enumerate(employee_names):
+            header += (", " if index > 0 else "") + name
+        header += " c/ "
+        for index, name in enumerate(employer_names):
+            header += (", " if index > 0 else "") + name
+    else:
+        for index, name in enumerate(employer_names):
+            header += (", " if index > 0 else "") + name
+        header += " c/ "
+        for index, name in enumerate(employee_names):
+            header += (", " if index > 0 else "") + name
+    return header
+
+
+def __filter_rules(name: str) -> str:
+    # TODO apply rules
+    return name
+
+
+def __ingress_entry_if_missing[T](entry: T, entries: List[T]) -> T:
+    # only add address if not added already (one address entry can be used for multiple people)
+    if entry not in entries:
+        entries.append(entry)
+        # logger.debug(f'Appended {T} to list')
+    else:
+        # logger.debug(f'{T} not appended to list')
+        for loaded_entry in entries:
+            entry = loaded_entry if entry == loaded_entry else entry
+    return entry
+
+
+def __map_notification_to_owner(
+    notification: SECLONotificationData,
+    local_notification: SecloNotification,
+    people: List[Employee] | List[Employer] | List[Employee | Employer],
+    db: Session,
+) -> bool:
+    for person in people:
+        is_employer = isinstance(person, Employer)
+        fullname = person.employerName if is_employer else person.employeeName
+        for name in fullname.split():
+            if name not in notification.person:
                 break
+        else:
+            if is_employer:
+                local_notification.employerLink = SecloNotificationToEmployer(
+                    employer=person, notification=local_notification
+                )
+                db.add(local_notification.employerLink)
+            else:
+                local_notification.employeeLink = SecloNotificationToEmployee(
+                    employee=person, notification=local_notification
+                )
+                db.add(local_notification.employeeLink)
+            return True
+    return False
 
 
-    def getClaims(self: Self, params: claimFilterParams | None = None, db: Session | None = None) -> List[Claim]:
-        if not db: raise ValueError("Missing DB")
-        statement = select(Claim)
-        if (params): 
-            if params.initStartDate:
-                statement = statement.where(Claim.initDate > params.initStartDate)
-            if params.initEndDate:
-                statement = statement.where(Claim.initDate < params.initEndDate)
-            if params.isIngressed is not None:
-                if not params.isIngressed:
-                    statement = statement.where(Claim.calID == None)
-                else:
-                    statement = statement.where(Claim.calID != None)
+def __update_notifications(
+    rec_id: int,
+    creds: SECLOLoginCredentials,
+    db: Session,
+    progress: Optional[ProgressReport] = None,
+    citation: Optional[Citation] = None,
+    notification_data: Optional[List[SECLONotificationData]] = None,
+    seclo: Optional[SECLORecData] = None,
+):
+    if not progress:
+        progress = ProgressReport()
+    if not notification_data:
+        if seclo:
+            notification_data = seclo.get_notification_data()
+        else:
+            with SECLORecData(creds, rec_id, progress) as seclo_data:
+                notification_data = seclo_data.get_notification_data()
+    is_retry = False
+    while True:
+        for notification in notification_data:
+            local_notification = db.scalars(
+                select(SecloNotification).where(
+                    SecloNotification.secloPostalID == notification.id
+                )
+            ).one_or_none()
+            if local_notification:
+                local_notification.receptionDate = notification.notifiedDate
+                try:
+                    local_notification.deliveryCode = int(notification.notificationCode)
+                except ValueError:
+                    local_notification.deliveryCode = None
+                local_notification.deliveryDescription = (
+                    notification.notificationStatus
+                    + (" (Leida)" if notification.afipRead else " (No leida)")
+                    if notification.notificationType == SECLONotificationType.AFIP
+                    else ""
+                )
+                local_notification.citation.citationStatus = (
+                    CitationStatus.citation_string_to_enum(notification.citationStatus)
+                )
+                if (
+                    not local_notification.employeeLink
+                    and not local_notification.employerLink
+                    and citation
+                ):
+                    if not __map_notification_to_owner(
+                        notification=notification,
+                        local_notification=local_notification,
+                        people=citation.claim.employers + citation.claim.employees,
+                        db=db,
+                    ):
+                        if not is_retry:
+                            logger.info(
+                                "Couldn't match notification %d to '%s' on %d. Will try updating",
+                                local_notification.secloPostalID,
+                                notification.person,
+                                citation.recID,
+                            )
+                            __update_claim_standalone(
+                                creds=creds,
+                                rec_id=rec_id,
+                                progress=progress,
+                                db=db,
+                                citation=citation,
+                            )
+                            is_retry = True
+                            break
+                        logger.warning(
+                            "Couldn't match notification %d to '%s' on %d. Execution will continue",
+                            local_notification.secloPostalID,
+                            notification.person,
+                            citation.recID,
+                        )
+            else:
+                if not citation:
+                    with SECLOCalendarParser(creds, None, None) as cal:
+                        cal_citations = cal.get_calendar(
+                            0, 0, notification.citationDate
+                        )
+                        for cal_citation in cal_citations:
+                            if (
+                                cal_citation.citationDate == notification.citationDate
+                                and CitationStatus.citation_string_to_enum(
+                                    cal_citation.citationType
+                                )
+                                == CitationStatus.citation_string_to_enum(
+                                    notification.citationStatus
+                                )
+                            ):
+                                citation = Citation(
+                                    secloAudID=cal_citation.citationID,
+                                    citationDate=cal_citation.citationDate,
+                                    citationType=CitationType.citation_string_to_enum(
+                                        cal_citation.citationType
+                                    ),
+                                    citationStatus=CitationStatus.citation_string_to_enum(
+                                        cal_citation.citationType
+                                    ),
+                                    isCalendarPrimary=True,
+                                    recID=rec_id,
+                                    claim=db.scalar(
+                                        select(Claim).where(Claim.recID == rec_id)
+                                    ),
+                                )
+                                old_citation = db.scalars(
+                                    select(Citation)
+                                    .where(Citation.recID == rec_id)
+                                    .where(Citation.isCalendarPrimary)
+                                ).one_or_none()
+                                if old_citation:
+                                    old_citation.isCalendarPrimary = False
+                                db.add(citation)
+                                break
+                        else:
+                            continue
+                if citation.citationDate == notification.citationDate:
+                    local_notification = SecloNotification(
+                        citation=citation,
+                        notificationType=notification.notificationType,
+                        secloPostalID=notification.id,
+                        emissionDate=notification.generatedDate,
+                        receptionDate=notification.notifiedDate,
+                        deliveryDescription=(
+                            notification.notificationStatus
+                            + (" (Leida)" if notification.afipRead else " (No leida)")
+                            if notification.notificationType
+                            == SECLONotificationType.AFIP
+                            else ""
+                        ),
+                    )
+                    try:
+                        local_notification.deliveryCode = int(
+                            notification.notificationCode
+                        )
+                    except ValueError:
+                        local_notification.deliveryCode = (
+                            00 if notification.afipRead else None
+                        )
+                    db.add(local_notification)
+                    citation.notifications.append(local_notification)
+                    if notification.isEmployer:
+                        if not __map_notification_to_owner(
+                            notification=notification,
+                            local_notification=local_notification,
+                            people=citation.claim.employers,
+                            db=db,
+                        ):
+                            if not is_retry:
+                                logger.info(
+                                    "Couldn't match notification %d to '%s' on %d. " +
+                                        "Will try updating",
+                                    local_notification.secloPostalID,
+                                    notification.person,
+                                    citation.recID,
+                                )
+                                __update_claim_standalone(
+                                    creds=creds,
+                                    rec_id=rec_id,
+                                    progress=progress,
+                                    db=db,
+                                    citation=citation,
+                                    seclo=seclo,
+                                )
+                                is_retry = True
+                                break
+                            logger.warning(
+                                "Couldn't match notification %d to '%s' on %d. " +
+                                    "Execution will continue",
+                                local_notification.secloPostalID,
+                                notification.person,
+                                citation.recID,
+                            )
+                    else:
+                        if not __map_notification_to_owner(
+                            notification=notification,
+                            local_notification=local_notification,
+                            people=citation.claim.employers,
+                            db=db,
+                        ):
+                            if not is_retry:
+                                logger.info(
+                                    "Couldn't match notification %d to '%s' on %d. " +
+                                        "Will try updating",
+                                    local_notification.secloPostalID,
+                                    notification.person,
+                                    citation.recID,
+                                )
+                                __update_claim_standalone(
+                                    creds=creds,
+                                    rec_id=rec_id,
+                                    progress=progress,
+                                    db=db,
+                                    citation=citation,
+                                    seclo=seclo,
+                                )
+                                is_retry = True
+                                break
+                            logger.warning(
+                                "Couldn't match notification %d to '%s' on %d. " +
+                                    "Execution will continue",
+                                local_notification.secloPostalID,
+                                notification.person,
+                                citation.recID,
+                            )
+        else:
+            progress.set_completion("")
+            break
 
-            # if params.citationStartDate:
-            #     statement = statement.where(Claim.initDate > params.initStartDate)
-            # if params.initEndDate:
-            #     statement = statement.where(Claim.initDate < params.initEndDate)
-            
-        dbclaims = db.scalars(statement).all()
-        claims = []
-        claims.extend(dbclaims)
-        return claims
 
-    def getClaim(self: Self, recID: int, db: Session | None = None) -> Claim:
-        if not db: raise ValueError("Missing DB")
-        statement = select(Claim).where(Claim.recID == recID)
-        dbclaim = db.scalars(statement).one()
-        return dbclaim
-    
-    def getCitations(self: Self, recID: int, db: Session | None = None, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[Citation]:
-        if not db: raise ValueError("Missing DB")
-        if withUpdate:
-            if not creds: raise ValueError("Missing credentials")
-            self.__updateNotifications(recID, creds, db=db)
-        statement = select(Citation).where(Citation.recID == recID)
-        dbcitations = db.scalars(statement).all()
-        citations = []
-        citations.extend(dbcitations)
-        return citations
+def get_claims(db: Session, params: Optional[claimFilterParams] = None) -> List[Claim]:
+    """Returns a list of registered claims, filtered by params
 
-    def getCitation(self: Self, citationID: int, db: Session | None = None) -> Citation:
-        if not db: raise ValueError("Missing DB")
-        statement = select(Citation).where(Citation.citationID == citationID)
-        dbcitation = db.scalars(statement).one()
-        return dbcitation
-        
-    def getNotifications(self: Self, recID: int, citationID: int, db: Session, withUpdate: bool = False, creds: SECLOLoginCredentials | None = None) -> List[SecloNotification]:
-        if withUpdate:
-            if not creds: raise ValueError("Missing credentials")
-            self.__updateNotifications(recID, creds, citation = db.scalars(select(Citation).where(Citation.citationID == citationID)).one(), db=db)
-        statement = select(SecloNotification).where(SecloNotification.citationID == citationID)
-        dbNotifications = db.scalars(statement).all()
-        notifications = []
-        notifications.extend(dbNotifications)
-        return notifications
+    Args:
+        db (Session): database session to query for claims.
+        params (Optional[claimFilterParams], optional): Filter params. 
+            Defaults to None.
+
+    Returns:
+        List[Claim]: A list of matching claims
+    """
+    statement = select(Claim)
+    if params:
+        if params.initStartDate:
+            statement = statement.where(Claim.initDate > params.initStartDate)
+        if params.initEndDate:
+            statement = statement.where(Claim.initDate < params.initEndDate)
+        if params.isIngressed is not None:
+            if not params.isIngressed:
+                statement = statement.where(Claim.calID == null())
+            else:
+                statement = statement.where(Claim.calID != null())
+
+        # if params.citationStartDate:
+        #     statement = statement.where(Claim.initDate > params.initStartDate)
+        # if params.initEndDate:
+        #     statement = statement.where(Claim.initDate < params.initEndDate)
+
+    dbclaims = db.scalars(statement).all()
+    claims = []
+    claims.extend(dbclaims)
+    return claims
+
+
+def get_claim(rec_id: int, db: Session) -> Claim:
+    """Get a specific claim.
+
+    Args:
+        rec_id (int): Claim ID to search.
+        db (Session): Database session to query for claim.
+
+    Returns:
+        Claim: The desired claim
+    """
+    statement = select(Claim).where(Claim.recID == rec_id)
+    dbclaim = db.scalars(statement).one()
+    return dbclaim
+
+
+def get_citations(
+    rec_id: int,
+    db: Session,
+    creds: Optional[SECLOLoginCredentials]=None,
+    with_update: bool=False
+) -> List[Citation]:
+    """Query citations for a given claim.
+
+    Args:
+        rec_id (int): Claim to scan for citations
+        db (Session): Database session to query for citations.
+        creds (Optional[SECLOLoginCredentials], optional): 
+            Credentials to use if updating claims. Defaults to None
+        with_update (bool, optional): 
+            Whether SECLO should be queried for new citations before returning results. 
+            Defaults to False.
+
+    Returns:
+        List[Citation]: List of required citations
+    """
+    if with_update:
+        if not creds:
+            raise AttributeError("Tried to query SECLO without valid credentials")
+        __update_notifications(rec_id, creds, db=db)
+    statement = select(Citation).where(Citation.recID == rec_id)
+    dbcitations = db.scalars(statement).all()
+    citations = []
+    citations.extend(dbcitations)
+    return citations
+
+
+def get_citation(citation_id: int, db: Session) -> Citation:
+    """Returns info for a specific citation
+
+    Args:
+        citation_id (int): Citation to query.
+        db (Session): Database session to query for citations.
+
+    Returns:
+        Citation: The desired citation.
+    """
+    statement = select(Citation).where(Citation.citationID == citation_id)
+    dbcitation = db.scalars(statement).one()
+    return dbcitation
+
+
+def get_notifications(
+    rec_id: int,
+    citation_id: int,
+    db: Session,
+    creds: Optional[SECLOLoginCredentials] = None,
+    with_update: bool = False,
+) -> List[SecloNotification]:
+    """Query for notification info for a specific citation
+
+    Args:
+        rec_id (int): Claim ID to query.
+        citation_id (int): Citation ID (belonging to claim) to query.
+        db (Session): Database session to query for notifications
+        creds (Optional[SECLOLoginCredentials], optional): 
+            Credentials to use if querying SECLO for updates.
+        with_update (bool, optional): 
+            Whether SECLO should be queried for updates before returning results. 
+            Defaults to False.
+
+    Returns:
+        List[SecloNotification]: _description_
+    """
+    if with_update:
+        if creds is None:
+            raise AttributeError("Tried to query SECLO without valid credentials")
+        __update_notifications(
+            rec_id,
+            creds,
+            citation=db.scalars(
+                select(Citation).where(Citation.citationID == citation_id)
+            ).one(),
+            db=db,
+        )
+    statement = select(SecloNotification).where(
+        SecloNotification.citationID == citation_id
+    )
+    db_notifications = db.scalars(statement).all()
+    notifications = []
+    notifications.extend(db_notifications)
+    return notifications
