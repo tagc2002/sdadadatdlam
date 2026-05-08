@@ -7,13 +7,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from alembic.config import Config
 from alembic import command
-from redis.asyncio import ConnectionPool
+from redis.asyncio import ConnectionPool as AsyncConnectionPool
+from redis import ConnectionPool
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from sqlalchemy import create_engine
 
 from api.batch import ingress, liveupdates
-from api.dependencies import init_db_session, init_redis_session
+from api.dependencies import init_db_session, init_redis_async_session, init_redis_session
 from api.rest.claims import auth, claims
 
 sys.path.append('/usr/app/src')
@@ -62,6 +63,9 @@ init_db_session(engine)
 redis_retry = Retry(ExponentialBackoff(), 8)
 redis = ConnectionPool(host=REDIS_DOMAIN, port=REDIS_PORT, decode_responses=True, retry=redis_retry)
 init_redis_session(redis)
+
+redis_async = AsyncConnectionPool(host=REDIS_DOMAIN, port=REDIS_PORT, decode_responses=True, retry=redis_retry)
+init_redis_async_session(redis_async)
 
 tags_metadata = [
     {

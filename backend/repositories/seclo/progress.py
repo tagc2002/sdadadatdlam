@@ -134,7 +134,7 @@ class ProgressReport:
         """
         Calculates this progress' status.
         Returns:
-            Dict: {'progress': float, 'message': str}
+            Dict: {'progress': float, 'message': str, 'status': str}
         """
         if self.subprogresses:
             self.progress = 0
@@ -162,7 +162,7 @@ class ProgressReport:
                     )
                     if self.steps != 0 and self.steps <= len(self.subprogresses):
                         self.done = True
-        return {"progress": self.progress, "message": self.message}
+        return {"progress": self.progress, "message": self.message, "running": not self.done}
 
     def is_complete(self: Self) -> bool:
         """Returns whether this progress is completed or not."""

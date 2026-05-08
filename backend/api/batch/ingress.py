@@ -31,7 +31,7 @@ async def ingress_claims(
     if task_id:
         pr = ProgressReport(taskmanager=taskmanager)
         background_task.add_task(
-            batch_verify_agenda_wrapper,
+            batch_verify_agenda,
             creds=creds,
             progress=pr,
             weeks_before=0,
@@ -39,9 +39,6 @@ async def ingress_claims(
             db=db,
         )
     return task_id
-
-def batch_verify_agenda_wrapper(creds, progress, weeks_before, weeks_after, db):
-    asyncio.run(batch_verify_agenda(creds=creds, progress=progress, weeks_before=weeks_before, weeks_after=weeks_after, db=db))
 
 
 @router.get("/homologations")

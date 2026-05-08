@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 
 
-async def batch_verify_agenda(
+def batch_verify_agenda(
     creds: SECLOLoginCredentials,
     db: Session,
     progress: Optional[ProgressReport] = None,
