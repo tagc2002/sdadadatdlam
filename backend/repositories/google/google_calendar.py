@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from dataobjects.googledataclasses import GoogleColors, GoogleEvent
 
-from repositories.google2.google_auth import basic_auth
+from repositories.google.google_auth import basic_auth
 logger = logging.getLogger(__name__)
 
 def list_events(weeks_before: int, weeks_after: int) -> List[GoogleEvent]:

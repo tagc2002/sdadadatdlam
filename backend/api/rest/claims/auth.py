@@ -4,7 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi.responses import RedirectResponse
-from repositories.google2 import google_auth
+from repositories.google import google_auth
 from fastapi import APIRouter, Form
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from repositories.google2.google_auth import basic_auth
+from repositories.google.google_auth import basic_auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
