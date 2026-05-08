@@ -5,6 +5,7 @@ Module for syncing citation state with Google Calendar (and generating meet link
 from datetime import timedelta
 from typing import List, Optional
 import uuid
+import logging
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -21,8 +22,6 @@ from dataobjects.googledataclasses import (
 )
 from dataobjects.enums import CitationType
 from repositories.google.google_calendar import create_event, list_events, search_events
-
-import logging
 
 logger = logging.getLogger(__name__)
 
