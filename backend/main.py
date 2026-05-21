@@ -1,3 +1,4 @@
+"Main entry point for API."
 from contextlib import asynccontextmanager
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -34,6 +35,7 @@ root_logger.addHandler(logger_file_handler)
 root_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 run_migrations()
 
