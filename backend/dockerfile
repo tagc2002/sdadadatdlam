@@ -9,5 +9,5 @@ RUN pip install --only-binary :all: --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 80/tcp
-
-CMD ["fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0"]
+# escape=\
+CMD ["fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0", "--forwarded-allow-ips=\"*\"", "--proxy-headers"]
