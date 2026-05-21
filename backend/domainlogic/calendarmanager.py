@@ -7,7 +7,7 @@ from typing import List, Optional
 import uuid
 import logging
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
@@ -32,7 +32,7 @@ MALIGNA_NAME = "Norma Raquel Gonzalez"
 MALIGNA_EMAIL = "normitisaguda@gmail.com"
 
 
-def get_cal_summary(local_claim: Claim, db: Session) -> str:
+async def get_cal_summary(local_claim: Claim, db: AsyncSession) -> str:
     """Generates a summary (title) for given claim
 
     Args:
@@ -43,11 +43,11 @@ def get_cal_summary(local_claim: Claim, db: Session) -> str:
         str: Summary for given event
     """
     summary = ""
-    last_citation = db.scalars(
+    last_citation = (await db.scalars(
         select(Citation).where(
             Citation.recID == local_claim.recID, Citation.isCalendarPrimary
         )
-    ).one()
+    )).one()
     if last_citation.agreement and last_citation.agreement.secloEmailNotificationDate:
         summary += "C/A "
     elif last_citation.nonagreement and last_citation.nonagreement.sentDate:
@@ -176,13 +176,13 @@ def get_event_color(citation: Citation) -> GoogleColorList:
     return GoogleColorList.RED
 
 
-def insert_missing_citations(db: Session):
+async def insert_missing_citations(db: AsyncSession):
     """Scans calendar and inserts missing citations as new events
 
     Args:
         db (Session): session to load citation info from
     """
-    citations = db.scalars(
+    citations = await db.scalars(
         select(Citation)
         .where(Citation.citationType == CitationType.FIRST)
         .where(Citation.isCalendarPrimary)
@@ -196,10 +196,10 @@ def insert_missing_citations(db: Session):
                     citation.claim.calID = event.id
                     break
             else:
-                create_event_for_citation(citation, db=db)
+                await create_event_for_citation(citation, db=db)
 
 
-def create_event_for_citation(citation: Citation, db: Session) -> Optional[GoogleEvent]:
+async def create_event_for_citation(citation: Citation, db: AsyncSession) -> Optional[GoogleEvent]:
     """Creates an event for a given citation. Careful, because it can make duplicates!
 
     Args:
@@ -221,7 +221,7 @@ def create_event_for_citation(citation: Citation, db: Session) -> Optional[Googl
     if not citation.citationDate:
         raise ValueError("Citation doesn't have date")
     cal_event = GoogleEvent(
-        summary=get_cal_summary(citation.claim, db=db),
+        summary = await get_cal_summary(citation.claim, db=db),
         description=DEFAULT_DESCRIPTION,
         start=GoogleEventDate(
             dateTime=citation.citationDate.isoformat(), timeZone=DEFAULT_TIMEZONE
@@ -247,7 +247,7 @@ def create_event_for_citation(citation: Citation, db: Session) -> Optional[Googl
     return cal_event
 
 
-def get_calendar_id(rec_id: int, db: Session, with_update: bool = False) -> str:
+async def get_calendar_id(rec_id: int, db: AsyncSession, with_update: bool = False) -> str:
     """Gets the current calendar ID for a given claim.
     If not locally stored, calendar will be queried for it.
 
@@ -265,26 +265,24 @@ def get_calendar_id(rec_id: int, db: Session, with_update: bool = False) -> str:
     Returns:
         str: _description_
     """
-    claim = db.scalars(select(Claim).where(Claim.recID == rec_id)).one()
-    citation = db.scalars(
+    claim = (await db.scalars(select(Claim).where(Claim.recID == rec_id))).one()
+    citation = (await db.scalars(
         select(Citation)
         .where(Citation.recID == rec_id)
         .where(Citation.isCalendarPrimary)
-    ).one()
+    )).one()
     claim.calID = None
     if claim.calID:
         return claim.calID or ""
-    else:
-        events = search_events(claim.gdeID.split("-")[2])
-        for event in events:
-            if claim.gdeID.split("-")[1] in (event.summary or ""):
-                claim.calID = event.id
-                return event.id or ""
-        if with_update:
-            event = create_event_for_citation(citation, db=db)
-            if event:
-                claim.calID = event.id
-                return event.id or ""
-            else:
-                raise ValueError(f"Couldn't create calendar citation for {rec_id}")
+    events = search_events(claim.gdeID.split("-")[2])
+    for event in events:
+        if claim.gdeID.split("-")[1] in (event.summary or ""):
+            claim.calID = event.id
+            return event.id or ""
+    if with_update:
+        event = await create_event_for_citation(citation, db=db)
+        if event:
+            claim.calID = event.id
+            return event.id or ""
+        raise ValueError(f"Couldn't create calendar citation for {rec_id}")
     raise ValueError(f"Couldn't find calendar citation for {rec_id}")

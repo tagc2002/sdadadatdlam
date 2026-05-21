@@ -10,27 +10,9 @@ from sqlalchemy.orm import sessionmaker, Session
 from repositories.seclo.driver import SECLOLoginCredentials
 # TODO store and retrieve dynamically with user session
 cred = SECLOLoginCredentials(os.getenv('SECLO_USERNAME', ""), os.getenv('SECLO_PASSWORD', ""))
-SM: sessionmaker | None = None
 REDIS: ConnectionPool | None = None
 REDIS_ASYNC: AsyncConnectionPool | None = None
 
-def init_db_session(engine: Engine):
-    global SM
-    SM = sessionmaker(engine)
-
-def get_transaction():
-    if not SM:
-        raise ValueError("DB NOT INITIALIZED")
-    session: Session = SM(autoflush=False)
-    try:
-        yield session
-        session.commit()
-        return
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 def get_seclo_credentials() -> SECLOLoginCredentials:
     #TODO Use user info to retrieve credentials
@@ -68,8 +50,6 @@ async def get_async_redis_session():
     finally:
         await redis.close()
 
-
-DependsDb = Annotated[Session, Depends(get_transaction)]
 DependsSeclo = Annotated[SECLOLoginCredentials, Depends(get_seclo_credentials)]
 DependsGoogle = Annotated[dict, Depends(get_google_credentials)]
 DependsRedis = Annotated[Redis, Depends(get_redis_session)]

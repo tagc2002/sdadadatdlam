@@ -1,20 +1,37 @@
 from datetime import datetime
+from typing import Optional, Self
 import mimetypes
 from pathlib import Path
-from typing import Self
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import Documentation
 from dataobjects.enums import DocType
 
-class DocumentationManager():
-    def storeFile(self: Self, name: str, type: DocType, isSeclo: bool, db: Session, importedDate: datetime | None = None, path: Path | None = None, bytes: bytes | None = None, mime: str | None = None) -> Documentation:
-        if not (path or bytes): raise ValueError("Trying to save a document without any files")
-        if not importedDate: importedDate=datetime.now()
-        if path:
-            if not mime: mime = mimetypes.guess_file_type(path)[0]
-            with open(path, "rb") as file:
-                bytes = file.read()
-        documentation = Documentation(docName=name, docType=type, importedDate=importedDate, importedFromSeclo=isSeclo, file=bytes, mimeType=mime)
-        db.add(documentation)
-        return documentation
+
+def store_file(
+    name: str,
+    doctype: DocType,
+    is_seclo: bool,
+    db: AsyncSession,
+    imported_date: Optional[datetime] = datetime.now(),
+    path: Optional[Path] = None,
+    filebytes: Optional[bytes] = None,
+    mime: Optional[str] = None,
+) -> Documentation:
+    if not (path or filebytes):
+        raise ValueError("Trying to save a document without any files")
+    if path:
+        if not mime:
+            mime = mimetypes.guess_file_type(path)[0]
+        with open(path, "rb") as file:
+            filebytes = file.read()
+    documentation = Documentation(
+        docName=name,
+        docType=doctype,
+        importedDate=imported_date,
+        importedFromSeclo=is_seclo,
+        file=filebytes,
+        mimeType=mime,
+    )
+    db.add(documentation)
+    return documentation

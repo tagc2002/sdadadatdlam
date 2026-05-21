@@ -6,7 +6,8 @@ from domainlogic.taskmanager import TaskManager
 from domainlogic.claimsmanager import batch_verify_agenda
 from domainlogic.homomanager import batch_check_homologations
 from repositories.seclo.progress import ProgressReport
-from api.dependencies import DependsDb, DependsSeclo, DependsRedis
+from api.dependencies import DependsSeclo, DependsRedis
+from database.dbsessionmanager import DependsDb
 
 router = APIRouter(prefix="/batch")
 
@@ -42,7 +43,7 @@ async def ingress_claims(
 
 
 @router.get("/homologations")
-def check_homologations(db: DependsDb, creds: DependsSeclo) -> None:
+async def check_homologations(db: DependsDb, creds: DependsSeclo) -> None:
     # TODO implement properly
     pr = ProgressReport()
-    batch_check_homologations(creds=creds, progress=pr, db=db)
+    await batch_check_homologations(creds=creds, progress=pr, db=db)

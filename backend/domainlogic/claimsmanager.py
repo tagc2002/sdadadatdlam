@@ -9,7 +9,7 @@ import os
 from typing import List, Optional
 from sqlalchemy import null, or_, select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from api.dtos.requestDTOs import claimFilterParams
 from dataobjects.seclodataclasses import SECLONotificationData
 from dataobjects.enums import (
@@ -54,9 +54,9 @@ logger = logging.getLogger(__name__)
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 
 
-def batch_verify_agenda(
+async def batch_verify_agenda(
     creds: SECLOLoginCredentials,
-    db: Session,
+    db: AsyncSession,
     progress: Optional[ProgressReport] = None,
     weeks_before: int = 0,
     weeks_after: int = 20,
@@ -68,7 +68,7 @@ def batch_verify_agenda(
 
     Args:
         creds (SECLOLoginCredentials): Credentials to use for SECLO
-        db (Session): database session to check status and store changes.
+        db (AsyncSession): database session to check status and store changes.
         progress (Optional[ProgressReport], optional): 
             Progress report object to share status with user. Defaults to None.
         weeks_before (int, optional): How many weeks before today to check. 
@@ -99,9 +99,9 @@ def batch_verify_agenda(
             entry_progress = ProgressReport()
             second_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
             try:
-                dbclaim = db.scalars(
+                dbclaim = (await db.scalars(
                     select(Claim).where(Claim.gdeID == entry.gdeID)
-                ).one_or_none()
+                )).one_or_none()
                 if dbclaim:
                     entry.notificationData = (
                         rec_data.set_progress(entry_progress)
@@ -127,12 +127,12 @@ def batch_verify_agenda(
         for index, entry in enumerate(calendar_info):
             entry_progress = ProgressReport()
             third_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
-            local_citation = db.scalars(
+            local_citation = (await db.scalars(
                 select(Citation).where(Citation.secloAudID == entry.citationID)
-            ).one_or_none()
-            local_claim = db.scalars(
+            )).one_or_none()
+            local_claim = (await db.scalars(
                 select(Claim).where(Claim.gdeID == entry.gdeID)
-            ).one_or_none()
+            )).one_or_none()
             if not local_claim:
                 counter += 1
                 ingress_progress = ProgressReport()
@@ -141,7 +141,7 @@ def batch_verify_agenda(
                     f"Found {counter} new claim{'s' if counter > 1 else ''}",
                 )
                 try:
-                    local_claim = __ingress_claim(
+                    local_claim = await __ingress_claim(
                         gde_id=entry.gdeID,
                         init_date=entry.initDate,
                         progress=ingress_progress,
@@ -204,8 +204,8 @@ def batch_verify_agenda(
                 for link in lawyer.employeeLink + lawyer.employerLink:
                     link.citation = local_citation
                     db.add(link)
-            db.flush()
-            __update_notifications(
+            await db.flush()
+            await __update_notifications(
                 rec_id=local_citation.recID,
                 creds=creds,
                 progress=notification_progress,
@@ -214,14 +214,14 @@ def batch_verify_agenda(
                 db=db,
                 seclo=rec_data,
             )
-            db.commit()
+            await db.commit()
             entry_progress.set_completion("Done loading claim data")
 
     ##TODO Once the frontend is working, this will be done through an api call.
     for index, entry in enumerate(calendar_info):
-        claim = db.scalars(
+        claim = (await db.scalars(
             select(Claim).where(Claim.gdeID == entry.gdeID)
-        ).one_or_none()
+        )).one_or_none()
         if claim and not claim.isEvilized:
             logger.debug(
                 "PRINTING entry %d of %d at %s (%s)",
@@ -245,14 +245,14 @@ def batch_verify_agenda(
     progress.set_completion("DONE")
 
 
-def __update_claim_standalone(
+async def __update_claim_standalone(
     citation: Citation,
     creds: SECLOLoginCredentials,
     rec_id: int,
     progress: ProgressReport,
-    db: Session,
+    db: AsyncSession,
     seclo: Optional[SECLORecData] = None,
-) -> Claim:
+):
     if seclo:
         claim = __ingress_claim(
             rec_id=rec_id,
@@ -265,7 +265,7 @@ def __update_claim_standalone(
         )
     else:
         with SECLORecData(creds, rec_id, progress) as seclo:
-            claim = __ingress_claim(
+            claim = await __ingress_claim(
                 rec_id=rec_id,
                 init_date=None,
                 rec_data=seclo,
@@ -274,23 +274,25 @@ def __update_claim_standalone(
                 update=True,
                 citation=citation,
             )
-    db.commit()
+    await db.commit()
     return claim
 
 
-def __ingress_claim(
+async def __ingress_claim(
     init_date: Optional[datetime],
     rec_data: SECLORecData,
     citation: Optional[Citation],
     progress: ProgressReport,
-    db: Session,
+    db: AsyncSession,
     update: bool = False,
     gde_id: Optional[str] = None,
     rec_id: Optional[int] = None,
-) -> Claim:
+):
     local_addresses: List[Address] = []
     local_mails: List[Email] = []
     local_phones: List[LawyerTelephone] = []
+    local_employers: List[Employer] = []
+    local_lawyers: List[Lawyer] = []
     statement = select(Claim).where(or_(Claim.gdeID == gde_id, Claim.recID == rec_id))
 
     rec_data.set_progress(progress)
@@ -302,7 +304,7 @@ def __ingress_claim(
         raise ValueError("Missing recID and gdeID")
     claim_data = rec_data.get_claim_data()
     try:
-        local_claim = db.scalars(statement).one()
+        local_claim = (await db.scalars(statement)).one()
         logger.debug("FOUND")
         if not update:
             return local_claim
@@ -320,11 +322,11 @@ def __ingress_claim(
     for employee in claim_data.employees:
         # try for local version
         try:
-            local_employee = db.scalars(
+            local_employee = (await db.scalars(
                 select(Employee)
                 .where(Employee.recID == local_claim.recID)
                 .where(Employee.cuil == employee.cuil)
-            ).one()
+            )).one()
             local_employee.employeeName = employee.name
             local_employee.dni = employee.dni or 0
             local_employee.cuil = employee.cuil
@@ -380,7 +382,7 @@ def __ingress_claim(
 
     for employer in claim_data.employers:
         try:
-            local_employer = db.scalars(
+            local_employer = (await db.scalars(
                 select(Employer)
                 .where(Employer.recID == local_claim.recID)
                 .where(
@@ -389,7 +391,7 @@ def __ingress_claim(
                         Employer.employerName == employer.name,
                     )
                 )
-            ).one()
+            )).one()
             local_employer.employerName = employer.name
             local_employer.cuil = employer.cuil
             local_employer.isValidated = employer.validated
@@ -410,8 +412,9 @@ def __ingress_claim(
                 ),
             )
         local_employer = __ingress_entry_if_missing(
-            local_employer, local_claim.employers
+            local_employer, local_employers
         )
+        db.add(local_employer)
 
         local_address = __ingress_entry_if_missing(
             Address.from_address_data(employer.address), local_addresses
@@ -447,7 +450,8 @@ def __ingress_claim(
             registeredFrom="SECLO",
             isValidated=lawyer.validated,
         )  # TODO MISSING CUIL
-        local_lawyer = __ingress_entry_if_missing(local_lawyer, local_claim.lawyers)
+        local_lawyer = __ingress_entry_if_missing(local_lawyer, local_lawyers)
+        db.add(local_lawyer)
 
         if lawyer.mail:
             local_mail = __ingress_entry_if_missing(
@@ -497,12 +501,11 @@ def __ingress_claim(
                         citation=citation,
                         isActualLawyer=True,
                         isSelfRepresenting=local_lawyer.lawyerName
-                        == client.employeeName,
+                            == client.employeeName,
                         clientAbsent=False,
                     )
                     if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
                         lawyer_employee_link.isSelfRepresenting = True
-                    client.lawyerLink.append(lawyer_employee_link)
                     if citation:
                         db.add(lawyer_employee_link)
                     break
@@ -527,7 +530,6 @@ def __ingress_claim(
                             or lawyer.name == client.employerName
                         ):
                             lawyer_employer_link.isSelfRepresenting = True
-                        client.lawyerLink.append(lawyer_employer_link)
                         if citation:
                             db.add(lawyer_employer_link)
                         break
@@ -539,6 +541,7 @@ def __ingress_claim(
                         represented[1],
                     )
     # TODO add others info
+    await db.refresh(local_claim)
     local_claim.title = get_cal_header(local_claim)
     return local_claim
 
@@ -593,11 +596,11 @@ def __ingress_entry_if_missing[T](entry: T, entries: List[T]) -> T:
     return entry
 
 
-def __map_notification_to_owner(
+async def __map_notification_to_owner(
     notification: SECLONotificationData,
     local_notification: SecloNotification,
     people: List[Employee] | List[Employer] | List[Employee | Employer],
-    db: Session,
+    db: AsyncSession,
 ) -> bool:
     for person in people:
         is_employer = isinstance(person, Employer)
@@ -620,10 +623,10 @@ def __map_notification_to_owner(
     return False
 
 
-def __update_notifications(
+async def __update_notifications(
     rec_id: int,
     creds: SECLOLoginCredentials,
-    db: Session,
+    db: AsyncSession,
     progress: Optional[ProgressReport] = None,
     citation: Optional[Citation] = None,
     notification_data: Optional[List[SECLONotificationData]] = None,
@@ -640,11 +643,11 @@ def __update_notifications(
     is_retry = False
     while True:
         for notification in notification_data:
-            local_notification = db.scalars(
+            local_notification = (await db.scalars(
                 select(SecloNotification).where(
                     SecloNotification.secloPostalID == notification.id
                 )
-            ).one_or_none()
+            )).one_or_none()
             if local_notification:
                 local_notification.receptionDate = notification.notifiedDate
                 try:
@@ -678,7 +681,7 @@ def __update_notifications(
                                 notification.person,
                                 citation.recID,
                             )
-                            __update_claim_standalone(
+                            await __update_claim_standalone(
                                 creds=creds,
                                 rec_id=rec_id,
                                 progress=progress,
@@ -724,11 +727,11 @@ def __update_notifications(
                                         select(Claim).where(Claim.recID == rec_id)
                                     ),
                                 )
-                                old_citation = db.scalars(
+                                old_citation = (await db.scalars(
                                     select(Citation)
                                     .where(Citation.recID == rec_id)
                                     .where(Citation.isCalendarPrimary)
-                                ).one_or_none()
+                                )).one_or_none()
                                 if old_citation:
                                     old_citation.isCalendarPrimary = False
                                 db.add(citation)
@@ -759,9 +762,8 @@ def __update_notifications(
                             00 if notification.afipRead else None
                         )
                     db.add(local_notification)
-                    citation.notifications.append(local_notification)
                     if notification.isEmployer:
-                        if not __map_notification_to_owner(
+                        if not await __map_notification_to_owner(
                             notification=notification,
                             local_notification=local_notification,
                             people=citation.claim.employers,
@@ -775,7 +777,7 @@ def __update_notifications(
                                     notification.person,
                                     citation.recID,
                                 )
-                                __update_claim_standalone(
+                                await __update_claim_standalone(
                                     creds=creds,
                                     rec_id=rec_id,
                                     progress=progress,
@@ -807,7 +809,7 @@ def __update_notifications(
                                     notification.person,
                                     citation.recID,
                                 )
-                                __update_claim_standalone(
+                                await __update_claim_standalone(
                                     creds=creds,
                                     rec_id=rec_id,
                                     progress=progress,
@@ -829,11 +831,11 @@ def __update_notifications(
             break
 
 
-def get_claims(db: Session, params: Optional[claimFilterParams] = None) -> List[Claim]:
+async def get_claims(db: AsyncSession, params: Optional[claimFilterParams] = None) -> List[Claim]:
     """Returns a list of registered claims, filtered by params
 
     Args:
-        db (Session): database session to query for claims.
+        db (AsyncSession): database session to query for claims.
         params (Optional[claimFilterParams], optional): Filter params. 
             Defaults to None.
 
@@ -857,30 +859,30 @@ def get_claims(db: Session, params: Optional[claimFilterParams] = None) -> List[
         # if params.initEndDate:
         #     statement = statement.where(Claim.initDate < params.initEndDate)
 
-    dbclaims = db.scalars(statement).all()
+    dbclaims = (await db.scalars(statement)).all()
     claims = []
     claims.extend(dbclaims)
     return claims
 
 
-def get_claim(rec_id: int, db: Session) -> Claim:
+async def get_claim(rec_id: int, db: AsyncSession) -> Claim:
     """Get a specific claim.
 
     Args:
         rec_id (int): Claim ID to search.
-        db (Session): Database session to query for claim.
+        db (AsyncSession): Database session to query for claim.
 
     Returns:
         Claim: The desired claim
     """
     statement = select(Claim).where(Claim.recID == rec_id)
-    dbclaim = db.scalars(statement).one()
+    dbclaim = (await db.scalars(statement)).one()
     return dbclaim
 
 
-def get_citations(
+async def get_citations(
     rec_id: int,
-    db: Session,
+    db: AsyncSession,
     creds: Optional[SECLOLoginCredentials]=None,
     with_update: bool=False
 ) -> List[Citation]:
@@ -888,7 +890,7 @@ def get_citations(
 
     Args:
         rec_id (int): Claim to scan for citations
-        db (Session): Database session to query for citations.
+        db (AsyncSession): Database session to query for citations.
         creds (Optional[SECLOLoginCredentials], optional): 
             Credentials to use if updating claims. Defaults to None
         with_update (bool, optional): 
@@ -901,33 +903,33 @@ def get_citations(
     if with_update:
         if not creds:
             raise AttributeError("Tried to query SECLO without valid credentials")
-        __update_notifications(rec_id, creds, db=db)
+        await __update_notifications(rec_id, creds, db=db)
     statement = select(Citation).where(Citation.recID == rec_id)
-    dbcitations = db.scalars(statement).all()
+    dbcitations = (await db.scalars(statement)).all()
     citations = []
     citations.extend(dbcitations)
     return citations
 
 
-def get_citation(citation_id: int, db: Session) -> Citation:
+async def get_citation(citation_id: int, db: AsyncSession) -> Citation:
     """Returns info for a specific citation
 
     Args:
         citation_id (int): Citation to query.
-        db (Session): Database session to query for citations.
+        db (AsyncSession): Database session to query for citations.
 
     Returns:
         Citation: The desired citation.
     """
     statement = select(Citation).where(Citation.citationID == citation_id)
-    dbcitation = db.scalars(statement).one()
+    dbcitation = (await db.scalars(statement)).one()
     return dbcitation
 
 
-def get_notifications(
+async def get_notifications(
     rec_id: int,
     citation_id: int,
-    db: Session,
+    db: AsyncSession,
     creds: Optional[SECLOLoginCredentials] = None,
     with_update: bool = False,
 ) -> List[SecloNotification]:
@@ -936,7 +938,7 @@ def get_notifications(
     Args:
         rec_id (int): Claim ID to query.
         citation_id (int): Citation ID (belonging to claim) to query.
-        db (Session): Database session to query for notifications
+        db (AsyncSession): Database session to query for notifications
         creds (Optional[SECLOLoginCredentials], optional): 
             Credentials to use if querying SECLO for updates.
         with_update (bool, optional): 
@@ -949,18 +951,19 @@ def get_notifications(
     if with_update:
         if creds is None:
             raise AttributeError("Tried to query SECLO without valid credentials")
-        __update_notifications(
+        citation = (await db.scalars(
+                select(Citation).where(Citation.citationID == citation_id)
+            )).one()
+        await __update_notifications(
             rec_id,
             creds,
-            citation=db.scalars(
-                select(Citation).where(Citation.citationID == citation_id)
-            ).one(),
-            db=db,
+            citation=citation,
+            db=db
         )
     statement = select(SecloNotification).where(
         SecloNotification.citationID == citation_id
     )
-    db_notifications = db.scalars(statement).all()
+    db_notifications = (await db.scalars(statement)).all()
     notifications = []
     notifications.extend(db_notifications)
     return notifications

@@ -8,11 +8,11 @@ from typing import Optional
 from attr import dataclass
 from pypdf import PdfReader
 from sqlalchemy import and_, not_, null, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import Agreement, Homologation
 from dataobjects.enums import DocType
-from domainlogic.documentationmanager import DocumentationManager
+from domainlogic.documentationmanager import store_file
 from repositories.seclo.driver import SECLOFileManager, SECLOLoginCredentials
 from repositories.seclo.progress import ProgressReport
 
@@ -54,8 +54,8 @@ def parse_homologation_pdf(pdf: Path) -> HomologationInfo:
     return HomologationInfo(is_approved=is_approved, gde_id=None, signed_date=None)
 
 
-def save_homologation(
-    path: Path, info: HomologationInfo, agreement: Agreement, db: Session
+async def save_homologation(
+    path: Path, info: HomologationInfo, agreement: Agreement, db: AsyncSession
 ) -> Homologation:
     """Saves a newly registered homologation disposition document.
 
@@ -68,10 +68,10 @@ def save_homologation(
     Returns:
         Homologation: Newly created homologation.
     """
-    document = DocumentationManager().storeFile(
+    document = store_file(
         name="Homologacion",
-        type=DocType.HOMOLOGATION if info.gde_id else DocType.HOMOLOGATION_DRAFT,
-        isSeclo=True,
+        doctype=DocType.HOMOLOGATION if info.gde_id else DocType.HOMOLOGATION_DRAFT,
+        is_seclo=True,
         path=path,
         db=db,
     )
@@ -87,8 +87,8 @@ def save_homologation(
     return homo
 
 
-def check_homologation(
-    agreement: Agreement, db: Session, creds: SECLOLoginCredentials
+async def check_homologation(
+    agreement: Agreement, db: AsyncSession, creds: SECLOLoginCredentials
 ) -> Optional[Homologation]:
     """Checks homologation status for a given agreement.
 
@@ -118,9 +118,9 @@ def check_homologation(
                         ) in agreement.homologations:  # delete any drafts
                             if not homologation.signedDate:
                                 if homologation.document:
-                                    db.delete(homologation.document)
-                                db.delete(homologation)
-                        save_homologation(file, homo_info, agreement, db)
+                                    await db.delete(homologation.document)
+                                await db.delete(homologation)
+                        await save_homologation(file, homo_info, agreement, db)
                 else:  # is draft
                     for homologation in agreement.homologations:
                         if (
@@ -129,7 +129,7 @@ def check_homologation(
                         ):  # already registered draft
                             break
                     else:
-                        save_homologation(file, homo_info, agreement, db)
+                        await save_homologation(file, homo_info, agreement, db)
             elif (
                 "Documento con firma digital" in file_entry[0]
                 and agreement.signedSendDate
@@ -138,14 +138,14 @@ def check_homologation(
                 file = seclo.get_file(file_index)
                 homo_info = parse_homologation_pdf(file)
                 if homo_info.gde_id:  # is valid
-                    saved_homo = save_homologation(file, homo_info, agreement, db)
+                    saved_homo = await save_homologation(file, homo_info, agreement, db)
                     if saved_homo:
                         return saved_homo
                 # there's no such thing as a domestic homologation draft (thank god)
 
 
-def batch_check_homologations(
-    db: Session, creds: SECLOLoginCredentials, progress: ProgressReport
+async def batch_check_homologations(
+    db: AsyncSession, creds: SECLOLoginCredentials, progress: ProgressReport
 ) -> None:
     """Batch check homologations for all non-homologated or drafted agreements.
 
@@ -154,7 +154,7 @@ def batch_check_homologations(
         creds (SECLOLoginCredentials): SECLO credentials for querying.
         progress (ProgressReport): Progress instance to report status to user.
     """
-    missing = db.scalars(
+    missing = (await db.scalars(
         select(Agreement)
         .distinct(Agreement.agreementID)
         .join(Homologation, isouter=True)
@@ -166,7 +166,7 @@ def batch_check_homologations(
                 and_(not_(Homologation.isApproved), Homologation.complaintLink.any()),
             )
         )
-    ).all()
+    )).all()
     progress.set_steps(len(missing))
     found = 0
 
@@ -175,4 +175,4 @@ def batch_check_homologations(
             f"Getting documentation ({index+1} of {len(missing)}) "
             + f"{"{found} found" if found > 0 else ""}",
         )
-        check_homologation(agreement, db, creds)
+        await check_homologation(agreement, db, creds)
