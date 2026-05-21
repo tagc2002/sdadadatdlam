@@ -65,13 +65,15 @@ def get_event(event_id: str) -> Optional[GoogleEvent]:
         service = build("calendar", "v3", credentials = creds)
         event_result = service.events().get(calendarId="primary", eventId=event_id).execute()# pylint: disable=maybe-no-member
         if not event_result:
-            return
+            return None
         return GoogleEvent.model_validate(event_result)
 
     except HttpError:
         logger.warning("Error getting event %s", event_id)
-    except ValidationError:
+        return None
+    except ValidationError as e:
         logger.error("Error validating event %s", event_result)
+        raise e
 
 def search_events(term: str) -> List[GoogleEvent]:
     """Searches for an event based on a search term.
@@ -127,11 +129,12 @@ def create_event(event: GoogleEvent) -> Optional[GoogleEvent]:
         ).execute()
         if not event_result:
             logger.error("Error creating event")
-            return
+            return None
         return GoogleEvent.model_validate(event_result)
 
     except HttpError:
         logger.warning("Error creating event %s", str(event))
+        return None
     except ValidationError as e:
         logger.warning("Error validating event %s", event_result)
         raise e
@@ -162,11 +165,12 @@ def update_event(event_id: str, event: GoogleEvent, notify: bool) -> Optional[Go
             supportsAttachments = True
         ).execute()
         if not event_result:
-            return
+            return None
         return GoogleEvent.model_validate(event_result)
 
     except HttpError:
         logger.warning("Error updating event %s", event_id)
+        return None
     except ValidationError as e:
         logger.warning("Error validating event %s", event)
         raise e
@@ -185,11 +189,12 @@ def get_colors() -> Optional[GoogleColors]:
         service = build("calendar", "v3", credentials = creds)
         colors = service.colors().get().execute()# pylint: disable=maybe-no-member
         if not colors:
-            return
+            return None
         return GoogleColors.model_validate(colors)
 
     except HttpError:
         logger.warning("Error getting calendar colors")
+        return None
     except ValidationError as e:
         logger.error("Error validating colors")
         raise e

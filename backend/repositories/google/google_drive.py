@@ -1,7 +1,9 @@
+"""Class for interfacing with google drive 
+for document sharing and persistent storage."""
+
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from repositories.google.google_auth import basic_auth
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 def upload_basic():

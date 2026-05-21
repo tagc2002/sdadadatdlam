@@ -1,6 +1,10 @@
+"""
+Utility classes for getting info to and from SECLO driver.
+"""
+from decimal import Decimal
 import logging
 from datetime import datetime
-from typing import Any, List, Self, Tuple
+from typing import Any, List, Optional, Self, Tuple
 from attr import dataclass
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
@@ -32,7 +36,7 @@ class CitationResult:
                     self.enabled = False
             except NoSuchElementException:
                 logger.warning(
-                    "could not access properties for agreement selector switch."
+                    "Could not access properties for agreement selector switch."
                 )
                 self.enabled = True
             self.amount = (
@@ -48,7 +52,7 @@ class CitationResult:
             self.person = row_item.find_elements(By.TAG_NAME, "td")[1].text
         self.notify = False
         self.absent = False
-        self.notif_method = SECLONotificationType.TELEGRAM
+        self.notif_method = SECLONotificationType.DONOTSEND
         logger.debug("Created instance of CitationResult with %s", str(self))
 
     def __eq__(self, other):
@@ -73,18 +77,44 @@ class CitationResult:
         return hash(self.person)
 
     def get_person(self: Self) -> str:
+        """Get person name associated with this Citation Result. 
+        Returns:
+            str: Name
+        """
         return self.person
 
     def is_employee(self: Self) -> bool:
+        "Whether this instance is bound to an employee or not"
         return hasattr(self, "amount")
 
-    def get_result(self: Self) -> tuple[bool, str | None]:
+    def get_result(self: Self) -> Tuple[bool, Optional[str]]:
+        """
+        Returns the set result for this instance. Only applicable to employees.
+
+        Returns:
+            Tuple[bool, Optional[str]]: (hasAmount, amount).
+
+        Raises:
+            InvalidParameterException: If trying to get result for an employer.
+        """
         if hasattr(self, "amount"):
             return (isinstance(self.amount, str), self.amount)
-        else:
-            raise InvalidParameterException("Can't get result for an employer")
+        raise InvalidParameterException("Can't get result for an employer")
 
-    def set_result(self: Self, agreement: bool, amount: float | None = None):
+    def set_result(self: Self, agreement: bool, amount: Optional[Decimal] = None):
+        """Sets the citation result info for this citation instance. 
+        AKA if a given employee had an agreement and for how much.
+
+        Args:
+            agreement (bool): Whether this result is an agreement
+            amount (Optional[Decimal]): If agreement, for how much. Defaults to None.
+
+        Raises:
+            InvalidParameterException: Instance is employer.
+            InvalidParameterException: Agreement without amount.
+            InvalidParameterException: Amount for nonagreement.
+            InvalidParameterException: Negative amount.
+        """
         if self.is_employee():
             if agreement:
                 if amount is None:
@@ -94,7 +124,7 @@ class CitationResult:
                 elif amount <= 0:
                     raise InvalidParameterException("Amount must be positive.")
                 else:
-                    self.amount = f"{amount:.2f}"
+                    self.amount = f"{amount:.2f}".replace(".", ",")
             else:
                 if amount is not None:
                     raise InvalidParameterException(
@@ -108,34 +138,39 @@ class CitationResult:
         self: Self,
         notify: bool,
         absent: bool = False,
-        method: SECLONotificationType | None = None,
+        method: SECLONotificationType = SECLONotificationType.DONOTSEND,
     ):
+        """Sets notification info if a new citation was requested.
+        Notification method and absence can condition whether to use regular citation
+        or incomparency citation notification modules.
+
+        Args:
+            notify (bool): Whether to notify this person or not.
+            absent (bool, optional): If said person was absent. Defaults to False.
+            method SECLONotificationType: Notification method to use. Defaults to DONOTSEND.
+        """
         if notify:
             self.notify = True
             self.absent = absent
-            if isinstance(method, SECLONotificationType):
-                self.notif_method = method
-            else:
-                raise InvalidParameterException(
-                    "Must provide a notification method to notify."
-                )
+            self.notif_method = method
         else:
             self.notify = False
             self.absent = absent
 
 
 class SECLOAddressData:
+    "Generic class for storing address data."
     def __init__(
         self: Self,
         province: str,
         district: str,
         county: str,
         street: str,
-        number: str | None = None,
-        floor: str | None = None,
-        apt: str | None = None,
-        cpa: str | None = None,
-        bonus_data: str | None = None,
+        number: Optional[str] = None,
+        floor: Optional[str] = None,
+        apt: Optional[str] = None,
+        cpa: Optional[str] = None,
+        bonus_data: Optional[str] = None,
     ):
         self.province = province.strip()
         self.district = district.strip()
@@ -155,21 +190,22 @@ class SECLOAddressData:
 
 
 class SECLOCommonData:
+    "Generic class for person data. To be extended by actual person classes."
     def __init__(
         self: Self,
         name: str,
-        dni: str | None = None,
-        cuil: str | None = None,
+        dni: Optional[str] = None,
+        cuil: Optional[str] = None,
         validated: bool = False,
     ):
         self.name: str = name.strip()
-        self.address: SECLOAddressData | None = None
-        self.mail: str | None = None
-        self.phone: int | None = None
-        self.mobile_phone: Tuple[int, int] | None = None
+        self.address: Optional[SECLOAddressData] = None
+        self.mail: Optional[str] = None
+        self.phone: Optional[int] = None
+        self.mobile_phone: Optional[Tuple[int, int]] = None
         self.validated: bool = validated
-        self.dni: int | None
-        self.cuil: str | None
+        self.dni: Optional[int]
+        self.cuil: Optional[str]
         try:
             self.dni = int(dni or "")
         except ValueError:
@@ -178,18 +214,22 @@ class SECLOCommonData:
         self.cuil = cuil.strip().replace("-", "") if cuil else None
 
     def add_address(self: Self, address: SECLOAddressData):
+        "Adds an address to this person."
         self.address = address
 
-    def add_mail(self: Self, mail: str | None = None):
+    def add_mail(self: Self, mail: Optional[str] = None):
+        "Adds an email to this person. For ease of use allows None to not add"
         self.mail = mail.strip() if mail else None
 
     def add_phone(self: Self, phone: str | None):
+        "Adds a phone number to this person. Supports None"
         try:
             self.phone = int(phone or "")
         except ValueError:
             self.phone = None
 
     def add_mobile_phone(self: Self, prefix: str, phone: str):
+        "Adds a mobile phone number to this person."
         try:
             self.mobile_phone = (int(prefix), int(phone))
         except ValueError:
@@ -218,11 +258,12 @@ class SECLOCommonData:
 
 
 class SECLOEmployeeData(SECLOCommonData):
+    "Class for retrieving employee data from SECLO."
     def __init__(
         self: Self,
         name: str,
-        dni: str | None = None,
-        cuil: str | None = None,
+        dni: Optional[str] = None,
+        cuil: Optional[str] = None,
         validated: bool = False,
     ):
         super().__init__(name, dni, cuil, validated)
@@ -235,33 +276,52 @@ class SECLOEmployeeData(SECLOCommonData):
         self.claim_amount = None
 
     def add_birth_date(self: Self, birth_date: str):
-        self.birth_date = datetime.strptime(birth_date, "%d/%m/%Y")
+        "Register a birth date for this employee."
+        try:
+            self.birth_date = datetime.strptime(birth_date, "%d/%m/%Y")
+        except ValueError:
+            self.birth_date = None
 
     def add_start_date(self: Self, start_date: str):
-        self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
+        "Registers a relation start date for this employee."
+        try:
+            self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
+        except ValueError:
+            self.start_date = None
 
     def add_end_date(self: Self, end_date: str):
-        if end_date == "": 
-            return
-        self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
+        "Registers an end date for this employee."
+        try:
+            self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
+        except ValueError:
+            self.end_date = None
 
     def add_wage(self: Self, amount: str):
-        self.wage = int(amount)
+        "Registers a given wage for this employee"
+        try:
+            self.wage = Decimal(amount.replace(",", "."))
+        except ValueError:
+            self.wage = None
 
-    def add_type(self: Self, cct: str | None = None, category: str | None = None):
+    def add_type(self: Self, cct: Optional[str] = None, category: Optional[str] = None):
+        "Registers a given relation category and convention for this employee. Supports None"
         self.cct = cct.strip() if cct else None
         self.category = category.strip() if category else None
 
     def add_claim_amount(self: Self, amount: str):
-        self.claim_amount = int(amount.split(",")[0])
+        "Registers a claim amount for a given employee."
+        try:
+            self.claim_amount = Decimal(amount.replace(",", "."))
+        except ValueError:
+            self.claim_amount = None
 
     def __str__(self: Self):
         return f"{super().__str__()}Birthdate: {self.birth_date}\n"+\
             f"Workdates: {self.start_date} - {self.end_date}\nwage: {self.wage}\n"+\
             f"worktype: {self.category} - {self.cct}\nclaim: {self.claim_amount}"
 
-
 class SECLOEmployerData(SECLOCommonData):
+    "Class for retrieving employer data from SECLO."
     def __init__(
         self: Self,
         name: str,
@@ -273,6 +333,7 @@ class SECLOEmployerData(SECLOCommonData):
         self.person_type = None
 
     def add_person_type(self: Self, person_type: PersonType):
+        "Registers the person type for this employer."
         self.person_type = person_type
 
     def __str__(self: Self):
@@ -280,11 +341,12 @@ class SECLOEmployerData(SECLOCommonData):
 
 
 class SECLOLawyerData(SECLOCommonData):
+    "Class for retrieving lawyer data from SECLO."
     def __init__(
         self: Self,
         name: str,
-        dni: str | None = None,
-        cuil: str | None = None,
+        dni: Optional[str] = None,
+        cuil: Optional[str] = None,
         validated: bool = False,
     ):
         super().__init__(name, dni, cuil, validated)
@@ -293,6 +355,7 @@ class SECLOLawyerData(SECLOCommonData):
         self.f = None
 
     def add_tf(self: Self, t: str, f: str):
+        "Registers credential t&f for this lawyer."
         try:
             self.t = int(t)
             self.f = int(f)
@@ -301,6 +364,9 @@ class SECLOLawyerData(SECLOCommonData):
             self.f = 0
 
     def add_represented(self: Self, is_employee: bool, name: str):
+        """Adds represented name for this lawyer 
+        (does not actually link them, that must happen later)
+        """
         self.represents.append((is_employee, name))
 
     def __str__(self: Self):
@@ -308,10 +374,12 @@ class SECLOLawyerData(SECLOCommonData):
 
 
 class SECLOOtherData(SECLOCommonData):
-    pass
+    "Class for retrieving other data from SECLO."
+    # There's nothing noteworthy not contemplated in common data.
 
 
 class SECLOClaimData:
+    "Class for retrieving claim data from SECLO"
     def __init__(self: Self, recid: int, legal_stuff: str, init_by_worker: bool):
         self.recid = recid
         self.legal_stuff = legal_stuff
@@ -323,18 +391,23 @@ class SECLOClaimData:
         self.others: List[SECLOOtherData] = []
 
     def add_claim_object(self: Self, claim: ClaimType):
+        "Adds a claim object to this given claim."
         self.claims.append(claim)
 
     def add_employee(self: Self, employee: SECLOEmployeeData):
+        "Adds an employee to this given claim."
         self.employees.append(employee)
 
     def add_employer(self: Self, employer: SECLOEmployerData):
+        "Adds an employer to this given claim."
         self.employers.append(employer)
 
     def add_lawyer(self: Self, lawyer: SECLOLawyerData):
+        "Adds a lawyer to this given claim."
         self.lawyers.append(lawyer)
 
     def add_other(self: Self, other: SECLOOtherData):
+        "Adds an 'other' person to this given claim."
         self.others.append(other)
 
     def __str__(self: Self):
@@ -361,13 +434,14 @@ class SECLOClaimData:
 
 @dataclass
 class SECLONotificationData:
+    "Dataclass for notification data retrieved from SECLO."
     id: int
     person: str
     citationType: str
     isEmployer: bool
     notificationType: SECLONotificationType
     generatedDate: datetime
-    notifiedDate: datetime | None
+    notifiedDate: Optional[datetime]
     notificationCode: str
     notificationStatus: str
     afipRead: bool
@@ -377,10 +451,11 @@ class SECLONotificationData:
 
 @dataclass
 class SECLOCitation:
+    "Dataclass for citation data retrieved from SECLO."
     citationID: int
     gdeID: str
     initDate: datetime
     citationDate: datetime
     citationType: str
-    pdfString: str | None = None
-    notificationData: List[SECLONotificationData] | None = None
+    pdfString: Optional[str] = None # Will be deprecated once the full api is working.
+    notificationData: Optional[List[SECLONotificationData]] = None
