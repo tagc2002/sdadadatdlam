@@ -241,6 +241,8 @@ class SECLOEmployeeData(SECLOCommonData):
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
 
     def add_end_date(self: Self, end_date: str):
+        if end_date == "": 
+            return
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
 
     def add_wage(self: Self, amount: str):
@@ -251,7 +253,7 @@ class SECLOEmployeeData(SECLOCommonData):
         self.category = category.strip() if category else None
 
     def add_claim_amount(self: Self, amount: str):
-        self.claim_amount = int(amount)
+        self.claim_amount = int(amount.split(",")[0])
 
     def __str__(self: Self):
         return f"{super().__str__()}Birthdate: {self.birth_date}\n"+\

@@ -35,5 +35,5 @@ async def get_notifications(db: DependsDb, creds: DependsSeclo, rec_id: int, cit
     return NotificationDTO.fromList(claimsmanager.get_notifications(rec_id=rec_id, citation_id=citation_id, with_update=with_update, db=db, creds=creds))
 
 @router.get('/{recID}/calendar')
-async def get_calendar(db: DependsDb, rec_id: int, with_update: bool = False):
+def get_calendar(db: DependsDb, rec_id: int, with_update: bool = False):
     return calendarmanager.get_calendar_id(rec_id = rec_id, db = db, with_update=with_update)
