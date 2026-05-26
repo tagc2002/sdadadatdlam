@@ -668,7 +668,7 @@ async def __update_notifications(
                     and not local_notification.employerLink
                     and citation
                 ):
-                    if not __map_notification_to_owner(
+                    if not await __map_notification_to_owner(
                         notification=notification,
                         local_notification=local_notification,
                         people=citation.claim.employers + citation.claim.employees,
@@ -795,7 +795,7 @@ async def __update_notifications(
                                 citation.recID,
                             )
                     else:
-                        if not __map_notification_to_owner(
+                        if not await __map_notification_to_owner(
                             notification=notification,
                             local_notification=local_notification,
                             people=citation.claim.employers,

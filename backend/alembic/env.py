@@ -1,3 +1,4 @@
+"Alembic module for handling database migrations"
 import asyncio
 from logging.config import fileConfig
 

@@ -12,7 +12,7 @@ from redis.backoff import ExponentialBackoff
 
 from api.batch import ingress, liveupdates
 from api.dependencies import init_redis_async_session, init_redis_session
-from api.rest.claims import auth, claims
+from api.rest.claims import auth, claims, agreements
 from config import REDIS_DOMAIN, REDIS_PORT
 from database.dbsessionmanager import sessionmanager
 from database.migrations import run_migrations
@@ -89,3 +89,4 @@ app.include_router(claims.router)
 app.include_router(ingress.router)
 app.include_router(auth.router)
 app.include_router(liveupdates.router)
+app.include_router(agreements.router)

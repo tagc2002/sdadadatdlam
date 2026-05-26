@@ -23,7 +23,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs
 
 
-class Base(AsyncAttrs, DeclarativeBase):
+class Base(DeclarativeBase):
     pass
 
 
@@ -140,7 +140,7 @@ class Documentation(Base):
         back_populates="document"
     )
     claimLink: Mapped[List["DocumentationClaimLink"]] = relationship(lazy="selectin", 
-        back_populates="documentation"
+        back_populates="document"
     )
 
 
@@ -149,9 +149,9 @@ class DocumentationClaimLink(Base):
     docID: Mapped[int] = mapped_column(
         ForeignKey("documentation.docID"), primary_key=True
     )
-    claimID: Mapped[int] = mapped_column(ForeignKey("claim.recID"), primary_key=True)
+    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"), primary_key=True)
 
-    documentation: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="claimLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="claimLink")
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="documentationLink")
 
 
@@ -845,7 +845,7 @@ class DocumentationAgreementLink(Base):
         ForeignKey("agreement.agreementID"), primary_key=True
     )
     isRequired: Mapped[bool]
-    secloUploadDate: Mapped[datetime | None]
+    SECLOUploadedOn: Mapped[datetime | None]
 
     document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="agreementLink")
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="documentationLink")
@@ -951,7 +951,7 @@ class Invoice(Base):
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="invoices")
     document: Mapped["Documentation | None"] = relationship(lazy="selectin", back_populates="invoice")
     employer: Mapped["Employer | None"] = relationship(lazy="selectin", back_populates="invoices")
-    parentInvoice: Mapped["Invoice | None"] = relationship(lazy="selectin", )
+    parentInvoice: Mapped["Invoice | None"] = relationship(lazy="selectin")
 
 
 class Payment(Base):
@@ -1126,7 +1126,8 @@ class DocumentationNonagreementLink(Base):
 class NonagreementSECLOInvoice(Base):
     __tablename__ = "nonagreementSECLOInvoice"
 
-    secloInvoiceID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    invID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    secloInvoiceID: Mapped[int]
     amount: Mapped[Decimal]
     periodDate: Mapped[datetime]
     paymentDate: Mapped[datetime | None]
@@ -1370,7 +1371,7 @@ class LawyerDirectoryEmailLink(Base):
         ForeignKey("lawyerDirectory.lawyerID"), primary_key=True
     )
     emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
-    #description: Mapped[str | None]
+    description: Mapped[str | None]
 
     lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="emailLink")
     email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawyerDirectory")
@@ -1383,7 +1384,7 @@ class LawfirmDirectoryEmailLink(Base):
         ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True
     )
     emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
-    #description: Mapped[str | None]
+    description: Mapped[str | None]
 
     lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="emailLink")
     email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawfirmDirectory")

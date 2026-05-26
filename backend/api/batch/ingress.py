@@ -1,5 +1,4 @@
 """Module for batch ingesting data from SECLO"""
-import asyncio
 
 from fastapi import APIRouter, BackgroundTasks
 from domainlogic.taskmanager import TaskManager
@@ -12,17 +11,17 @@ from database.dbsessionmanager import DependsDb
 router = APIRouter(prefix="/batch")
 
 
-@router.get("/ingressClaims",tags=['batch', 'claims'])
+@router.get("/ingressClaims", tags=["batch", "claims"])
 async def ingress_claims(
     db: DependsDb,
     creds: DependsSeclo,
     redis: DependsRedis,
     background_task: BackgroundTasks,
 ) -> str:
-    """Batch API method for registering new claims from SECLO agenda. 
+    """Batch API method for registering new claims from SECLO agenda.
 
     Will check agenda and load any missing claims, as well as update
-    notification info for the rest. 
+    notification info for the rest.
 
     Returns:
         str: Background task UUID.
@@ -43,7 +42,23 @@ async def ingress_claims(
 
 
 @router.get("/homologations")
-async def check_homologations(db: DependsDb, creds: DependsSeclo) -> None:
+async def check_homologations(
+    db: DependsDb,
+    creds: DependsSeclo,
+    redis: DependsRedis,
+    background_task: BackgroundTasks,
+) -> str:
+    """Batch API method for updating homologations from SECLO.
+
+    Will check pending agreements and load any homologations,
+    as well as update drafts and such.
+
+    Returns:
+        str: Background task UUID.
+    """
     # TODO implement properly
-    pr = ProgressReport()
-    await batch_check_homologations(creds=creds, progress=pr, db=db)
+    taskmanager = TaskManager(redis)
+    task_id = await taskmanager.get_new_task_slot()
+    pr = ProgressReport(taskmanager=taskmanager)
+    background_task.add_task(batch_check_homologations, creds=creds, progress=pr, db=db)
+    return task_id
