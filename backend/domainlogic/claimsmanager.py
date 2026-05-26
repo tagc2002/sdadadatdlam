@@ -6,7 +6,8 @@ import base64
 import logging
 from datetime import datetime
 import os
-from typing import List, Optional
+from typing import List, Optional, Sequence
+from fastapi import Depends
 from sqlalchemy import null, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +21,10 @@ from dataobjects.enums import (
     RequiredAsType,
     SECLONotificationType,
 )
+from database.dbsessionmanager import DependsDb, get_db_session
 from database.database import (
     Address,
+    Agreement,
     Citation,
     Claim,
     Email,
@@ -32,11 +35,15 @@ from database.database import (
     Employer,
     EmployerAddressLink,
     EmployerEmailLink,
+    Invoice,
     Lawyer,
     LawyerEmailLink,
     LawyerTelephone,
     LawyerToEmployee,
     LawyerToEmployer,
+    Homologation,
+    Nonagreement,
+    Payment,
     SecloNotification,
     SecloNotificationToEmployee,
     SecloNotificationToEmployer,
@@ -123,7 +130,7 @@ async def batch_verify_agenda(
     second_stage.set_completion("Done acquiring notification data")
     third_stage.set_steps(len(calendar_info))
     counter = 0
-    with SECLORecData(creds, None, None) as rec_data:
+    with db.no_autoflush, SECLORecData(creds, None, None) as rec_data:
         for index, entry in enumerate(calendar_info):
             entry_progress = ProgressReport()
             third_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
@@ -149,7 +156,6 @@ async def batch_verify_agenda(
                         rec_data=rec_data,
                         citation=None,
                     )
-                    db.add(local_claim)
                 except RecNotAccessibleException:
                     logger.warning(
                         "Claim %s with citation %s (%s) can't be mapped. Skipping...",
@@ -506,6 +512,7 @@ async def __ingress_claim(
                     )
                     if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
                         lawyer_employee_link.isSelfRepresenting = True
+                    local_lawyer.employeeLink.append(lawyer_employee_link)
                     if citation:
                         db.add(lawyer_employee_link)
                     break
@@ -530,6 +537,7 @@ async def __ingress_claim(
                             or lawyer.name == client.employerName
                         ):
                             lawyer_employer_link.isSelfRepresenting = True
+                        local_lawyer.employerLink.append(lawyer_employer_link)
                         if citation:
                             db.add(lawyer_employer_link)
                         break
@@ -541,7 +549,7 @@ async def __ingress_claim(
                         represented[1],
                     )
     # TODO add others info
-    await db.refresh(local_claim)
+    db.add(local_claim)
     local_claim.title = get_cal_header(local_claim)
     return local_claim
 
@@ -831,7 +839,7 @@ async def __update_notifications(
             break
 
 
-async def get_claims(db: AsyncSession, params: Optional[claimFilterParams] = None) -> List[Claim]:
+async def get_claims(db: AsyncSession, params: Optional[claimFilterParams]=None) -> Sequence[Claim]:
     """Returns a list of registered claims, filtered by params
 
     Args:
@@ -854,15 +862,51 @@ async def get_claims(db: AsyncSession, params: Optional[claimFilterParams] = Non
             else:
                 statement = statement.where(Claim.calID != null())
 
-        # if params.citationStartDate:
-        #     statement = statement.where(Claim.initDate > params.initStartDate)
-        # if params.initEndDate:
-        #     statement = statement.where(Claim.initDate < params.initEndDate)
+        if params.citationStartDate:
+            substatement = (select(Citation)
+                            .where(Citation.recID==Claim.recID)
+                            .where(Citation.citationDate >= params.citationStartDate)
+                            .exists())
+            statement = statement.where(substatement)
+        if params.citationEndDate:
+            substatement = (select(Citation)
+                            .where(Citation.recID==Claim.recID)
+                            .where(Citation.citationDate <= params.citationEndDate)
+                            .exists())
+            statement = statement.where(substatement)
 
+        if params.isNonagreement is not None:
+            substatement = (select(Nonagreement)
+                            .where(Nonagreement.recID==Claim.recID)
+                            .exists())
+            statement= statement.where(substatement if params.isNonagreement else ~substatement)
+        if params.isAgreement is not None:
+            substatement = (select(Agreement)
+                            .where(Agreement.recID==Claim.recID)
+                            .exists())
+            statement= statement.where(substatement if params.isAgreement else ~substatement)
+        if params.isHomologated is not None:
+            substatement = (select(Homologation).outerjoin(Homologation.agreement)
+                            .where(Agreement.recID==Claim.recID)
+                            .where(Homologation.signedDate.isNot(None))
+                            .exists())
+            statement= statement.where(substatement if params.isHomologated else ~substatement)
+        if params.isPaid is not None:
+            substatement = (select(Payment).outerjoin(Payment.agreement)
+                            .where(Agreement.recID==Claim.recID)
+                            .exists())
+            statement= statement.where(substatement if params.isPaid else ~substatement)
+        if params.isInvoiced is not None:
+            substatement = (select(Invoice).outerjoin(Invoice.agreement)
+                            .where(Agreement.recID==Claim.recID)
+                            .where(Invoice.afipID.is_not(None))
+                            .exists())
+            statement= statement.where(substatement if params.isInvoiced else ~substatement)
+        if params.hasPendingActions is not None:
+            pass
+            #TODO Implement pending actions
     dbclaims = (await db.scalars(statement)).all()
-    claims = []
-    claims.extend(dbclaims)
-    return claims
+    return dbclaims
 
 
 async def get_claim(rec_id: int, db: AsyncSession) -> Claim:
@@ -885,7 +929,7 @@ async def get_citations(
     db: AsyncSession,
     creds: Optional[SECLOLoginCredentials]=None,
     with_update: bool=False
-) -> List[Citation]:
+) -> Sequence[Citation]:
     """Query citations for a given claim.
 
     Args:
@@ -906,9 +950,7 @@ async def get_citations(
         await __update_notifications(rec_id, creds, db=db)
     statement = select(Citation).where(Citation.recID == rec_id)
     dbcitations = (await db.scalars(statement)).all()
-    citations = []
-    citations.extend(dbcitations)
-    return citations
+    return dbcitations
 
 
 async def get_citation(citation_id: int, db: AsyncSession) -> Citation:
@@ -932,7 +974,7 @@ async def get_notifications(
     db: AsyncSession,
     creds: Optional[SECLOLoginCredentials] = None,
     with_update: bool = False,
-) -> List[SecloNotification]:
+) -> Sequence[SecloNotification]:
     """Query for notification info for a specific citation
 
     Args:
@@ -964,6 +1006,4 @@ async def get_notifications(
         SecloNotification.citationID == citation_id
     )
     db_notifications = (await db.scalars(statement)).all()
-    notifications = []
-    notifications.extend(db_notifications)
-    return notifications
+    return db_notifications

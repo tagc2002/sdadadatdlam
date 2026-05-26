@@ -1521,7 +1521,7 @@ class SECLORecData(SECLOAccessor):
                             By.ID, "ctl00_Center_ctl01_cuit_txtRS"
                         ).get_attribute("value")
                         or ""
-                    )
+                    ).replace('"', "")
                     self.progress.increase_progress(
                         f"Employer {name} ({i+1} of {count})..."
                     )

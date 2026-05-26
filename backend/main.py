@@ -12,7 +12,7 @@ from redis.backoff import ExponentialBackoff
 
 from api.batch import ingress, liveupdates
 from api.dependencies import init_redis_async_session, init_redis_session
-from api.rest.claims import auth, claims, agreements
+from api.rest import agreements, auth, claims, citations, notifications
 from config import REDIS_DOMAIN, REDIS_PORT
 from database.dbsessionmanager import sessionmanager
 from database.migrations import run_migrations
@@ -86,6 +86,8 @@ app = FastAPI(
     root_path="/api", openapi_tags=tags_metadata,
     lifespan=lifespan)
 app.include_router(claims.router)
+app.include_router(citations.router)
+app.include_router(notifications.router)
 app.include_router(ingress.router)
 app.include_router(auth.router)
 app.include_router(liveupdates.router)
