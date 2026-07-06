@@ -4,18 +4,21 @@ Module for interfacing with Google Calendar for event creation and retrieval.
 import datetime
 import logging
 
+from pathlib import Path
 from typing import List, Optional
-
-# import sys
-# sys.path.append("C:/users/tagc2/Downloads/sdadadatdlam/backend")
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import ValidationError
 
-from dataobjects.googledataclasses import GoogleColors, GoogleEvent
+if __name__ == "__main__":
+    import sys
+    sys.path.append(str(Path.cwd()))
+    print(sys.path)
 
+from dataobjects.googledataclasses import GoogleColors, GoogleEvent
 from repositories.google.google_auth import basic_auth
+
 logger = logging.getLogger(__name__)
 
 def list_events(weeks_before: int, weeks_after: int) -> List[GoogleEvent]:
