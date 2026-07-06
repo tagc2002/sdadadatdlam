@@ -7,7 +7,6 @@ import logging
 from datetime import datetime
 import os
 from typing import List, Optional, Sequence
-from fastapi import Depends
 from sqlalchemy import null, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +20,6 @@ from dataobjects.enums import (
     RequiredAsType,
     SECLONotificationType,
 )
-from database.dbsessionmanager import DependsDb, get_db_session
 from database.database import (
     Address,
     Agreement,
@@ -260,7 +258,7 @@ async def __update_claim_standalone(
     seclo: Optional[SECLORecData] = None,
 ):
     if seclo:
-        claim = __ingress_claim(
+        claim = await __ingress_claim(
             rec_id=rec_id,
             init_date=None,
             rec_data=seclo,
@@ -596,9 +594,7 @@ def __ingress_entry_if_missing[T](entry: T, entries: List[T]) -> T:
     # only add address if not added already (one address entry can be used for multiple people)
     if entry not in entries:
         entries.append(entry)
-        # logger.debug(f'Appended {T} to list')
     else:
-        # logger.debug(f'{T} not appended to list')
         for loaded_entry in entries:
             entry = loaded_entry if entry == loaded_entry else entry
     return entry
