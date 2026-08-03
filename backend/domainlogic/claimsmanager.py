@@ -423,11 +423,12 @@ async def __ingress_claim(
         local_address = __ingress_entry_if_missing(
             Address.from_address_data(employer.address), local_addresses
         )
-        employer_address_link = EmployerAddressLink(
-            employer=local_employer, address=local_address
+        employer_address_link = __ingress_entry_if_missing(
+            EmployerAddressLink(
+                employer=local_employer, address=local_address
+            ),
+            local_employer.addresses
         )
-        if employer_address_link not in local_employer.addresses:
-            local_employer.addresses.append(employer_address_link)
         db.add(employer_address_link)
 
         if employer.mail:
@@ -437,12 +438,17 @@ async def __ingress_claim(
                 ),
                 local_mails,
             )
-            employer_email_link = EmployerEmailLink(
-                email=local_mail, employer=local_employer
-            )
-            if employer_email_link not in local_employer.emails:
-                local_employer.emails.append(employer_email_link)
-            db.add(employer_email_link)
+            for email in local_employer.emails:
+                if email.email.email == local_mail.email:
+                    break
+            else:
+                employer_email_link = __ingress_entry_if_missing(
+                    EmployerEmailLink(
+                        email=local_mail, employer=local_employer
+                    ),
+                    local_employer.emails
+                )
+                db.add(employer_email_link)
 
     for lawyer in claim_data.lawyers:
         local_lawyer = Lawyer(
@@ -596,7 +602,8 @@ def __ingress_entry_if_missing[T](entry: T, entries: List[T]) -> T:
         entries.append(entry)
     else:
         for loaded_entry in entries:
-            entry = loaded_entry if entry == loaded_entry else entry
+            if entry == loaded_entry:
+                return loaded_entry
     return entry
 
 
@@ -610,7 +617,7 @@ async def __map_notification_to_owner(
         is_employer = isinstance(person, Employer)
         fullname = person.employerName if is_employer else person.employeeName
         for name in fullname.split():
-            if name not in notification.person:
+            if name.strip() not in notification.person:
                 break
         else:
             if is_employer:

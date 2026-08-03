@@ -584,9 +584,10 @@ class EmployerEmailLink(Base):
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployerEmailLink):
+            if self.employerID is not None and self.emailID is not None:
+                return self.employerID == other.employerID and self.emailID == other.emailID 
             return self.employer == other.employer and self.email == other.email
-        else:
-            return False
+        return False
 
 
 class SecloNotificationToEmployer(Base):
