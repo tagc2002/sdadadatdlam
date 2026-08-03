@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, BackgroundTasks
 from domainlogic.taskmanager import TaskManager
-from domainlogic.claimsmanager import batch_verify_agenda
+from domainlogic.ingressmanager import batch_verify_agenda
 from domainlogic.homomanager import batch_check_homologations
 from repositories.seclo.progress import ProgressReport
 from api.dependencies import DependsSeclo, DependsRedis

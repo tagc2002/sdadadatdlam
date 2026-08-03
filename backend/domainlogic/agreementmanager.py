@@ -3,7 +3,7 @@ Logic for handling agreement registration and retrieval.
 '''
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from database.database import Agreement, Claim, Hemiagreement
+from database.definitions import Agreement, Claim, Hemiagreement
 
 async def create_agreement(rec_id: int, agreement: Agreement, db: AsyncSession) -> Agreement:
     claim = (await db.scalars(select(Claim).where(Claim.recID==rec_id))).one()

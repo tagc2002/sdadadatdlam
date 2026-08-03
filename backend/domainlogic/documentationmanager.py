@@ -4,7 +4,7 @@ import mimetypes
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database import Documentation
+from database.definitions import Documentation
 from dataobjects.enums import DocType
 
 

@@ -6,7 +6,7 @@ from typing import Any, List, Self, Optional, Sequence, Dict
 
 from fastapi import Request
 from pydantic import BaseModel, HttpUrl, SkipValidation, ConfigDict
-from database.database import *  # pylint: disable=wildcard-import
+from database.definitions import *  # pylint: disable=wildcard-import
 from dataobjects.enums import (
     CitationStatus,
     CitationType,

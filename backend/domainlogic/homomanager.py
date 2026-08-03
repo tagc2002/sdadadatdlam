@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from sqlalchemy import and_, not_, null, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database import Agreement, Homologation
+from database.definitions import Agreement, Homologation
 from dataobjects.enums import DocType
 from domainlogic.documentationmanager import store_file
 from repositories.seclo.driver import SECLOFileManager, SECLOLoginCredentials

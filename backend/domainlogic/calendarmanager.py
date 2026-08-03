@@ -10,7 +10,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database.database import Citation, Claim, LawyerToEmployee, LawyerToEmployer
+from database.definitions import Citation, Claim, LawyerToEmployee, LawyerToEmployer
 from dataobjects.googledataclasses import (
     GoogleColorList,
     GoogleEvent,
