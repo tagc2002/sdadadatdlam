@@ -2,25 +2,25 @@ name: sdadadatdlam
 services:
     front:
         build: ./sdadadatdlam-frontend
-        container_name: front
+        container_name: sdadadatdlam-frontend
         ports: 
             - 8080:80
         networks:
             - backshots
-            - frontman
         depends_on:
-            python:
+            backend:
                 condition: service_started
         env_file: ".env"
         expose:
             - 8080
-    python:
+    backend:
         build: ./backend
-        container_name: backend
+        container_name: sdadadatdlam-backend
         ports: 
             - "80:80"
         networks:
             - backshots
+            - playwright
         depends_on:
             postgres:
                 condition: service_healthy
@@ -30,6 +30,21 @@ services:
         volumes:
             - ./logs:/usr/app/src/logs
             - ./temp:/temp
+            - /var/run/docker.sock:/var/run/docker.sock
+        env_file: ".env"
+    toywrong:
+        build: 
+            context: ./backend
+            dockerfile: dockerfile.playwright
+        container_name: toywrong
+        networks: 
+            - playwright
+        depends_on: 
+            selenium:
+                condition: service_healthy
+
+        ports:
+            - "9222:9222"
         env_file: ".env"
     postgres:
         image: postgres:alpine
@@ -62,9 +77,9 @@ services:
         networks:
             - backshots
 
-    selenium-standalone:
+    selenium:
         image: selenium/standalone-docker:4.40
-        container_name: selenium-docker
+        container_name: selenium
         restart: always
         volumes:
             - ./backend/selenium_config.toml:/opt/selenium/config.toml
@@ -77,16 +92,23 @@ services:
         ports: 
             - 4444:4444
         networks:
-            - backshots
+            - playwright
+        healthcheck:
+            test: ["CMD", "/opt/bin/check-grid.sh"]
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
 
 volumes:
     db-data: {}
     redis-data: {}
     selenium-temp: {}
     tailscale-data: {}
+
 configs:
     httpd-config:
         external: true
 networks:
-    frontman: {}
     backshots: {} 
+    playwright: {}          

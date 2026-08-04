@@ -16,6 +16,7 @@ from api.rest import agreements, auth, claims, citations, notifications
 from config import REDIS_DOMAIN, REDIS_PORT
 from database.dbsessionmanager import sessionmanager
 from database.migrations import run_migrations
+from repositories.seclo.driver_playwright import full_test
 
 sys.path.append('/usr/app/src')
 
@@ -79,6 +80,8 @@ async def lifespan(_: FastAPI):
         await sessionmanager.close()
     except AttributeError:
         pass
+
+full_test()
 
 app = FastAPI(
     title="SDADADATDLAM 2.0",

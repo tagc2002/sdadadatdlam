@@ -1,0 +1,13 @@
+FROM node:26-slim
+ 
+WORKDIR /usr/app
+
+COPY ./playwright_config.json config.json
+
+RUN npm install playwright
+
+RUN npx playwright install --only-shell --with-deps chromium
+
+EXPOSE 9222
+
+CMD ["npx", "playwright", "launch-server", "--browser", "chromium", "--config", "config.json"]
