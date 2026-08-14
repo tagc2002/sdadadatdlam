@@ -6,8 +6,6 @@ COPY ./playwright_config.json config.json
 
 RUN npm install playwright
 
-RUN npx playwright install --only-shell --with-deps chromium
-
-EXPOSE 9222
+# RUN npx playwright install --only-shell --with-deps chromium
 
 CMD ["npx", "playwright", "launch-server", "--browser", "chromium", "--config", "config.json"]

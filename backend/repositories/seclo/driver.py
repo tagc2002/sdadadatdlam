@@ -211,7 +211,7 @@ class SECLOAccessor:
 
             if portal_version != PORTAL_VERSION_SUPPORTED:
                 logger.warning(
-                    "Current portal version is %s, but driver supports up to %s."
+                    "Current portal version is %s, but driver supports up to %s. "
                     + "Some features might be unexpectedly broken.",
                     portal_version,
                     PORTAL_VERSION_SUPPORTED,
@@ -508,6 +508,33 @@ class SECLOCitationManager(SECLOAccessor):
         self.progress.set_completion("Done reopening")
         return self
 
+    def __row_to_result(self: Self, row: WebElement, is_employee: bool = True) -> CitationResult:
+        if is_employee:
+            try:
+                enabled = (row.find_elements(By.TAG_NAME, "td")[2]
+                    .find_elements(By.TAG_NAME, "td")[0]
+                    .get_attribute("disabled")
+                    is None)
+            except NoSuchElementException:
+                logger.warning(
+                    "Could not access properties for agreement selector switch."
+                )
+                enabled = True
+            amount = (
+                row.find_elements(By.XPATH, "./*")[4]
+                .find_element(By.TAG_NAME, "input")
+                .text.lstrip()
+            )
+            logger.debug('Amount string "%s"', amount)
+            if len(amount) == 0 or amount == 0:
+                amount = None
+            person = row.find_elements(By.TAG_NAME, "td")[0].text
+        else:
+            amount = None
+            enabled = False
+            person = row.find_elements(By.TAG_NAME, "td")[1].text
+        return CitationResult(person=person, amount=amount, enabled=enabled,is_employee=is_employee)
+
     def get_items(self: Self) -> List[CitationResult]:
         """
         Gets the current list of employees and employers registered in this claim.
@@ -534,8 +561,8 @@ class SECLOCitationManager(SECLOAccessor):
                 )
             )
             for row in table.find_elements(By.CLASS_NAME, "grdRowStyle"):
-                fields.append(CitationResult(row, True))
-                fields.append(CitationResult(row, False))
+                fields.append(self.__row_to_result(row, True))
+                fields.append(self.__row_to_result(row, False))
                 fields_len += 1
             fields = set(fields)
             logger.debug("Found the following people in this citation:")
@@ -591,11 +618,12 @@ class SECLOCitationManager(SECLOAccessor):
         )
         for i, row in enumerate(table.find_elements(By.CLASS_NAME, "grdRowStyle")):
             # check if matches
+            result = self.__row_to_result(row, True)
             if (
-                CitationResult(row) == entry
+                result == entry
                 and self.__row_populated_check(row)
                 and entry.enabled
-                and CitationResult(row).enabled
+                and result.enabled
             ):
                 rows.append((i, row))
         return rows
@@ -698,7 +726,7 @@ class SECLOCitationManager(SECLOAccessor):
         )
         try:
             for entry in set(self.items):
-                if entry.is_employee():
+                if entry.is_employee:
                     self.__set_item(entry)
         except (NoSuchElementException, TimeoutException):
             self._error_handling()

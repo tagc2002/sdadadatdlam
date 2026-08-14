@@ -4,6 +4,7 @@ Include
 Lib
 Scripts
 .env
+.env.prod
 pyvenv.cfg
 temp
 .vscode

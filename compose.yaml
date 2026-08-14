@@ -10,7 +10,7 @@ services:
         depends_on:
             backend:
                 condition: service_started
-        env_file: ".env"
+        env_file: ".env.prod"
         expose:
             - 8080
     backend:
@@ -31,7 +31,7 @@ services:
             - ./logs:/usr/app/src/logs
             - ./temp:/temp
             - /var/run/docker.sock:/var/run/docker.sock
-        env_file: ".env"
+        env_file: ".env.prod"
     toywrong:
         build: 
             context: ./backend
@@ -45,7 +45,7 @@ services:
 
         ports:
             - "9222:9222"
-        env_file: ".env"
+        env_file: ".env.prod"
     postgres:
         image: postgres:alpine
         container_name: prosgres
@@ -58,7 +58,7 @@ services:
             - 5000
         networks:
             - backshots
-        env_file: ".env"
+        env_file: ".env.prod"
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
             interval: 10s

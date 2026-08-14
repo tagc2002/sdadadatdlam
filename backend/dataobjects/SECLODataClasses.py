@@ -6,61 +6,30 @@ import logging
 from datetime import datetime
 from typing import Any, List, Optional, Self, Tuple
 from attr import dataclass
-from selenium.webdriver.remote.webelement import WebElement
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.by import By
 from dataobjects.enums import ClaimType, PersonType, SECLONotificationType
 from repositories.seclo.exceptions import InvalidParameterException
 
 logger = logging.getLogger(__name__)
 
-
+@dataclass
 class CitationResult:
     """
     A class designed to hold a citation result to be passed to and from the function caller.
     Holds name, amount, agreement, notification info and whether it's an employee or employer.
     Implements fancy __eq__ to allow duplicate detection.
     """
-
-    def __init__(self, row_item: WebElement, is_employee: bool = True):
-        if is_employee:
-            try:
-                if (
-                    row_item.find_elements(By.TAG_NAME, "td")[2]
-                    .find_elements(By.TAG_NAME, "td")[0]
-                    .get_attribute("disabled")
-                    is None
-                ):
-                    self.enabled = True
-                else:
-                    self.enabled = False
-            except NoSuchElementException:
-                logger.warning(
-                    "Could not access properties for agreement selector switch."
-                )
-                self.enabled = True
-            self.amount = (
-                row_item.find_elements(By.XPATH, "./*")[4]
-                .find_element(By.TAG_NAME, "input")
-                .text.lstrip()
-            )
-            logger.debug('Amount string "%s"', self.amount)
-            if len(self.amount) == 0:
-                self.amount = None
-            self.person = row_item.find_elements(By.TAG_NAME, "td")[0].text
-        else:
-            self.person = row_item.find_elements(By.TAG_NAME, "td")[1].text
-        self.notify = False
-        self.absent = False
-        self.notif_method = SECLONotificationType.DONOTSEND
-        logger.debug("Created instance of CitationResult with %s", str(self))
+    person: str
+    notify: bool = True
+    absent: bool = False
+    notif_method: SECLONotificationType = SECLONotificationType.DONOTSEND
+    amount: Optional[str] = None
+    enabled: bool = True
+    is_employee: bool = True
 
     def __eq__(self, other):
         if not isinstance(other, CitationResult):
             return NotImplemented
-        return self.person == other.person and (
-            hasattr(self, "amount") == hasattr(other, "amount")
-        )
+        return self.person == other.person and self.is_employee == other.is_employee
 
     def __str__(self):
         if self.amount is not None:
@@ -72,7 +41,7 @@ class CitationResult:
             f'{"Notify (" + self.notif_method.name + ")" if self.notify else "Don't notify"}'
 
     def __hash__(self):
-        if hasattr(self, "amount"):
+        if self.is_employee:
             return hash((self.person, self.amount))
         return hash(self.person)
 
@@ -82,10 +51,6 @@ class CitationResult:
             str: Name
         """
         return self.person
-
-    def is_employee(self: Self) -> bool:
-        "Whether this instance is bound to an employee or not"
-        return hasattr(self, "amount")
 
     def get_result(self: Self) -> Tuple[bool, Optional[str]]:
         """
@@ -97,7 +62,7 @@ class CitationResult:
         Raises:
             InvalidParameterException: If trying to get result for an employer.
         """
-        if hasattr(self, "amount"):
+        if self.is_employee:
             return (isinstance(self.amount, str), self.amount)
         raise InvalidParameterException("Can't get result for an employer")
 
@@ -115,7 +80,7 @@ class CitationResult:
             InvalidParameterException: Amount for nonagreement.
             InvalidParameterException: Negative amount.
         """
-        if self.is_employee():
+        if self.is_employee:
             if agreement:
                 if amount is None:
                     raise InvalidParameterException(
@@ -156,7 +121,6 @@ class CitationResult:
         else:
             self.notify = False
             self.absent = absent
-
 
 class SECLOAddressData:
     "Generic class for storing address data."
