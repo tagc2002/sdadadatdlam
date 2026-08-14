@@ -22,6 +22,7 @@ import uuid
 from playwright.async_api import (
     Browser,
     HttpCredentials,
+    BrowserContext,
     Locator,
     Page,
     Playwright,
@@ -89,6 +90,7 @@ class SECLOSession:
         # Defining driver properties to avoid linting errors
         self.playwright: Playwright
         self.browser: Browser
+        self.context: BrowserContext
         # Actually setting properties
         self.credentials = credentials
         self.downloadpath = Path(f"{DOWNLOADROOT}/{uuid.uuid4()}")
@@ -105,6 +107,13 @@ class SECLOSession:
         self.browser = await self.playwright.chromium.launch(
             headless=HEADLESS, downloads_path=DOWNLOADROOT
         )
+        self.context = await self.browser.new_context(
+            http_credentials=HttpCredentials(
+                username=self.credentials.user,
+                password=self.credentials.password,
+                send="unauthorized",
+            ),
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",)
         return self
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
@@ -134,23 +143,19 @@ class SECLOAccessor:
         session: SECLOSession,
         recid: Optional[int] = None,
         progress_report: Optional[ProgressReport] = None,
+        skip_login: bool = False
     ):
         self.session = session
         self.recid = recid
         self.progress = progress_report or ProgressReport()
         self.page: Page
         self.gde_id: str
+        self.skip_login = skip_login
 
     async def __aenter__(self: Self):
-        self.page = await self.session.browser.new_page(
-            http_credentials=HttpCredentials(
-                username=self.session.credentials.user,
-                password=self.session.credentials.password,
-                send="unauthorized",
-            ),
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-        )
-        await self.login()
+        self.page = await self.session.context.new_page()
+        if not self.skip_login:
+            await self.login()
         return self
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
@@ -1766,7 +1771,7 @@ class SECLOCalendarParser(SECLOAccessor):
     or verifying citation consistency.
     """
 
-    async def __init__(
+    def __init__(
         self: Self,
         session: SECLOSession,
         weeks_before: int,
@@ -1789,11 +1794,21 @@ class SECLOCalendarParser(SECLOAccessor):
         self.first_stage.set_progress(0, "Loading calendar")
         self.second_stage.set_steps(1)
         self.second_stage.set_progress(0, "Loading citation data")
-        self.current_date = await self.__load_calendar()
-        self.id_task = asyncio.get_event_loop().create_task(
+        self.current_date: datetime
+        self.id_task: asyncio.Task
+        self.citation_tasks = []
+
+    async def __aenter__(self: Self) -> Self:
+        await super().__aenter__()
+        self.current_date:datetime = await self.__load_calendar()
+        self.today_date = self.current_date
+        self.id_task: asyncio.Task = asyncio.get_event_loop().create_task(
             self.__populate_calendar_ids()
         )
-        self.citation_tasks = []
+        return self
+
+    async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
+        await super().__aexit__(exc_type, exc_val, exc_tb)
 
     async def __load_calendar(self: Self) -> datetime:
         await self.page.locator("#ctl00_btnAgenda").click()
@@ -1801,7 +1816,7 @@ class SECLOCalendarParser(SECLOAccessor):
         await self.page.locator("#ctl00_Center_chkReal").click()
         await self.page.wait_for_event("load")
         return datetime.strptime(
-            await self.page.locator("#ctl00_Center_txtFecha_txt").inner_text(),
+            await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
             "%d/%m/%Y",
         )
 
@@ -1823,11 +1838,12 @@ class SECLOCalendarParser(SECLOAccessor):
 
     async def __advance_calendar(self: Self, date: datetime):
         date_textbox = self.page.locator("#ctl00_Center_txtFecha_txt")
-        if datetime.strptime(await date_textbox.inner_text(), "%d/%m/%Y") is not date:
+        if datetime.strptime(await date_textbox.input_value(), "%d/%m/%Y") is not date:
+            await date_textbox.fill("")
             await date_textbox.fill(date.strftime("%d/%m/%Y"))
             await self.page.locator("#ctl00_Center_btnConsultar").click()
             await self.page.wait_for_event("load")
-        return datetime.strptime(await date_textbox.inner_text(), "%d/%m/%Y")
+        return datetime.strptime(await date_textbox.input_value(), "%d/%m/%Y")
 
     async def __iterate_calendar_range(self: Self):
         if self.current <= self.weeks_after and self.weeks_after >= 0:
@@ -1841,17 +1857,17 @@ class SECLOCalendarParser(SECLOAccessor):
             if self.current >= self.weeks_after:
                 self.weeks_after = -1
                 self.current = 0
-                self.current_date = await self.__load_calendar()
+                self.current_date = self.today_date
             return True
         if self.current <= self.weeks_before and self.weeks_before > 0:
-            await self.__advance_calendar(self.current_date)
-            self.current_date -= timedelta(weeks=1)
             self.current += 1
+            self.current_date -= timedelta(weeks=1)
+            await self.__advance_calendar(self.current_date)
             self.ids.extend(await self.__iterate_calendar_week())
             self.first_stage.increase_progress(
                 f"{self.current + self.weeks_after} of {self.weeks_before + self.weeks_after}",
             )
-            if self.current >= self.weeks_after:
+            if self.current >= self.weeks_before:
                 self.weeks_before = -1
                 self.current = 0
             return True
@@ -1860,64 +1876,73 @@ class SECLOCalendarParser(SECLOAccessor):
 
     async def __populate_calendar_ids(self: Self):
         result = True
-        last_exception: Exception
+        last_exception: Exception | None = None
         while result:
             for _ in range(MAX_ATTEMPTS):
                 try:
                     result = await self.__iterate_calendar_range()
+                    self.citation_tasks.extend(
+                        [
+                            asyncio.get_event_loop().create_task(self.__get_citation_info(id))
+                            for id in self.ids
+                        ]
+                    )
+                    self.second_stage.set_steps(self.second_stage.steps + len(self.ids))
+                    self.ids.clear()
                 except PlaywrightTimeoutError as e:
                     last_exception = e
-        raise last_exception  # type: ignore
+        if result and last_exception is not None:
+            raise last_exception  # type: ignore
 
-    async def __aiter__(self: Self):
-        self.citation_tasks.extend(
-            [
-                asyncio.get_event_loop().create_task(self.__get_citation_info(id))
-                for id in self.ids
-            ]
-        )
-        self.second_stage.set_steps(self.second_stage.steps + len(self.ids))
-        self.ids.clear()
+    def __aiter__(self: Self):
+        return self
 
-        if self.citation_tasks:
-            async for task in asyncio.as_completed(self.citation_tasks):
-                self.citation_tasks.remove(self.citation_tasks)
-                self.second_stage.increase_progress()
-                yield task.result()
-        if not self.ids and not self.citation_tasks and self.id_task.done():
+    async def __anext__(self: Self) -> SECLOCitation:
+        if len(self.citation_tasks) == 0 and self.id_task.done():
             self.second_stage.set_completion("Done")
             raise StopAsyncIteration
+
+        while (len(self.citation_tasks) == 0):
+            await asyncio.sleep(0.01)
+
+        async for task in asyncio.as_completed(self.citation_tasks):
+            self.citation_tasks.remove(task)
+            self.second_stage.increase_progress()
+            return task.result()
+        else:
+            raise StopAsyncIteration # Not really possible but complains otherwise
 
     async def __get_citation_info(self: Self, citation_id: int) -> SECLOCitation:
         # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
         last_exception: Exception
         for _ in range(MAX_ATTEMPTS):
-            try:
-                await self.page.goto(
-                    "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
-                    + f"AudId={citation_id}&esPortal=1"
-                )
-                gde_id_text = await self.page.locator("#rcNroExpediente").inner_text()
-                init_datetime_text = await self.page.locator("#rcFecha").inner_text()
-                init_datetime_text = (
-                    init_datetime_text.split()[0]
-                    + " "
-                    + init_datetime_text.split()[1].split(":")[0]
-                    + ":"
-                    + init_datetime_text.split()[1].split(":")[1]
-                )
-                citation_date = await self.page.locator("#rcFechaA").inner_text()
-                citation_date = citation_date.split("a")[0]
-                return SECLOCitation(
-                    gdeID=gde_id_text,
-                    citationDate=datetime.strptime(citation_date, r"%d/%m/%Y - %H:%M "),
-                    initDate=datetime.strptime(init_datetime_text, r"%d/%m/%Y %H:%M"),
-                    citationID=citation_id,
-                    citationType=await self.page.locator("#auTipoYEstado").inner_text(),
-                    pdfString=base64.b64encode(await self.page.pdf()).decode("ascii"),
-                )
-            except PlaywrightTimeoutError as e:
-                last_exception = e
+            async with SECLOAccessor(self.session, skip_login=True) as session:
+                try:
+                    await session.page.goto(
+                        "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
+                        + f"AudId={citation_id}&esPortal=1"
+                    )
+                    gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
+                    init_datetime_text = await session.page.locator("#rcFecha").inner_text()
+                    init_datetime_text = (
+                        init_datetime_text.split()[0]
+                        + " "
+                        + init_datetime_text.split()[1].split(":")[0]
+                        + ":"
+                        + init_datetime_text.split()[1].split(":")[1]
+                    )
+                    citation_date = await session.page.locator("#rcFechaA").inner_text()
+                    citation_date = citation_date.split("a")[0]
+                    return SECLOCitation(
+                        gdeID=gde_id_text,
+                        citationDate=datetime.strptime(citation_date, r"%d/%m/%Y - %H:%M "),
+                        initDate=datetime.strptime(init_datetime_text, r"%d/%m/%Y %H:%M"),
+                        citationID=citation_id,
+                        citationType=await session.page.locator("#auTipoYEstado").inner_text(),
+                        pdfString=base64.b64encode(await session.page.pdf()).decode("ascii"),
+                    )
+                except PlaywrightTimeoutError as e:
+                    last_exception = e
         logger.warning("Error retrieving citation %d", citation_id)
         logger.warning(last_exception)  # type: ignore
         raise last_exception  # type: ignore
@@ -1998,3 +2023,14 @@ class SECLOCalendarParser(SECLOAccessor):
             await self.page.wait_for_event("load")
         self.progress.set_completion("Done getting cal info")
         return work_days
+
+async def main():
+    async with SECLOSession(SECLOLoginCredentials(os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", ""))) as session:
+        progress = ProgressReport()
+        async with SECLOCalendarParser(session, 10, 20, progress) as cal:
+            async for citation in cal:
+                print(citation)
+    print("DONE")
+
+if __name__ == "__main__":
+    asyncio.run(main())

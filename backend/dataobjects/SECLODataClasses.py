@@ -423,3 +423,6 @@ class SECLOCitation:
     citationType: str
     pdfString: Optional[str] = None # Will be deprecated once the full api is working.
     notificationData: Optional[List[SECLONotificationData]] = None
+
+    def __str__(self: Self) -> str:
+        return f"{self.citationID} ({self.gdeID} {self.initDate}) {self.citationDate} {self.citationType}"
