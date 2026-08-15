@@ -147,10 +147,10 @@ class SECLOAddressData:
         self.bonus_data = bonus_data.strip() if bonus_data else None
 
     def __str__(self: Self):
-        return f'{self.street} {self.number}, {self.floor if self.floor else ""} "+\
+        return f"{self.street} {self.number}, {self.floor if self.floor else ""}"+\
             f"{self.apt if self.apt else ""}{", " if self.floor or self.apt else ""}"+\
             f"{self.county}, {self.district}, {self.province}, {self.cpa} "+\
-            f"{self.bonus_data if self.bonus_data else ""}'
+            f"{self.bonus_data if self.bonus_data else ""}"
 
 
 class SECLOCommonData:
@@ -334,7 +334,7 @@ class SECLOLawyerData(SECLOCommonData):
         self.represents.append((is_employee, name))
 
     def __str__(self: Self):
-        return f"{super().__str__()}T {self.t} F {self.f}\n{self.represents}\n"
+        return f"{super().__str__()}T {self.t} F {self.f}\n{self.represents}"
 
 
 class SECLOOtherData(SECLOCommonData):
