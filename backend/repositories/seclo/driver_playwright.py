@@ -32,7 +32,6 @@ from playwright.async_api import (
 
 if __name__ == "__main__":
     import sys
-
     sys.path.append(str(Path.cwd()))
     print(sys.path)
 
@@ -1116,6 +1115,214 @@ class SECLORecData(SECLOAccessor):
         ).input_value()
         return prefix, phone
 
+    async def __get_employee_data(self: Self, seclo_db_ok: bool) -> tuple[SECLOEmployeeData, bool]:
+        cuil = self.page.locator("#ctl00_Center_ctl00_cuit_txtC")
+        name = f'{await self.page
+                    .locator("#ctl00_Center_ctl00_txtApellido_txt").input_value()
+                } {await self.page
+                    .locator("#ctl00_Center_ctl00_txtNombre_txt").input_value()
+                }'
+
+        if await cuil.input_value() and seclo_db_ok and cuil.is_enabled():
+            await cuil.click()
+            await cuil.press("Tab")
+            # self.page.wait_for_function("")
+            # #TODO Wait untin ctl00_Center_ctl00_cuit_txtRS populated or error
+
+            validated_name = await self.page.locator(
+                "#ctl00_Center_ctl00_cuit_txtRS"
+            ).input_value()
+            if "null null" in validated_name:
+                seclo_db_ok = False
+            else:
+                name = validated_name
+
+        employee = SECLOEmployeeData(
+            name=name,
+            dni=await self.page.locator(
+                "#ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS"
+            ).input_value(),
+            cuil=(await cuil.input_value()).replace("-", ""),
+            validated=seclo_db_ok,
+        )
+        employee.add_address(await self.__get_address(0))
+        employee.add_birth_date(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtFecNacimiento_txt"
+            ).input_value()
+        )
+        employee.add_claim_amount(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtImporte_txt"
+            ).input_value()
+        )
+        employee.add_mail(await self.__get_email(0))
+        employee.add_mobile_phone(*await self.__get_mobile_phone(0))
+        employee.add_phone(await self.__get_phone(0))
+        employee.add_start_date(
+            await self.page.locator(
+                "ctl00_Center_ctl00_txtFecIngreso_txt"
+            ).input_value()
+        )
+        employee.add_end_date(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtFecEgreso_txt"
+            ).input_value()
+        )
+        employee.add_type(
+            cct=await self.page.locator(
+                "#ctl00_Center_ctl00_txtConvenioNum_txt"
+            ).input_value(),
+            category=await self.page.locator(
+                "#ctl00_Center_ctl00_txtCategoria_txt"
+            ).input_value(),
+        )
+        employee.add_wage(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtRemuneracion_txt"
+            ).input_value()
+        )
+        return employee, seclo_db_ok
+
+    async def __get_employer_data(self: Self, seclo_db_ok: bool) -> tuple[SECLOEmployerData, bool]:
+        name = (
+            await self.page.locator(
+                "#ctl00_Center_ctl01_cuit_txtRS"
+            ).input_value()
+        ).replace('"', "")
+        if "null null" in name:
+            seclo_db_ok = False
+        cuil = (
+            await self.page.locator(
+                "#ctl00_Center_ctl01_cuit_txtC"
+            ).input_value()
+        ).replace("-", "")
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl01_txtNroDocumento_txt"
+        ).input_value()
+        employer = SECLOEmployerData(
+            name=name,
+            dni=dni,
+            cuil=cuil,
+            validated=seclo_db_ok and len(cuil) > 0,
+        )
+        employer.add_address(await self.__get_address(1))
+        employer.add_mail(await self.__get_email(1))
+        for item in (
+            await self.page.locator(
+                "#ctl00_Center_ctl01_cmbTipoSociedad_cmb"
+            )
+            .locator("option")
+            .all()
+        ):
+            if await item.get_attribute("selected"):
+                employer.add_person_type(
+                    PersonType.from_string(await item.inner_text())
+                )
+                break
+        employer.add_phone(await self.__get_phone(1))
+        return employer, seclo_db_ok
+
+    async def __get_lawyer_data(self: Self, seclo_db_ok: bool) -> SECLOLawyerData:
+        email = await self.__get_email(2)
+        phone = await self.__get_phone(2)
+        mobilephone = await self.__get_mobile_phone(2)
+
+        # name validation (unreliable!)
+        # folio = WebDriverWait(self.driver, 5).until(
+        #   EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt'))
+        # )
+        # foliovalue = folio.get_property('value')
+        # folio.send_keys(
+        #   Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT +
+        #   Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE +
+        #   '0' + Keys.TAB)
+        # WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+        # self.driver.switch_to.alert.accept()
+        # folio.send_keys(str(foliovalue))
+        # folio.send_keys(Keys.TAB)
+        self_validated = True
+        name: str = " ".join(
+            [
+                await self.page.locator(
+                    "#ctl00_Center_ctl02_txtNombre_lbl"
+                ).input_value(),
+                await self.page.locator(
+                    "#ctl00_Center_ctl02_txtApellido_lbl"
+                ).input_value(),
+            ]
+        )
+        # try:
+        #     WebDriverWait(self.driver, 5).until(
+        #         lambda driver: len(driver
+        #             .find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text)>0)
+        # except Exception:
+        #     try:
+        #         alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+        #         self.driver.switch_to.alert.accept()
+        #     except Exception:
+        #         selfValidated = False
+        # if selfValidated:
+        #     name:str = " ".join([
+        #       self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtNombre_lbl").text,
+        #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
+
+        lawyer = SECLOLawyerData(
+            name=name,
+            dni=await self.page.locator(
+                "#ctl00_Center_ctl02_txtNroDocumento_lbl"
+            ).input_value(),
+            validated=seclo_db_ok and self_validated,
+        )
+        lawyer.add_address(await self.__get_address(2))
+
+        for row in (
+            await self.page.locator("#ctl00_Center_ctl02_lstAsignados")
+            .locator("td")
+            .all()
+        ):
+            if await row.locator("input").is_checked():
+                name = (await row.inner_text()).replace(",", "")
+                lawyer.add_represented(
+                    is_employee=await self.page.locator(
+                        "#ctl00_Center_ctl02_chkRepresentantes_0"
+                    ).is_checked(),
+                    name=name,
+                )
+        lawyer.add_phone(phone)
+        lawyer.add_mobile_phone(*mobilephone)
+        lawyer.add_mail(email)
+        lawyer.add_tf(
+            t=await self.page.locator(
+                "#ctl00_Center_ctl02_txtTomo_txt"
+            ).input_value(),
+            f=await self.page.locator(
+                "#ctl00_Center_ctl02_txtFolio_txt"
+            ).input_value(),
+        )
+        return lawyer
+
+    async def __get_other_data(self: Self) -> SECLOOtherData:
+        name = " ".join(
+            [
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtApellido_txt"
+                ).input_value(),
+                await self.page.locator(
+                    "ctl00_Center_ctl03_txtNombre_txt"
+                ).input_value(),
+            ]
+        )
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl03_txtNroDocumento_txt"
+        ).input_value()
+        other = SECLOOtherData(name=name, dni=dni)
+        other.add_address(await self.__get_address(3))
+        other.add_mail(await self.__get_email(3))
+        other.add_phone(await self.__get_phone(3))
+        other.add_mobile_phone(*await self.__get_mobile_phone(3))
+        return other
+
     async def get_claim_data(self: Self) -> SECLOClaimData:
         """
         Accesses the given claims initiation data.
@@ -1124,9 +1331,8 @@ class SECLORecData(SECLOAccessor):
         Returns:
             SECLOClaimData: an object that contains all claim data.
         """
-        attempts = 0
         last_exception = None
-        while attempts < MAX_ATTEMPTS:
+        for _ in range(MAX_ATTEMPTS):
             try:
                 self.progress.set_steps(1)
                 self.progress.set_progress(0, "Loading claim data form...")
@@ -1134,40 +1340,38 @@ class SECLORecData(SECLOAccessor):
                 await self._load_rec()
                 seclo_db_ok = True
                 await self.page.wait_for_load_state()
-                total_items = len(
+                total_items = (
                     await self.page.locator("#ctl00_Center_lstTrabajadores")
                     .locator("li")
-                    .all()
+                    .count()
                 )
-                total_items += len(
+                total_items += (
                     await self.page.locator("#ctl00_Center_lstEmpleadores")
                     .locator("li")
-                    .all()
+                    .count()
                 )
-                total_items += len(
+                total_items += (
                     await self.page.locator("#ctl00_Center_lstReprentantes")
                     .locator("li")
-                    .all()
+                    .count()
                 )
-                total_items += len(
+                total_items += (
                     await self.page.locator("#ctl00_Center_lstDerechohabientes")
                     .locator("li")
-                    .all()
+                    .count()
                 )
                 self.progress.set_steps(2 + total_items)
 
                 # CLAIM
                 self.progress.increase_progress("Getting claim data...")
-                init_by_employee = await self.page.locator(
-                    "#ctl00_Center_ucReclamo_optReclamante_0"
-                ).is_checked()
                 claim_data = SECLOClaimData(
                     recid=self.recid or 0,
                     legal_stuff=await self.page.locator(
                         "#ctl00_Center_ucReclamo_txtComentario"
                     ).input_value(),
-                    init_by_worker=init_by_employee == "true"
-                    or init_by_employee is True,
+                    init_by_worker=await self.page.locator(
+                        "#ctl00_Center_ucReclamo_optReclamante_0"
+                    ).is_checked()
                 )
                 for row in (
                     await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
@@ -1180,252 +1384,48 @@ class SECLORecData(SECLOAccessor):
                                 await row.locator("label").inner_text()
                             )
                         )
-
                 # EMPLOYEES
-                employees = self.page.locator("#ctl00_Center_lstTrabajadores").locator(
-                    "li"
-                )
-                for i in range(await employees.count()):
-                    await employees.nth(i).locator("a").click()
-
-                    cuil = self.page.locator("#ctl00_Center_ctl00_cuit_txtC")
-                    name = f'{await self.page
-                              .locator("#ctl00_Center_ctl00_txtApellido_txt").input_value()
-                            } {await self.page
-                              .locator("#ctl00_Center_ctl00_txtNombre_txt").input_value()
-                            }'
+                people_list = self.page.locator("#ctl00_Center_lstTrabajadores").locator("li")
+                for i in range(await people_list.count()):
+                    await people_list.nth(i).locator("a").click()
+                    employee, seclo_db_ok = await self.__get_employee_data(seclo_db_ok)
                     self.progress.increase_progress(
-                        f"Employee {name} ({i+1} of {await employees.count()})"
-                    )
-
-                    if await cuil.input_value() and seclo_db_ok and cuil.is_enabled():
-                        await cuil.click()
-                        await cuil.press("Tab")
-                        # self.page.wait_for_function("")
-                        # #TODO Wait untin ctl00_Center_ctl00_cuit_txtRS populated or error
-
-                        validated_name = await self.page.locator(
-                            "#ctl00_Center_ctl00_cuit_txtRS"
-                        ).input_value()
-                        if "null null" in validated_name:
-                            seclo_db_ok = False
-                        else:
-                            name = validated_name
-
-                    employee = SECLOEmployeeData(
-                        name=name,
-                        dni=await self.page.locator(
-                            "#ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS"
-                        ).input_value(),
-                        cuil=(await cuil.input_value()).replace("-", ""),
-                        validated=seclo_db_ok,
-                    )
-                    employee.add_address(await self.__get_address(0))
-                    employee.add_birth_date(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtFecNacimiento_txt"
-                        ).input_value()
-                    )
-                    employee.add_claim_amount(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtImporte_txt"
-                        ).input_value()
-                    )
-                    employee.add_mail(await self.__get_email(0))
-                    employee.add_mobile_phone(*await self.__get_mobile_phone(0))
-                    employee.add_phone(await self.__get_phone(0))
-                    employee.add_start_date(
-                        await self.page.locator(
-                            "ctl00_Center_ctl00_txtFecIngreso_txt"
-                        ).input_value()
-                    )
-                    employee.add_end_date(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtFecEgreso_txt"
-                        ).input_value()
-                    )
-                    employee.add_type(
-                        cct=await self.page.locator(
-                            "#ctl00_Center_ctl00_txtConvenioNum_txt"
-                        ).input_value(),
-                        category=await self.page.locator(
-                            "#ctl00_Center_ctl00_txtCategoria_txt"
-                        ).input_value(),
-                    )
-                    employee.add_wage(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtRemuneracion_txt"
-                        ).input_value()
+                        f"Employee {employee.name} ({i+1} of {await people_list.count()})"
                     )
                     claim_data.add_employee(employee)
                     if seclo_db_ok:
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_btnAgregar"
-                        ).click()
+                        await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
 
                 # EMPLOYERS
-                employers = self.page.locator("#ctl00_Center_lstEmpleadores").locator(
-                    "li"
-                )
-                for i in range(await employers.count()):
-                    await employers.nth(i).locator("a").click()
-
-                    name = (
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_cuit_txtRS"
-                        ).input_value()
-                    ).replace('"', "")
+                people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator("li")
+                for i in range(await people_list.count()):
+                    await people_list.nth(i).locator("a").click()
+                    employer, seclo_db_ok = await self.__get_employer_data(seclo_db_ok)
                     self.progress.increase_progress(
-                        f"Employer {name} ({i+1} of {await employees.count()})..."
+                        f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
                     )
-                    cuil = (
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_cuit_txtC"
-                        ).input_value()
-                    ).replace("-", "")
-                    dni = await self.page.locator(
-                        "#ctl00_Center_ctl01_txtNroDocumento_txt"
-                    ).input_value()
-                    employer = SECLOEmployerData(
-                        name=name,
-                        dni=dni,
-                        cuil=cuil,
-                        validated=seclo_db_ok and len(cuil) > 0,
-                    )
-                    employer.add_address(await self.__get_address(1))
-                    employer.add_mail(await self.__get_email(1))
-                    for item in (
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_cmbTipoSociedad_cmb"
-                        )
-                        .locator("option")
-                        .all()
-                    ):
-                        if await item.get_attribute("selected"):
-                            employer.add_person_type(
-                                PersonType.from_string(await item.inner_text())
-                            )
-                            break
-                    employer.add_phone(await self.__get_phone(1))
                     claim_data.add_employer(employer)
                     if seclo_db_ok:
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_btnAgregar"
-                        ).click()
+                        await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
 
                 # LAWYERS
-                lawyers = self.page.locator("#ctl00_Center_lstReprentantes").locator(
-                    "li"
-                )
-                for i in range(await lawyers.count()):
-                    await lawyers.nth(i).locator("a").click()
-
-                    email = await self.__get_email(2)
-                    phone = await self.__get_phone(2)
-                    mobilephone = await self.__get_mobile_phone(2)
-
-                    # name validation (unreliable!)
-                    # folio = WebDriverWait(self.driver, 5).until(
-                    #   EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt'))
-                    # )
-                    # foliovalue = folio.get_property('value')
-                    # folio.send_keys(
-                    #   Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT +
-                    #   Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE +
-                    #   '0' + Keys.TAB)
-                    # WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-                    # self.driver.switch_to.alert.accept()
-                    # folio.send_keys(str(foliovalue))
-                    # folio.send_keys(Keys.TAB)
-                    self_validated = True
-                    name: str = " ".join(
-                        [
-                            await self.page.locator(
-                                "#ctl00_Center_ctl02_txtNombre_lbl"
-                            ).input_value(),
-                            await self.page.locator(
-                                "#ctl00_Center_ctl02_txtApellido_lbl"
-                            ).input_value(),
-                        ]
-                    )
-                    # try:
-                    #     WebDriverWait(self.driver, 5).until(
-                    #         lambda driver: len(driver
-                    #             .find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text)>0)
-                    # except Exception:
-                    #     try:
-                    #         alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-                    #         self.driver.switch_to.alert.accept()
-                    #     except Exception:
-                    #         selfValidated = False
-                    # if selfValidated:
-                    #     name:str = " ".join([
-                    #       self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtNombre_lbl").text,
-                    #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
+                people_list = self.page.locator("#ctl00_Center_lstReprentantes").locator("li")
+                for i in range(await people_list.count()):
+                    await people_list.nth(i).locator("a").click()
+                    lawyer = await self.__get_lawyer_data(seclo_db_ok)
                     self.progress.increase_progress(
-                        f"Lawyer {name} ({i+1} of {await lawyers.count()})..."
-                    )
-
-                    lawyer = SECLOLawyerData(
-                        name=name,
-                        dni=await self.page.locator(
-                            "#ctl00_Center_ctl02_txtNroDocumento_lbl"
-                        ).input_value(),
-                        validated=seclo_db_ok and self_validated,
-                    )
-                    lawyer.add_address(await self.__get_address(2))
-
-                    for row in (
-                        await self.page.locator("#ctl00_Center_ctl02_lstAsignados")
-                        .locator("td")
-                        .all()
-                    ):
-                        if await row.locator("input").is_checked():
-                            name = (await row.inner_text()).replace(",", "")
-                            lawyer.add_represented(
-                                is_employee=await self.page.locator(
-                                    "#ctl00_Center_ctl02_chkRepresentantes_0"
-                                ).is_checked(),
-                                name=name,
-                            )
-                    lawyer.add_phone(phone)
-                    lawyer.add_mobile_phone(*mobilephone)
-                    lawyer.add_mail(email)
-                    lawyer.add_tf(
-                        t=await self.page.locator(
-                            "#ctl00_Center_ctl02_txtTomo_txt"
-                        ).input_value(),
-                        f=await self.page.locator(
-                            "#ctl00_Center_ctl02_txtFolio_txt"
-                        ).input_value(),
+                        f"Lawyer {lawyer.name} ({i+1} of {await people_list.count()})..."
                     )
                     claim_data.add_lawyer(lawyer)
 
                 # OTHERS
-                others = self.page.locator("#ctl00_Center_lstDerechohabientes").locator("li")
-                for i in range(await others.count()):
-                    await others.nth(i).locator("a").click()
-                    name = " ".join(
-                        [
-                            await self.page.locator(
-                                "#ctl00_Center_ctl03_txtApellido_txt"
-                            ).input_value(),
-                            await self.page.locator(
-                                "ctl00_Center_ctl03_txtNombre_txt"
-                            ).input_value(),
-                        ]
-                    )
-                    dni = await self.page.locator(
-                        "#ctl00_Center_ctl03_txtNroDocumento_txt"
-                    ).input_value()
+                people_list = self.page.locator("#ctl00_Center_lstDerechohabientes").locator("li")
+                for i in range(await people_list.count()):
+                    await people_list.nth(i).locator("a").click()
+                    other = await self.__get_other_data()
                     self.progress.increase_progress(
-                        f"Other {name} ({i+1} of {await others.count()})..."
+                        f"Other {other.name} ({i+1} of {await people_list.count()})..."
                     )
-                    other = SECLOOtherData(name=name, dni=dni)
-                    other.add_address(await self.__get_address(3))
-                    other.add_mail(await self.__get_email(3))
-                    other.add_phone(await self.__get_phone(3))
-                    other.add_mobile_phone(*await self.__get_mobile_phone(3))
                     claim_data.add_other(other)
 
                 # END
@@ -1434,11 +1434,10 @@ class SECLORecData(SECLOAccessor):
                     await self.__save_claim_data()
                 return claim_data
             except PlaywrightTimeoutError as e:
-                attempts += 1
                 last_exception = e
                 logger.warning(e)
                 continue
-        raise AttemptsExceededException(last_exception)
+        raise AttemptsExceededException() from last_exception
 
     async def get_conciliador_data(self: Self) -> str:
         """
@@ -1663,7 +1662,6 @@ class SECLOCalendarParser(SECLOAccessor):
         self.weeks_before = weeks_before
         self.weeks_after = weeks_after
         self.current = 0
-        self.ids: List[int] = []
         self.first_stage = ProgressReport()
         self.second_stage = ProgressReport()
 
@@ -1675,15 +1673,12 @@ class SECLOCalendarParser(SECLOAccessor):
         self.first_stage.set_progress(0, "Loading calendar")
         self.second_stage.set_steps(1)
         self.second_stage.set_progress(0, "Loading citation data")
-        self.current_date: datetime
-        self.today_date: datetime
         self.id_task: asyncio.Task
         self.citation_tasks = []
 
     async def __aenter__(self: Self) -> Self:
         await super().__aenter__()
-        self.current_date:datetime = await self.__load_calendar()
-        self.today_date = self.current_date
+        await self.__load_calendar()
         self.id_task: asyncio.Task = asyncio.get_event_loop().create_task(
             self.__populate_calendar_ids()
         )
@@ -1727,34 +1722,31 @@ class SECLOCalendarParser(SECLOAccessor):
             await self.page.wait_for_event("load")
         return datetime.strptime(await date_textbox.input_value(), "%d/%m/%Y")
 
-    async def __iterate_calendar_range(self: Self):
+    async def __iterate_calendar_range(self: Self) -> tuple[bool, list[int]]:
         if self.current <= self.weeks_after and self.weeks_after >= 0:
-            await self.__advance_calendar(self.current_date)
-            self.current_date += timedelta(weeks=1)
+            await self.__advance_calendar(datetime.now() + timedelta(weeks=self.current))
             self.current += 1
-            self.ids.extend(await self.__iterate_calendar_week())
+            citation_ids = await self.__iterate_calendar_week()
             self.first_stage.increase_progress(
                 f"{self.current} of {self.weeks_before + self.weeks_after}",
             )
             if self.current >= self.weeks_after:
                 self.weeks_after = -1
                 self.current = 0
-                self.current_date = self.today_date
-            return True
+            return True, citation_ids
         if self.current <= self.weeks_before and self.weeks_before > 0:
             self.current += 1
-            self.current_date -= timedelta(weeks=1)
-            await self.__advance_calendar(self.current_date)
-            self.ids.extend(await self.__iterate_calendar_week())
+            await self.__advance_calendar(datetime.now() + timedelta(weeks=-self.current))
+            citation_ids = await self.__iterate_calendar_week()
             self.first_stage.increase_progress(
                 f"{self.current + self.weeks_after} of {self.weeks_before + self.weeks_after}",
             )
             if self.current >= self.weeks_before:
                 self.weeks_before = -1
                 self.current = 0
-            return True
+            return True, citation_ids
         self.first_stage.set_completion("Done")
-        return False
+        return False, []
 
     async def __populate_calendar_ids(self: Self):
         result = True
@@ -1762,15 +1754,14 @@ class SECLOCalendarParser(SECLOAccessor):
         while result:
             for _ in range(MAX_ATTEMPTS):
                 try:
-                    result = await self.__iterate_calendar_range()
+                    result, citation_ids = await self.__iterate_calendar_range()
                     self.citation_tasks.extend(
                         [
                             asyncio.get_event_loop().create_task(self.__get_citation_info(id))
-                            for id in self.ids
+                            for id in citation_ids
                         ]
                     )
-                    self.second_stage.set_steps(self.second_stage.steps + len(self.ids))
-                    self.ids.clear()
+                    self.second_stage.set_steps(self.second_stage.steps + len(citation_ids))
                 except PlaywrightTimeoutError as e:
                     last_exception = e
         if result and last_exception is not None:
@@ -1784,7 +1775,7 @@ class SECLOCalendarParser(SECLOAccessor):
             self.second_stage.set_completion("Done")
             raise StopAsyncIteration
 
-        while (len(self.citation_tasks) == 0):
+        while len(self.citation_tasks) == 0:
             await asyncio.sleep(0.01)
 
         async for task in asyncio.as_completed(self.citation_tasks):
