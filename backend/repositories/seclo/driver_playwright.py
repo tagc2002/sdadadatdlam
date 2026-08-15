@@ -114,6 +114,7 @@ class SECLOSession:
                 send="unauthorized",
             ),
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",)
+        await self.context.route("**/*.gif", lambda req: req.abort())
         return self
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
@@ -244,7 +245,7 @@ class SECLOAccessor:
 
         logger.debug("Loading recID %d", self.recid)
         try:
-            await self.page.locator("input[name='ctl00$Top$hdnReclamoId']").fill(
+            await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
                 str(self.recid), force=True
             )
             await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
@@ -275,7 +276,9 @@ class SECLOAccessor:
         last_exception = None
         for _ in range(0, MAX_ATTEMPTS):
             try:
+                await self.page.locator("#ctl00_Busqueda_txtNro").fill("")
                 await self.page.locator("#ctl00_Busqueda_txtNro").fill(gde_file)
+                await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
                 await self.page.locator("#ctl00_Busqueda_txtAnio").fill(gde_year)
                 await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
             except PlaywrightTimeoutError as e:
@@ -400,9 +403,7 @@ class SECLOCitationManager(SECLOAccessor):
                 "Registrar Resultado"
                 in await self.page.locator(".appBoxMenu").inner_text()
             ):
-                if await self.page.locator("#ctl00_Center_cmbObjetos").get_attribute(
-                    "disabled"
-                ):
+                if not await self.page.locator("#ctl00_Center_cmbObjetos").is_enabled():
                     logger.debug(
                         "Claim object comb selector is disabled. This is good."
                     )
@@ -413,10 +414,10 @@ class SECLOCitationManager(SECLOAccessor):
                         "Claim object comb selector is enabled. This will be a bummer"
                     )
                     self.multiple = True
-                    self.comb_selector_length = len(
+                    self.comb_selector_length = (
                         await self.page.locator("#ctl00_Center_cmbObjetos")
                         .locator("option")
-                        .all()
+                        .count()
                     )
                     self.comb_selector_index = 0
         except Exception as e:
@@ -485,7 +486,7 @@ class SECLOCitationManager(SECLOAccessor):
                 )
                 enabled = True
             amount = (
-                await row.locator("td").nth(4).locator("input").inner_text()
+                await row.locator("td").nth(4).locator("input").input_value()
             ).lstrip()
             logger.debug('Amount string "%s"', amount)
             if len(amount) == 0 or amount == 0:
@@ -600,6 +601,7 @@ class SECLOCitationManager(SECLOAccessor):
                     loop = True
 
                     # Matches, so populate amount
+                    await row.locator("input[type=text]").fill("")
                     await row.locator("input[type=text]").fill(
                         entry.amount.replace(".", ",")
                     )
@@ -647,6 +649,7 @@ class SECLOCitationManager(SECLOAccessor):
 
     async def __fill_date_input(self: Self, input_id: str, date: datetime):
         logger.info(self.date.strftime("%d%m%Y"))
+        await self.page.locator(f"#{input_id}").fill("")
         await self.page.locator(f"#{input_id}").fill(date.strftime("%d%m%Y"))
 
     async def __advance_result_form(self: Self):
@@ -1063,6 +1066,56 @@ class SECLORecData(SECLOAccessor):
         if await self.page.locator("#ctl00_Center_btnSi").is_visible():
             await self.page.locator("#ctl00_Center_btnSi").click()
 
+    async def __get_address(self: Self, tab: int = 0) -> SECLOAddressData:
+        return SECLOAddressData(
+            province=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtProvincia"
+            ).input_value(),
+            district=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtPartido"
+            ).input_value(),
+            county=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtLocalidad"
+            ).input_value(),
+            street=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtCalle"
+            ).input_value(),
+            number=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtNumero"
+            ).input_value(),
+            floor=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtPiso"
+            ).input_value(),
+            apt=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtDepart"
+            ).input_value(),
+            cpa=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtCPA"
+            ).input_value(),
+            bonus_data=await self.page.locator(
+                "#ctl00_Center_ctl0{tab}_Domicilio_direc_txtAdicional"
+            ).input_value(),
+        )
+
+    async def __get_email(self: Self, tab: int = 0) -> str:
+        return (
+            await self.page.locator(f"#ctl00_Center_ctl0{tab}_txtEmail_txt").input_value()
+        ).strip()
+
+    async def __get_phone(self: Self, tab: int = 0) -> str:
+        return (
+            await self.page.locator("#ctl00_Center_ctl0{tab}_txtTelefono_txt").input_value()
+        )
+
+    async def __get_mobile_phone(self: Self, tab: int = 0) -> tuple[str,str]:
+        prefix=await self.page.locator(
+            f"#ctl00_Center_ctl0{tab}_txtCodArea_Numerico"
+        ).input_value()
+        phone=await self.page.locator(
+            "#ctl00_Center_ctl0{tab}_txtCel_Numerico"
+        ).input_value()
+        return prefix, phone
+
     async def get_claim_data(self: Self) -> SECLOClaimData:
         """
         Accesses the given claims initiation data.
@@ -1112,7 +1165,7 @@ class SECLORecData(SECLOAccessor):
                     recid=self.recid or 0,
                     legal_stuff=await self.page.locator(
                         "#ctl00_Center_ucReclamo_txtComentario"
-                    ).inner_text(),
+                    ).input_value(),
                     init_by_worker=init_by_employee == "true"
                     or init_by_employee is True,
                 )
@@ -1137,23 +1190,23 @@ class SECLORecData(SECLOAccessor):
 
                     cuil = self.page.locator("#ctl00_Center_ctl00_cuit_txtC")
                     name = f'{await self.page
-                              .locator("#ctl00_Center_ctl00_txtApellido_txt").inner_text()
+                              .locator("#ctl00_Center_ctl00_txtApellido_txt").input_value()
                             } {await self.page
-                              .locator("#ctl00_Center_ctl00_txtNombre_txt").inner_text()
+                              .locator("#ctl00_Center_ctl00_txtNombre_txt").input_value()
                             }'
                     self.progress.increase_progress(
                         f"Employee {name} ({i+1} of {await employees.count()})"
                     )
 
-                    if await cuil.inner_text() and seclo_db_ok and cuil.is_enabled():
+                    if await cuil.input_value() and seclo_db_ok and cuil.is_enabled():
                         await cuil.click()
                         await cuil.press("Tab")
-                        # self.page.wait_for_function("") 
+                        # self.page.wait_for_function("")
                         # #TODO Wait untin ctl00_Center_ctl00_cuit_txtRS populated or error
 
                         validated_name = await self.page.locator(
                             "#ctl00_Center_ctl00_cuit_txtRS"
-                        ).inner_text()
+                        ).input_value()
                         if "null null" in validated_name:
                             seclo_db_ok = False
                         else:
@@ -1163,91 +1216,46 @@ class SECLORecData(SECLOAccessor):
                         name=name,
                         dni=await self.page.locator(
                             "#ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS"
-                        ).inner_text(),
-                        cuil=(await cuil.inner_text()).replace("-", ""),
+                        ).input_value(),
+                        cuil=(await cuil.input_value()).replace("-", ""),
                         validated=seclo_db_ok,
                     )
-                    employee.add_address(
-                        SECLOAddressData(
-                            province=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtProvincia"
-                            ).inner_text(),
-                            district=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtPartido"
-                            ).inner_text(),
-                            county=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtLocalidad"
-                            ).inner_text(),
-                            street=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtCalle"
-                            ).inner_text(),
-                            number=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtNumero"
-                            ).inner_text(),
-                            floor=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtPiso"
-                            ).inner_text(),
-                            apt=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtDepart"
-                            ).inner_text(),
-                            cpa=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtCPA"
-                            ).inner_text(),
-                            bonus_data=await self.page.locator(
-                                "#ctl00_Center_ctl00_Domicilio_direc_txtAdicional"
-                            ).inner_text(),
-                        )
-                    )
+                    employee.add_address(await self.__get_address(0))
                     employee.add_birth_date(
                         await self.page.locator(
                             "#ctl00_Center_ctl00_txtFecNacimiento_txt"
-                        ).inner_text()
+                        ).input_value()
                     )
                     employee.add_claim_amount(
                         await self.page.locator(
                             "#ctl00_Center_ctl00_txtImporte_txt"
-                        ).inner_text()
+                        ).input_value()
                     )
-                    employee.add_mail(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtEmail_txt"
-                        ).inner_text()
-                    )
-                    employee.add_mobile_phone(
-                        prefix=await self.page.locator(
-                            "#ctl00_Center_ctl00_txtCodArea_Numerico"
-                        ).inner_text(),
-                        phone=await self.page.locator(
-                            "#ctl00_Center_ctl00_txtCel_Numerico"
-                        ).inner_text(),
-                    )
-                    employee.add_phone(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_txtTelefono_txt"
-                        ).inner_text()
-                    )
+                    employee.add_mail(await self.__get_email(0))
+                    employee.add_mobile_phone(*await self.__get_mobile_phone(0))
+                    employee.add_phone(await self.__get_phone(0))
                     employee.add_start_date(
                         await self.page.locator(
                             "ctl00_Center_ctl00_txtFecIngreso_txt"
-                        ).inner_text()
+                        ).input_value()
                     )
                     employee.add_end_date(
                         await self.page.locator(
                             "#ctl00_Center_ctl00_txtFecEgreso_txt"
-                        ).inner_text()
+                        ).input_value()
                     )
                     employee.add_type(
                         cct=await self.page.locator(
                             "#ctl00_Center_ctl00_txtConvenioNum_txt"
-                        ).inner_text(),
+                        ).input_value(),
                         category=await self.page.locator(
                             "#ctl00_Center_ctl00_txtCategoria_txt"
-                        ).inner_text(),
+                        ).input_value(),
                     )
                     employee.add_wage(
                         await self.page.locator(
                             "#ctl00_Center_ctl00_txtRemuneracion_txt"
-                        ).inner_text()
+                        ).input_value()
                     )
                     claim_data.add_employee(employee)
                     if seclo_db_ok:
@@ -1265,7 +1273,7 @@ class SECLORecData(SECLOAccessor):
                     name = (
                         await self.page.locator(
                             "#ctl00_Center_ctl01_cuit_txtRS"
-                        ).inner_text()
+                        ).input_value()
                     ).replace('"', "")
                     self.progress.increase_progress(
                         f"Employer {name} ({i+1} of {await employees.count()})..."
@@ -1273,53 +1281,19 @@ class SECLORecData(SECLOAccessor):
                     cuil = (
                         await self.page.locator(
                             "#ctl00_Center_ctl01_cuit_txtC"
-                        ).inner_text()
+                        ).input_value()
                     ).replace("-", "")
                     dni = await self.page.locator(
                         "#ctl00_Center_ctl01_txtNroDocumento_txt"
-                    ).inner_text()
+                    ).input_value()
                     employer = SECLOEmployerData(
                         name=name,
                         dni=dni,
                         cuil=cuil,
                         validated=seclo_db_ok and len(cuil) > 0,
                     )
-                    employer.add_address(
-                        SECLOAddressData(
-                            province=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtProvincia"
-                            ).inner_text(),
-                            district=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtPartido"
-                            ).inner_text(),
-                            county=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtLocalidad"
-                            ).inner_text(),
-                            street=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtCalle"
-                            ).inner_text(),
-                            number=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtNumero"
-                            ).inner_text(),
-                            floor=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtPiso"
-                            ).inner_text(),
-                            apt=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtDepart"
-                            ).inner_text(),
-                            cpa=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtCPA"
-                            ).inner_text(),
-                            bonus_data=await self.page.locator(
-                                "#ctl00_Center_ctl01_Domicilio_direc_txtAdicional"
-                            ).inner_text(),
-                        )
-                    )
-                    employer.add_mail(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_txtEmail_txt"
-                        ).inner_text()
-                    )
+                    employer.add_address(await self.__get_address(1))
+                    employer.add_mail(await self.__get_email(1))
                     for item in (
                         await self.page.locator(
                             "#ctl00_Center_ctl01_cmbTipoSociedad_cmb"
@@ -1332,11 +1306,7 @@ class SECLORecData(SECLOAccessor):
                                 PersonType.from_string(await item.inner_text())
                             )
                             break
-                    employer.add_phone(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_txtTelefono_txt"
-                        ).inner_text()
-                    )
+                    employer.add_phone(await self.__get_phone(1))
                     claim_data.add_employer(employer)
                     if seclo_db_ok:
                         await self.page.locator(
@@ -1350,20 +1320,9 @@ class SECLORecData(SECLOAccessor):
                 for i in range(await lawyers.count()):
                     await lawyers.nth(i).locator("a").click()
 
-                    email = (
-                        await self.page.locator(
-                            "#ctl00_Center_ctl02_txtEmail_txt"
-                        ).inner_text()
-                    ).strip()
-                    phone = await self.page.locator(
-                        "#ctl00_Center_ctl02_txtTelefono_txt"
-                    ).inner_text()
-                    mobileprefix = await self.page.locator(
-                        "#ctl00_Center_ctl02_txtCodArea_Numerico"
-                    ).inner_text()
-                    mobilephone = await self.page.locator(
-                        "#ctl00_Center_ctl02_txtCel_Numerico"
-                    ).inner_text()
+                    email = await self.__get_email(2)
+                    phone = await self.__get_phone(2)
+                    mobilephone = await self.__get_mobile_phone(2)
 
                     # name validation (unreliable!)
                     # folio = WebDriverWait(self.driver, 5).until(
@@ -1383,10 +1342,10 @@ class SECLORecData(SECLOAccessor):
                         [
                             await self.page.locator(
                                 "#ctl00_Center_ctl02_txtNombre_lbl"
-                            ).inner_text(),
+                            ).input_value(),
                             await self.page.locator(
                                 "#ctl00_Center_ctl02_txtApellido_lbl"
-                            ).inner_text(),
+                            ).input_value(),
                         ]
                     )
                     # try:
@@ -1411,40 +1370,10 @@ class SECLORecData(SECLOAccessor):
                         name=name,
                         dni=await self.page.locator(
                             "#ctl00_Center_ctl02_txtNroDocumento_lbl"
-                        ).inner_text(),
+                        ).input_value(),
                         validated=seclo_db_ok and self_validated,
                     )
-                    lawyer.add_address(
-                        SECLOAddressData(
-                            province=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtProvincia"
-                            ).inner_text(),
-                            district=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtPartido"
-                            ).inner_text(),
-                            county=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtLocalidad"
-                            ).inner_text(),
-                            street=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtCalle"
-                            ).inner_text(),
-                            number=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtNumero"
-                            ).inner_text(),
-                            floor=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtPiso"
-                            ).inner_text(),
-                            apt=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtDepart"
-                            ).inner_text(),
-                            cpa=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtCPA"
-                            ).inner_text(),
-                            bonus_data=await self.page.locator(
-                                "#ctl00_Center_ctl02_Domicilio_direc_txtAdicional"
-                            ).inner_text(),
-                        )
-                    )
+                    lawyer.add_address(await self.__get_address(2))
 
                     for row in (
                         await self.page.locator("#ctl00_Center_ctl02_lstAsignados")
@@ -1460,92 +1389,43 @@ class SECLORecData(SECLOAccessor):
                                 name=name,
                             )
                     lawyer.add_phone(phone)
-                    lawyer.add_mobile_phone(
-                        prefix=mobileprefix or "", phone=mobilephone or ""
-                    )
+                    lawyer.add_mobile_phone(*mobilephone)
                     lawyer.add_mail(email)
                     lawyer.add_tf(
                         t=await self.page.locator(
                             "#ctl00_Center_ctl02_txtTomo_txt"
-                        ).inner_text(),
+                        ).input_value(),
                         f=await self.page.locator(
                             "#ctl00_Center_ctl02_txtFolio_txt"
-                        ).inner_text(),
+                        ).input_value(),
                     )
                     claim_data.add_lawyer(lawyer)
 
                 # OTHERS
-                others = self.page.locator("#ctl00_Center_lstDerechohabientes").locator(
-                    "li"
-                )
+                others = self.page.locator("#ctl00_Center_lstDerechohabientes").locator("li")
                 for i in range(await others.count()):
                     await others.nth(i).locator("a").click()
                     name = " ".join(
                         [
                             await self.page.locator(
                                 "#ctl00_Center_ctl03_txtApellido_txt"
-                            ).inner_text(),
+                            ).input_value(),
                             await self.page.locator(
                                 "ctl00_Center_ctl03_txtNombre_txt"
-                            ).inner_text(),
+                            ).input_value(),
                         ]
                     )
                     dni = await self.page.locator(
                         "#ctl00_Center_ctl03_txtNroDocumento_txt"
-                    ).inner_text()
+                    ).input_value()
                     self.progress.increase_progress(
                         f"Other {name} ({i+1} of {await others.count()})..."
                     )
                     other = SECLOOtherData(name=name, dni=dni)
-                    other.add_address(
-                        SECLOAddressData(
-                            province=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtProvincia",
-                            ).inner_text(),
-                            district=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtPartido",
-                            ).inner_text(),
-                            county=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtLocalidad",
-                            ).inner_text(),
-                            street=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtCalle"
-                            ).inner_text(),
-                            number=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtNumero",
-                            ).inner_text(),
-                            floor=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtPiso"
-                            ).inner_text(),
-                            apt=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtDepart",
-                            ).inner_text(),
-                            cpa=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtCPA"
-                            ).inner_text(),
-                            bonus_data=await self.page.locator(
-                                "#ctl00_Center_ctl03_Domicilio_direc_txtAdicional",
-                            ).inner_text(),
-                        )
-                    )
-                    other.add_mail(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl03_txtEmail_txt"
-                        ).inner_text()
-                    )
-                    other.add_phone(
-                        await self.page.locator(
-                            "#ctl00_Center_ctl03_txtTelefono_txt"
-                        ).inner_text()
-                    )
-                    other.add_mobile_phone(
-                        prefix=await self.page.locator(
-                            "#ctl00_Center_ctl03_txtCodArea_Numerico"
-                        ).inner_text(),
-                        phone=await self.page.locator(
-                            "#ctl00_Center_ctl03_txtCel_Numerico"
-                        ).inner_text(),
-                    )
+                    other.add_address(await self.__get_address(3))
+                    other.add_mail(await self.__get_email(3))
+                    other.add_phone(await self.__get_phone(3))
+                    other.add_mobile_phone(*await self.__get_mobile_phone(3))
                     claim_data.add_other(other)
 
                 # END
@@ -1575,6 +1455,7 @@ class SECLORecData(SECLOAccessor):
 
     async def __complete_address_field(self: Self, field: Locator, text: str) -> None:
         if not field.get_attribute("readOnly"):
+            await field.fill("")
             await field.fill(text)
             await self.page.locator(".ui-widget-content").is_visible()
             await field.press("Enter")
@@ -1663,7 +1544,7 @@ class SECLORecData(SECLOAccessor):
         )
         # TODO Wait until full
         cpa = self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCPA")
-        if not await cpa.inner_text():
+        if not await cpa.input_value():
             await cpa.fill(employer.address.cpa or "")
         await self.page.locator(
             "#ctl00_Center_ctl01_Domicilio_direc_txtAdicional"
@@ -1707,7 +1588,7 @@ class SECLOInvoiceParser(SECLOAccessor):
         for option in await options.all():
             invoices.append(
                 {
-                    "id": int(await option.inner_text() or 0),
+                    "id": int(await option.get_attribute("value") or 0),
                     "date": datetime.strptime(
                         (await option.inner_text()).split()[0], "%d/%m/%Y"
                     ),
@@ -1795,6 +1676,7 @@ class SECLOCalendarParser(SECLOAccessor):
         self.second_stage.set_steps(1)
         self.second_stage.set_progress(0, "Loading citation data")
         self.current_date: datetime
+        self.today_date: datetime
         self.id_task: asyncio.Task
         self.citation_tasks = []
 
@@ -1998,7 +1880,7 @@ class SECLOCalendarParser(SECLOAccessor):
             date = datetime.strptime(
                 await self.page.locator(
                     "#ctl00_Principal_txtFecha_txtFecha"
-                ).inner_text(),
+                ).input_value(),
                 "%d/%m/%Y",
             )
             day = cal.locator("tr").nth(2).locator("td")
