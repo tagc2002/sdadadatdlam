@@ -1104,7 +1104,7 @@ class SECLORecData(SECLOAccessor):
 
     async def __get_phone(self: Self, tab: int = 0) -> str:
         return (
-            await self.page.locator("#ctl00_Center_ctl0{tab}_txtTelefono_txt").input_value()
+            await self.page.locator(f"#ctl00_Center_ctl0{tab}_txtTelefono_txt").input_value()
         )
 
     async def __get_mobile_phone(self: Self, tab: int = 0) -> tuple[str,str]:
