@@ -28,18 +28,17 @@ from playwright.async_api import (
     Locator,
     Page,
     Playwright,
-    ProxySettings,
-    Request,
     Route,
     async_playwright,
     TimeoutError as PlaywrightTimeoutError,
     expect,
 )
 
-if __name__ == "__main__":
-    import sys
-    sys.path.append(str(Path.cwd()))
-    print(sys.path)
+# if __name__ == "__main__":
+#     import sys
+
+#     sys.path.append(str(Path.cwd()))
+#     print(sys.path)
 
 from dataobjects.enums import (
     ClaimType,
@@ -72,7 +71,7 @@ from repositories.seclo.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-PORTAL_VERSION_SUPPORTED = "8.5.4.0"
+PORTAL_VERSION_SUPPORTED = "8.5.6.0"
 DEBUGMODE = os.getenv("DEBUGMODE", "TRUE") == "TRUE"
 HEADLESS = os.getenv("HEADLESS", "TRUE") == "TRUE"
 DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "./temp")
@@ -96,6 +95,7 @@ class SECLOSession:
         self.playwright: Playwright
         self.browser: Browser
         self.context: BrowserContext
+        self.loginpage: Page
         # Actually setting properties
         self.credentials = credentials
         self.downloadpath = Path(f"{DOWNLOADROOT}/{uuid.uuid4()}")
@@ -109,42 +109,44 @@ class SECLOSession:
             )
 
     async def __proxy_req(self: Self, req: Route):
-        if 'google' in req.request.url:
+        if "google" in req.request.url:
             return await req.abort()
-        if re.match(r".*(\.axd|\.js|\.css|\.gif|\.jpg|\.png)", req.request.url, re.IGNORECASE):
+        if re.match(
+            r".*(\.axd|\.js|\.css|\.gif|\.jpg|\.png)", req.request.url, re.IGNORECASE
+        ):
             try:
                 await req.fulfill(response=self.cache[req.request.url])
                 return
-            except KeyError:
+            except KeyError as exc:
                 headers = req.request.headers
-                headers['Accept-Encoding'] = 'gzip, deflate, br, zstd'
-                headers['Accept-Language'] = 'es-419,es-US;q=0.9,es;q=0.8'
-                headers['Cache-Control'] = 'no-cache'
-                headers['Connection'] = 'keep-alive'
-                headers['Dnt'] = '1'
-                headers['Host'] = 'conciliadores.trabajo.gob.ar'
-                headers['Pragma'] = 'no-cache'
-                headers['sec-ch-ua-platform'] = 'Windows'
-                headers['sec-fetch-mode'] = 'no-cors'
-                headers['sec-fetch-site'] = 'same-origin'
-                headers['sec-Gpc'] = '1'
+                headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
+                headers["Accept-Language"] = "es-419,es-US;q=0.9,es;q=0.8"
+                headers["Cache-Control"] = "no-cache"
+                headers["Connection"] = "keep-alive"
+                headers["Dnt"] = "1"
+                headers["Host"] = "conciliadores.trabajo.gob.ar"
+                headers["Pragma"] = "no-cache"
+                headers["sec-ch-ua-platform"] = "Windows"
+                headers["sec-fetch-mode"] = "no-cors"
+                headers["sec-fetch-site"] = "same-origin"
+                headers["sec-Gpc"] = "1"
                 ans: APIResponse
                 last_exception: Error
                 for _ in range(MAX_ATTEMPTS):
                     try:
-                        ans = await req.fetch(timeout=0, headers=headers)
+                        ans = await req.fetch(timeout=10000, headers=headers)
                         break
                     except Error as ex:
                         last_exception = ex
                         continue
                 else:
-                    raise last_exception # type: ignore
+                    raise last_exception from exc  # type: ignore
                 if ans.status == 200:
                     self.cache[ans.url] = ans
                 await req.fulfill(response=ans)
                 return
         return await req.fallback()
-        
+
     async def __aenter__(self: Self):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
@@ -156,15 +158,77 @@ class SECLOSession:
                 password=self.credentials.password,
                 send="unauthorized",
             ),
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",)
-        #await self.context.route("**/*", lambda req: req.fallback())
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        )
+        # await self.context.route("**/*", lambda req: req.fallback())
         await self.context.route("**/*", self.__proxy_req)
+        await self.login()
         return self
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
+        logger.warning("CLOSING LOGIN")
+        await self.loginpage.close()
+        await asyncio.sleep(5)
+        logger.warning("CLOSING CONTEXT")
+        await self.context.close()
+        await asyncio.sleep(5)
+        logger.warning("CLOSING BROWSER")
         await self.browser.close()
+        await asyncio.sleep(5)
+        logger.warning("CLOSING PLAYWRIGHT")
         await self.playwright.stop()
+        await asyncio.sleep(5)
+        logger.warning("DONE CLEANUP")
         os.rmdir(self.downloadpath)
+
+    async def login(self: Self):
+        """Performs the auth procedure and logs into the web portal.
+        Raises:
+            UnauthorizedAccessException: If access was not granted.
+
+        Returns:
+            self
+        """
+        self.loginpage = await self.context.new_page()
+        logger.debug("Loading adfs")
+        await self.loginpage.goto(
+            "https://login-int.trabajo.gob.ar/adfs/ls/wia"
+            + "?wa=wsignin1.0"
+            + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
+            + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
+            + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
+        )
+        if "adfs" in self.loginpage.url:
+            raise UnauthorizedAccessException(
+                "Password is wrong or server entered inactive hours"
+            )
+        await self.loginpage.locator("#ctl00_Center_btnAceptar").click()
+        logger.debug("Logged in.")
+        try:
+            await self.loginpage.locator(".ColCerrar").click(timeout=100)
+            logger.debug("Closed notification panel.")
+        except PlaywrightTimeoutError:
+            logger.debug("Notification popup not found")
+
+        logger.info(
+            "Logged in as %s",
+            await self.loginpage.locator("#ctl00_lblConciliador").inner_text(),
+        )
+        portal_version = await self.loginpage.locator(
+            "#ctl00_LblAppVersion"
+        ).inner_text()
+        portal_version = portal_version.split()[1]
+
+        if portal_version != PORTAL_VERSION_SUPPORTED:
+            logger.warning(
+                "Current portal version is %s, but driver supports up to %s. "
+                + "Some features might be unexpectedly broken.",
+                portal_version,
+                PORTAL_VERSION_SUPPORTED,
+            )
+        else:
+            logger.debug("Current portal version: %s", portal_version)
+        return self
 
 
 class SECLOAccessor:
@@ -188,70 +252,19 @@ class SECLOAccessor:
         session: SECLOSession,
         recid: Optional[int] = None,
         progress_report: Optional[ProgressReport] = None,
-        skip_login: bool = False
     ):
         self.session = session
         self.recid = recid
         self.progress = progress_report or ProgressReport()
         self.page: Page
         self.gde_id: str
-        self.skip_login = skip_login
 
     async def __aenter__(self: Self):
         self.page = await self.session.context.new_page()
-        if not self.skip_login:
-            await self.login()
         return self
-
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
         await self.page.close()
-
-    async def login(self: Self):
-        """Performs the auth procedure and logs into the web portal.
-        Raises:
-            UnauthorizedAccessException: If access was not granted.
-
-        Returns:
-            self
-        """
-        logger.debug("Loading adfs")
-        await self.page.goto(
-            "https://login-int.trabajo.gob.ar/adfs/ls/wia"
-            + "?wa=wsignin1.0"
-            + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
-            + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
-            + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
-        )
-        if "adfs" in self.page.url:
-            raise UnauthorizedAccessException(
-                "Password is wrong or server entered inactive hours"
-            )
-        await self.page.locator("#ctl00_Center_btnAceptar").click()
-        logger.debug("Logged in.")
-        try:
-            await self.page.locator(".ColCerrar").click(timeout=100)
-            logger.debug("Closed notification panel.")
-        except PlaywrightTimeoutError:
-            logger.debug("Notification popup not found")
-
-        logger.info(
-            "Logged in as %s",
-            await self.page.locator("#ctl00_lblConciliador").inner_text(),
-        )
-        portal_version = await self.page.locator("#ctl00_LblAppVersion").inner_text()
-        portal_version = portal_version.split()[1]
-
-        if portal_version != PORTAL_VERSION_SUPPORTED:
-            logger.warning(
-                "Current portal version is %s, but driver supports up to %s. "
-                + "Some features might be unexpectedly broken.",
-                portal_version,
-                PORTAL_VERSION_SUPPORTED,
-            )
-        else:
-            logger.debug("Current portal version: %s", portal_version)
-        return self
 
     async def _error_handling(self):
         """
@@ -291,7 +304,9 @@ class SECLOAccessor:
         logger.debug("Loading recID %d", self.recid)
         try:
             await self.page.wait_for_load_state()
-            await self.page.evaluate(f'document.getElementById("ctl00_Top_hdnReclamoId").setAttribute("value", "{self.recid}")')
+            await self.page.evaluate(
+                f'document.getElementById("ctl00_Top_hdnReclamoId").setAttribute("value", "{self.recid}")'
+            )
 
             # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
             #     str(self.recid), force=True
@@ -311,7 +326,7 @@ class SECLOAccessor:
         """
 
         self.progress.set_steps(1)
-        self.progress.set_progress(0, "Setting recID")
+        await self.progress.set_progress(0, "Setting recID")
         logger.debug("Setting recID from gdeID %s", gde_id)
         await self.page.goto(
             "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
@@ -349,7 +364,7 @@ class SECLOAccessor:
                 self.recid = int(rec_id)
             else:
                 raise RecNotAccessibleException("Can't load recID. bummers")
-            self.progress.set_completion("Done")
+            await self.progress.set_completion("Done")
             logger.info("recID found, set to %s", self.recid)
             return self
         if isinstance(last_exception, RecNotAccessibleException):
@@ -443,35 +458,47 @@ class SECLOCitationManager(SECLOAccessor):
         """
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
-        logger.debug("Accessing citation result window")
-        await self.page.locator("#ctl00_btnAudiencia").click()
-        await self._load_rec()
-        try:
-            if (
-                "Registrar Resultado"
-                in await self.page.locator(".appBoxMenu").inner_text()
-            ):
-                if not await self.page.locator("#ctl00_Center_cmbObjetos").is_enabled():
-                    logger.debug(
-                        "Claim object comb selector is disabled. This is good."
-                    )
-                    self.multiple = False
-                    self.comb_selector_length = 1
-                else:
-                    logger.debug(
-                        "Claim object comb selector is enabled. This will be a bummer"
-                    )
-                    self.multiple = True
-                    self.comb_selector_length = (
-                        await self.page.locator("#ctl00_Center_cmbObjetos")
-                        .locator("option")
-                        .count()
-                    )
-                    self.comb_selector_index = 0
-        except Exception as e:
-            raise RecNotAccessibleException(
-                f"Could not access result form for rec {self.recid}. Maybe its closed."
-            ) from e
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                logger.debug("Accessing citation result window")
+                await self.page.goto(
+                    "https://conciliadores.trabajo.gob.ar/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
+                )
+                await self.page.locator("#ctl00_btnAudiencia").click()
+                await self._load_rec()
+            except PlaywrightTimeoutError:
+                continue
+            try:
+                if (
+                    "Registrar Resultado"
+                    in await self.page.locator(".appBoxMenu").inner_text()
+                ):
+                    if not await self.page.locator(
+                        "#ctl00_Center_cmbObjetos"
+                    ).is_enabled():
+                        logger.debug(
+                            "Claim object comb selector is disabled. This is good."
+                        )
+                        self.multiple = False
+                        self.comb_selector_length = 1
+                    else:
+                        logger.debug(
+                            "Claim object comb selector is enabled. This will be a bummer"
+                        )
+                        self.multiple = True
+                        self.comb_selector_length = (
+                            await self.page.locator("#ctl00_Center_cmbObjetos")
+                            .locator("option")
+                            .count()
+                        )
+                        self.comb_selector_index = 0
+            except Exception as e:
+                raise RecNotAccessibleException(
+                    f"Could not access result form for rec {self.recid}. Maybe its closed."
+                ) from e
+            break
+        else:
+            raise AttemptsExceededException("Cannot load citation result window")
 
     async def reopen_case(self: Self) -> Self:
         """
@@ -481,24 +508,24 @@ class SECLOCitationManager(SECLOAccessor):
         """
         logger.debug("Attempting to reopen case %s", str(self.recid))
         self.progress.set_steps(2)
-        self.progress.set_progress(0, "Loading case for reopening")
+        await self.progress.set_progress(0, "Loading case for reopening")
 
-        await self.page.locator("ctl00_lnkReabrir").click()
-        await self._load_rec()
-        self.progress.increase_progress("Reopening case")
-        try:
-            # if present, case was not found
-            await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible(
-                timeout=10000
-            )
-        except PlaywrightTimeoutError:
-            pass  # Expected
-        else:
-            raise InvalidCaseStateException("Case not found, probably its still open")
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                await self.page.goto(
+                    "https://conciliadores.trabajo.gob.ar/O_Reabrir_Reclamo.aspx"
+                )
+                await self._load_rec()
+                await self.progress.increase_progress("Reopening case")
+                # if present, case was not found
+                await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible()
+            except PlaywrightTimeoutError:
+                pass  # Expected
+            else:
+                raise InvalidCaseStateException(
+                    "Case not found, probably its still open"
+                )
 
-        reopen_button = await self.page.locator(
-            "#ctl00_Center_btnReabrir"
-        ).element_handle()
         logger.debug("Reopen button found")
         try:
             # if present, an error was raised
@@ -511,10 +538,10 @@ class SECLOCitationManager(SECLOAccessor):
             if error:
                 raise InvalidCaseStateException(error)
         if not DEBUGMODE:
-            await reopen_button.click()
+            await self.page.locator("#ctl00_Center_btnReabrir").click()
         else:
             logger.warning("DEBUG MODE WON'T SUBMIT REOPENING REQUEST")
-        self.progress.set_completion("Done reopening")
+        await self.progress.set_completion("Done reopening")
         return self
 
     async def __row_to_result(
@@ -560,13 +587,13 @@ class SECLOCitationManager(SECLOAccessor):
         """
         self.progress.set_steps(2)
         logger.info("Performing Citation getItems")
-        self.progress.set_progress(0, "Loading case")
+        await self.progress.set_progress(0, "Loading case")
         await self.__load_citation_result_screen()
         fields = []
         fields_len = 0
         logger.debug("Case attained")
 
-        self.progress.increase_progress("Loading items")
+        await self.progress.increase_progress("Loading items")
         try:
             table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
             for row in await table.locator(".grdRowStyle").all():
@@ -574,7 +601,7 @@ class SECLOCitationManager(SECLOAccessor):
                 fields.append(await self.__row_to_result(row, False))
                 fields_len += 1
             fields = set(fields)
-            self.progress.set_completion("Done getting items.")
+            await self.progress.set_completion("Done getting items.")
             return list(fields)
         except Exception as e:
             raise InvalidCaseStateException(
@@ -637,7 +664,7 @@ class SECLOCitationManager(SECLOAccessor):
         while loop:
             loop = False
             rows = await self.__get_matching_rows(entry)
-            self.progress.increase_progress("Setting results...")
+            await self.progress.increase_progress("Setting results...")
             for i, row in rows:
                 logger.debug("Row %d matches %s and is unselected, applying", i, entry)
                 if entry.amount:
@@ -742,7 +769,7 @@ class SECLOCitationManager(SECLOAccessor):
         self.items = list(items)
         await self.__set_items(True)
         absent_citation = False
-        self.progress.increase_progress("Setting new citation date")
+        await self.progress.increase_progress("Setting new citation date")
         for item in self.items:
             if item.absent:
                 absent_citation = True
@@ -808,7 +835,7 @@ class SECLOCitationManager(SECLOAccessor):
                 "DEBUG MODE WON'T PERSIST NEW CITATION. "
                 + "However, this citation will be 'completed' rather than 'pending'"
             )
-        self.progress.set_completion("Done new citation request")
+        await self.progress.set_completion("Done new citation request")
 
     async def close_case(self: Self, items: set[CitationResult]):
         """
@@ -821,17 +848,17 @@ class SECLOCitationManager(SECLOAccessor):
         if self.multiple:
             while self.comb_selector_index < self.comb_selector_length:
                 await self.__set_items(False)
-                self.progress.increase_progress("Closing partial claim")
+                await self.progress.increase_progress("Closing partial claim")
         else:
             await self.__set_items(False)
-            self.progress.increase_progress("Closing claim")
+            await self.progress.increase_progress("Closing claim")
 
         if not DEBUGMODE:
             await self._save_standard(self.page.locator("#ctl00_Center_btnGrabarTotal"))
 
         else:
             logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
-        self.progress.set_completion("Done closing claim")
+        await self.progress.set_completion("Done closing claim")
 
 
 class SECLOFileManager(SECLOAccessor):
@@ -1052,7 +1079,7 @@ class SECLORecData(SECLOAccessor):
     """
 
     async def get_notification_data(
-        self: Self, gde_id: Optional[str] = None
+        self: Self, gde_id: Optional[str] = None, rec_id: Optional[int] = None
     ) -> List[SECLONotificationData]:
         """
         Gets the associated notification information for a given case.
@@ -1062,13 +1089,22 @@ class SECLORecData(SECLOAccessor):
             List[SECLONotificationData]: The list of notification entries.
         """
 
-        if gde_id:
-            await self.set_rec_id_from_gde_id(gde_id=gde_id)
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                if gde_id:
+                    await self.set_rec_id_from_gde_id(gde_id=gde_id)
+                else:
+                    if rec_id:
+                        self.recid = rec_id
+                    await self.page.goto(
+                        "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
+                    )
+                    await self._load_rec()
+                break
+            except PlaywrightTimeoutError:
+                continue
         else:
-            await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
-            )
-            await self._load_rec()
+            raise AttemptsExceededException("Cannot load notification page")
 
         self.progress.set_steps(1)
 
@@ -1104,7 +1140,7 @@ class SECLORecData(SECLOAccessor):
                 )
             )
 
-        self.progress.set_completion(f"Found notif data for {self.recid}")
+        await self.progress.set_completion(f"Found notif data for {self.recid}")
         return results
 
     async def __save_claim_data(self: Self):
@@ -1147,24 +1183,28 @@ class SECLORecData(SECLOAccessor):
 
     async def __get_email(self: Self, tab: int = 0) -> str:
         return (
-            await self.page.locator(f"#ctl00_Center_ctl0{tab}_txtEmail_txt").input_value()
+            await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_txtEmail_txt"
+            ).input_value()
         ).strip()
 
     async def __get_phone(self: Self, tab: int = 0) -> str:
-        return (
-            await self.page.locator(f"#ctl00_Center_ctl0{tab}_txtTelefono_txt").input_value()
-        )
+        return await self.page.locator(
+            f"#ctl00_Center_ctl0{tab}_txtTelefono_txt"
+        ).input_value()
 
-    async def __get_mobile_phone(self: Self, tab: int = 0) -> tuple[str,str]:
-        prefix=await self.page.locator(
+    async def __get_mobile_phone(self: Self, tab: int = 0) -> tuple[str, str]:
+        prefix = await self.page.locator(
             f"#ctl00_Center_ctl0{tab}_txtCodArea_Numerico"
         ).input_value()
-        phone=await self.page.locator(
+        phone = await self.page.locator(
             f"#ctl00_Center_ctl0{tab}_txtCel_Numerico"
         ).input_value()
         return prefix, phone
 
-    async def __get_employee_data(self: Self, seclo_db_ok: bool) -> tuple[SECLOEmployeeData, bool]:
+    async def __get_employee_data(
+        self: Self, seclo_db_ok: bool
+    ) -> tuple[SECLOEmployeeData, bool]:
         cuil = self.page.locator("#ctl00_Center_ctl00_cuit_txtC")
         name = f'{await self.page
                     .locator("#ctl00_Center_ctl00_txtApellido_txt").input_value()
@@ -1175,7 +1215,9 @@ class SECLORecData(SECLOAccessor):
         if await cuil.input_value() and seclo_db_ok and await cuil.is_enabled():
             await cuil.click()
             await cuil.press("Tab")
-            await expect(self.page.locator('#ctl00_Center_ctl00_cuit_txtRS')).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
+            await expect(
+                self.page.locator("#ctl00_Center_ctl00_cuit_txtRS")
+            ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
             validated_name = await self.page.locator(
                 "#ctl00_Center_ctl00_cuit_txtRS"
             ).input_value()
@@ -1199,9 +1241,7 @@ class SECLORecData(SECLOAccessor):
             ).input_value()
         )
         employee.add_claim_amount(
-            await self.page.locator(
-                "#ctl00_Center_ctl00_txtImporte_txt"
-            ).input_value()
+            await self.page.locator("#ctl00_Center_ctl00_txtImporte_txt").input_value()
         )
         employee.add_mail(await self.__get_email(0))
         employee.add_mobile_phone(*await self.__get_mobile_phone(0))
@@ -1231,19 +1271,19 @@ class SECLORecData(SECLOAccessor):
         )
         return employee, seclo_db_ok
 
-    async def __get_employer_data(self: Self, seclo_db_ok: bool) -> tuple[SECLOEmployerData, bool]:
-        await expect(self.page.locator('#ctl00_Center_ctl01_cuit_txtRS')).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
+    async def __get_employer_data(
+        self: Self, seclo_db_ok: bool
+    ) -> tuple[SECLOEmployerData, bool]:
+        await expect(self.page.locator("#ctl00_Center_ctl01_cuit_txtRS")).to_have_value(
+            re.compile(".+", re.IGNORECASE), timeout=30000
+        )
         name = (
-            await self.page.locator(
-                "#ctl00_Center_ctl01_cuit_txtRS"
-            ).input_value()
+            await self.page.locator("#ctl00_Center_ctl01_cuit_txtRS").input_value()
         ).replace('"', "")
         if "null null" in name:
             seclo_db_ok = False
         cuil = (
-            await self.page.locator(
-                "#ctl00_Center_ctl01_cuit_txtC"
-            ).input_value()
+            await self.page.locator("#ctl00_Center_ctl01_cuit_txtC").input_value()
         ).replace("-", "")
         dni = await self.page.locator(
             "#ctl00_Center_ctl01_txtNroDocumento_txt"
@@ -1257,9 +1297,7 @@ class SECLORecData(SECLOAccessor):
         employer.add_address(await self.__get_address(1))
         employer.add_mail(await self.__get_email(1))
         for item in (
-            await self.page.locator(
-                "#ctl00_Center_ctl01_cmbTipoSociedad_cmb"
-            )
+            await self.page.locator("#ctl00_Center_ctl01_cmbTipoSociedad_cmb")
             .locator("option")
             .all()
         ):
@@ -1341,12 +1379,8 @@ class SECLORecData(SECLOAccessor):
         lawyer.add_mobile_phone(*mobilephone)
         lawyer.add_mail(email)
         lawyer.add_tf(
-            t=await self.page.locator(
-                "#ctl00_Center_ctl02_txtTomo_txt"
-            ).input_value(),
-            f=await self.page.locator(
-                "#ctl00_Center_ctl02_txtFolio_txt"
-            ).input_value(),
+            t=await self.page.locator("#ctl00_Center_ctl02_txtTomo_txt").input_value(),
+            f=await self.page.locator("#ctl00_Center_ctl02_txtFolio_txt").input_value(),
         )
         return lawyer
 
@@ -1383,8 +1417,11 @@ class SECLORecData(SECLOAccessor):
         for _ in range(MAX_ATTEMPTS):
             try:
                 self.progress.set_steps(1)
-                self.progress.set_progress(0, "Loading claim data form...")
-                await self.page.goto("https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==", timeout=60000)
+                await self.progress.set_progress(0, "Loading claim data form...")
+                await self.page.goto(
+                    "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+                    timeout=60000,
+                )
                 await self._load_rec()
                 seclo_db_ok = True
                 await self.page.wait_for_load_state()
@@ -1411,7 +1448,7 @@ class SECLORecData(SECLOAccessor):
                 self.progress.set_steps(2 + total_items)
 
                 # CLAIM
-                self.progress.increase_progress("Getting claim data...")
+                await self.progress.increase_progress("Getting claim data...")
                 claim_data = SECLOClaimData(
                     recid=self.recid or 0,
                     legal_stuff=await self.page.locator(
@@ -1419,7 +1456,7 @@ class SECLORecData(SECLOAccessor):
                     ).input_value(),
                     init_by_worker=await self.page.locator(
                         "#ctl00_Center_ucReclamo_optReclamante_0"
-                    ).is_checked()
+                    ).is_checked(),
                 )
                 for row in (
                     await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
@@ -1433,58 +1470,70 @@ class SECLORecData(SECLOAccessor):
                             )
                         )
                 # EMPLOYEES
-                people_list = self.page.locator("#ctl00_Center_lstTrabajadores").locator("li")
+                people_list = self.page.locator(
+                    "#ctl00_Center_lstTrabajadores"
+                ).locator("li")
                 for i in range(await people_list.count()):
                     await people_list.nth(i).locator("a").click()
                     await self.page.wait_for_load_state()
                     employee, seclo_db_ok = await self.__get_employee_data(seclo_db_ok)
-                    self.progress.increase_progress(
+                    await self.progress.increase_progress(
                         f"Employee {employee.name} ({i+1} of {await people_list.count()})"
                     )
                     claim_data.add_employee(employee)
                     if seclo_db_ok:
-                        await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
+                        await self.page.locator(
+                            "#ctl00_Center_ctl00_btnAgregar"
+                        ).click()
 
                 # EMPLOYERS
                 await self.page.wait_for_load_state()
-                people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator("li")
+                people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator(
+                    "li"
+                )
                 for i in range(await people_list.count()):
                     await people_list.nth(i).locator("a").click()
                     await self.page.wait_for_load_state()
                     employer, seclo_db_ok = await self.__get_employer_data(seclo_db_ok)
-                    self.progress.increase_progress(
+                    await self.progress.increase_progress(
                         f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
                     )
                     claim_data.add_employer(employer)
                     if seclo_db_ok:
-                        await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
+                        await self.page.locator(
+                            "#ctl00_Center_ctl01_btnAgregar"
+                        ).click()
 
                 # LAWYERS
                 await self.page.wait_for_load_state()
-                people_list = self.page.locator("#ctl00_Center_lstReprentantes").locator("li")
+                people_list = self.page.locator(
+                    "#ctl00_Center_lstReprentantes"
+                ).locator("li")
                 for i in range(await people_list.count()):
                     await people_list.nth(i).locator("a").click()
                     await self.page.wait_for_load_state()
                     lawyer = await self.__get_lawyer_data(seclo_db_ok)
-                    self.progress.increase_progress(
+                    await self.progress.increase_progress(
                         f"Lawyer {lawyer.name} ({i+1} of {await people_list.count()})..."
                     )
                     claim_data.add_lawyer(lawyer)
 
                 # OTHERS
                 await self.page.wait_for_load_state()
-                people_list = self.page.locator("#ctl00_Center_lstDerechohabientes").locator("li")
+                people_list = self.page.locator(
+                    "#ctl00_Center_lstDerechohabientes"
+                ).locator("li")
                 for i in range(await people_list.count()):
                     await people_list.nth(i).locator("a").click()
                     await self.page.wait_for_load_state()
                     other = await self.__get_other_data()
-                    self.progress.increase_progress(
+                    await self.progress.increase_progress(
                         f"Other {other.name} ({i+1} of {await people_list.count()})..."
                     )
                     claim_data.add_other(other)
 
                 # END
-                self.progress.set_completion("Done getting data.")
+                await self.progress.set_completion("Done getting data.")
                 if seclo_db_ok and not DEBUGMODE:
                     await self.__save_claim_data()
                 return claim_data
@@ -1527,13 +1576,16 @@ class SECLORecData(SECLOAccessor):
             employer (SECLOEmployerData): The employer to be added.
         """
         self.progress.set_steps(1)
-        self.progress.set_progress(0, "Loading claim data form...")
+        await self.progress.set_progress(0, "Loading claim data form...")
         if not employer.address:
             raise InvalidParameterException("Employer must have address")
 
         for _ in range(0, 5):
             # Trying to get this bitch enabled. idk why this works but it does.
-            await self.page.locator("#ctl00_lnkModificacion").click()
+            await self.page.goto(
+                "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+                timeout=60000,
+            )
             await self._load_rec()
             await self.page.locator("#ctl00_Center_lnkEmpleadores").click()
             cuit_box = self.page.locator("#ctl00_Center_ctl01_cuit_txtC")
@@ -1595,7 +1647,9 @@ class SECLORecData(SECLOAccessor):
         await self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtDepart").fill(
             employer.address.apt or ""
         )
-        await expect(self.page.locator('#ctl00_Center_ctl01_Domicilio_direc_txtCPA')).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
+        await expect(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCPA")
+        ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
         cpa = self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCPA")
         if not await cpa.input_value():
             await cpa.fill(employer.address.cpa or "")
@@ -1635,7 +1689,10 @@ class SECLOInvoiceParser(SECLOAccessor):
         Returns:
             invoices: {'id': int, 'date': datetime}
         """
-        await self.page.locator("#ctl00_lnkConsultaLiquidacion").click()
+        await self.page.goto(
+            "https://conciliadores.trabajo.gob.ar/FF_ConsultaLiquidaciones.aspx",
+            timeout=60000,
+        )
         invoices: List[Dict[str, Any]] = []
         options = self.page.locator("#ctl00_Center_cmbLiquidaciones").locator("option")
         for option in await options.all():
@@ -1663,7 +1720,10 @@ class SECLOInvoiceParser(SECLOAccessor):
                 ]
             }
         """
-        await self.page.locator("#ctl00_lnkConsultaLiquidacion").click()
+        await self.page.goto(
+            "https://conciliadores.trabajo.gob.ar/FF_ConsultaLiquidaciones.aspx",
+            timeout=60000,
+        )
         await self.page.locator("#ctl00_Center_cmbLiquidaciones").select_option(
             value=str(invoice)
         )
@@ -1718,20 +1778,19 @@ class SECLOCalendarParser(SECLOAccessor):
         self.current = 0
         self.first_stage = ProgressReport()
         self.second_stage = ProgressReport()
-
-        self.progress.compose(self.first_stage, "Parsing weeks")
-        self.progress.compose(self.second_stage, "Parsing citations")
-        self.first_stage.set_steps(1 + (weeks_before + weeks_after)).set_message(
-            "Loading calendar"
-        )
-        self.first_stage.set_progress(0, "Loading calendar")
-        self.second_stage.set_steps(1)
-        self.second_stage.set_progress(0, "Loading citation data")
         self.id_task: asyncio.Task
         self.citation_tasks = []
 
     async def __aenter__(self: Self) -> Self:
         await super().__aenter__()
+        await self.first_stage.set_steps(
+            1 + (self.weeks_before + self.weeks_after)
+        ).set_message("Loading calendar")
+        await self.first_stage.set_progress(0, "Loading calendar")
+        self.second_stage.set_steps(1)
+        await self.second_stage.set_progress(0, "Loading citation data")
+        await self.progress.compose(self.first_stage, "Parsing weeks")
+        await self.progress.compose(self.second_stage, "Parsing citations")
         await self.__load_calendar()
         self.id_task: asyncio.Task = asyncio.get_event_loop().create_task(
             self.__populate_calendar_ids()
@@ -1742,14 +1801,21 @@ class SECLOCalendarParser(SECLOAccessor):
         await super().__aexit__(exc_type, exc_val, exc_tb)
 
     async def __load_calendar(self: Self) -> datetime:
-        await self.page.locator("#ctl00_btnAgenda").click()
-        await self.page.locator("#ctl00_Center_chkSusp").click()
-        await self.page.locator("#ctl00_Center_chkReal").click()
-        await self.page.wait_for_event("load")
-        return datetime.strptime(
-            await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
-            "%d/%m/%Y",
-        )
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                await self.page.goto(
+                    "https://conciliadores.trabajo.gob.ar/InicioConciliador.aspx"
+                )
+                await self.page.locator("#ctl00_Center_chkSusp").click()
+                await self.page.locator("#ctl00_Center_chkReal").click()
+                await self.page.wait_for_event("load")
+                return datetime.strptime(
+                    await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
+                    "%d/%m/%Y",
+                )
+            except PlaywrightTimeoutError:
+                continue
+        raise AttemptsExceededException("Cannot open calendar")
 
     async def __iterate_calendar_week(self: Self) -> List[int]:
         table = self.page.locator("#ctl00_Center_DayPilotCalendar1").locator("tr")
@@ -1778,10 +1844,12 @@ class SECLOCalendarParser(SECLOAccessor):
 
     async def __iterate_calendar_range(self: Self) -> tuple[bool, list[int]]:
         if self.current <= self.weeks_after and self.weeks_after >= 0:
-            await self.__advance_calendar(datetime.now() + timedelta(weeks=self.current))
+            await self.__advance_calendar(
+                datetime.now() + timedelta(weeks=self.current)
+            )
             self.current += 1
             citation_ids = await self.__iterate_calendar_week()
-            self.first_stage.increase_progress(
+            await self.first_stage.increase_progress(
                 f"{self.current} of {self.weeks_before + self.weeks_after}",
             )
             if self.current >= self.weeks_after:
@@ -1790,16 +1858,18 @@ class SECLOCalendarParser(SECLOAccessor):
             return True, citation_ids
         if self.current < self.weeks_before and self.weeks_before > 0:
             self.current += 1
-            await self.__advance_calendar(datetime.now() + timedelta(weeks=-self.current))
+            await self.__advance_calendar(
+                datetime.now() + timedelta(weeks=-self.current)
+            )
             citation_ids = await self.__iterate_calendar_week()
-            self.first_stage.increase_progress(
+            await self.first_stage.increase_progress(
                 f"{self.current + self.weeks_after} of {self.weeks_before + self.weeks_after}",
             )
             if self.current >= self.weeks_before:
                 self.weeks_before = -1
                 self.current = 0
             return True, citation_ids
-        self.first_stage.set_completion("Done")
+        await self.first_stage.set_completion("Done")
         return False, []
 
     async def __populate_calendar_ids(self: Self):
@@ -1811,11 +1881,15 @@ class SECLOCalendarParser(SECLOAccessor):
                     result, citation_ids = await self.__iterate_calendar_range()
                     self.citation_tasks.extend(
                         [
-                            asyncio.get_event_loop().create_task(self.__get_citation_info(id))
+                            asyncio.get_event_loop().create_task(
+                                self.__get_citation_info(id)
+                            )
                             for id in citation_ids
                         ]
                     )
-                    self.second_stage.set_steps(self.second_stage.steps + len(citation_ids))
+                    self.second_stage.set_steps(
+                        self.second_stage.total_steps + len(citation_ids)
+                    )
                 except PlaywrightTimeoutError as e:
                     last_exception = e
         if result and last_exception is not None:
@@ -1830,28 +1904,32 @@ class SECLOCalendarParser(SECLOAccessor):
             await asyncio.sleep(0.01)
 
         if len(self.citation_tasks) == 0 and self.id_task.done():
-            self.second_stage.set_completion("Done")
+            await self.second_stage.set_completion("Done")
             raise StopAsyncIteration
 
         async for task in asyncio.as_completed(self.citation_tasks):
             self.citation_tasks.remove(task)
-            self.second_stage.increase_progress()
+            await self.second_stage.increase_progress()
             return task.result()
         else:
-            raise StopAsyncIteration # Not really possible but complains otherwise
+            raise StopAsyncIteration  # Not really possible but complains otherwise
 
     async def __get_citation_info(self: Self, citation_id: int) -> SECLOCitation:
         # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
         last_exception: Exception
         for _ in range(MAX_ATTEMPTS):
-            async with SECLOAccessor(self.session, skip_login=True) as session:
+            async with SECLOAccessor(self.session) as session:
                 try:
                     await session.page.goto(
                         "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
                         + f"AudId={citation_id}&esPortal=1"
                     )
-                    gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
-                    init_datetime_text = await session.page.locator("#rcFecha").inner_text()
+                    gde_id_text = await session.page.locator(
+                        "#rcNroExpediente"
+                    ).inner_text()
+                    init_datetime_text = await session.page.locator(
+                        "#rcFecha"
+                    ).inner_text()
                     init_datetime_text = (
                         init_datetime_text.split()[0]
                         + " "
@@ -1863,11 +1941,19 @@ class SECLOCalendarParser(SECLOAccessor):
                     citation_date = citation_date.split("a")[0]
                     return SECLOCitation(
                         gdeID=gde_id_text,
-                        citationDate=datetime.strptime(citation_date, r"%d/%m/%Y - %H:%M "),
-                        initDate=datetime.strptime(init_datetime_text, r"%d/%m/%Y %H:%M"),
+                        citationDate=datetime.strptime(
+                            citation_date, r"%d/%m/%Y - %H:%M "
+                        ),
+                        initDate=datetime.strptime(
+                            init_datetime_text, r"%d/%m/%Y %H:%M"
+                        ),
                         citationID=citation_id,
-                        citationType=await session.page.locator("#auTipoYEstado").inner_text(),
-                        pdfString=base64.b64encode(await session.page.pdf()).decode("ascii"),
+                        citationType=await session.page.locator(
+                            "#auTipoYEstado"
+                        ).inner_text(),
+                        pdfString=base64.b64encode(await session.page.pdf()).decode(
+                            "ascii"
+                        ),
                     )
                 except PlaywrightTimeoutError as e:
                     last_exception = e
@@ -1908,7 +1994,7 @@ class SECLOCalendarParser(SECLOAccessor):
         """
         work_days: List[Tuple[datetime, bool, str]] = []
         self.progress.set_steps(weeks_ahead * 7)
-        self.progress.set_message("Loading calendar info...")
+        await self.progress.set_message("Loading calendar info...")
 
         await self.page.goto(
             "https://conciliadores.trabajo.gob.ar/pa_Abogados_Audiencias.aspx"
@@ -1944,21 +2030,27 @@ class SECLOCalendarParser(SECLOAccessor):
                 work_days.append((date, False, day_title))
             else:
                 work_days.append((date, True, ""))
-            self.progress.increase_progress(
+            await self.progress.increase_progress(
                 f"Obtained info for {date.strftime('%d/%m/%Y')}"
             )
             await self.page.locator("#ctl00_Principal_lnkDer").click()
             await self.page.wait_for_event("load")
-        self.progress.set_completion("Done getting cal info")
+        await self.progress.set_completion("Done getting cal info")
         return work_days
 
-async def get_claim_data(session: SECLOSession, gde_id: str)-> SECLOClaimData:
-    async with SECLORecData(session, skip_login=True) as rec:
+
+async def get_claim_data(session: SECLOSession, gde_id: str) -> SECLOClaimData:
+    async with SECLORecData(session) as rec:
         await rec.set_rec_id_from_gde_id(gde_id)
         return await rec.get_claim_data()
 
+
 async def main():
-    async with SECLOSession(SECLOLoginCredentials(os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", ""))) as session:
+    async with SECLOSession(
+        SECLOLoginCredentials(
+            os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
+        )
+    ) as session:
         # async with SECLORecData(session) as rec:
         #     await rec.set_rec_id_from_gde_id("EX-2026-78736839-   -APN-DSCLOS#MCH")
         #     claim_data = await rec.get_claim_data()
@@ -1973,12 +2065,20 @@ async def main():
                 print(citation)
                 count += 1
                 if len(tasks) < 20:
-                    tasks.append(asyncio.get_event_loop().create_task(get_claim_data(session, citations.pop().gdeID)))
-                for task in tasks:
+                    tasks.append(
+                        asyncio.get_event_loop().create_task(
+                            get_claim_data(session, citations.pop().gdeID)
+                        )
+                    )
+                for task in list(tasks):
                     if task.done():
                         print(task.result())
                         tasks.remove(task)
-                        tasks.append(asyncio.get_event_loop().create_task(get_claim_data(session, citations.pop().gdeID)))
+                        tasks.append(
+                            asyncio.get_event_loop().create_task(
+                                get_claim_data(session, citations.pop().gdeID)
+                            )
+                        )
 
             print(f"RECS: {count}")
             while len(tasks) > 0:
@@ -1987,8 +2087,13 @@ async def main():
                     tasks.remove(task)
                     if len(citations) > 0:
                         citation = citations.pop()
-                        tasks.append(asyncio.get_event_loop().create_task(get_claim_data(session, citation.gdeID)))
+                        tasks.append(
+                            asyncio.get_event_loop().create_task(
+                                get_claim_data(session, citation.gdeID)
+                            )
+                        )
             print("DONE")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

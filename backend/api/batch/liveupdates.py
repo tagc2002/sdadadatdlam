@@ -1,4 +1,5 @@
 """Module for reporting batch task progress to user."""
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix = '/tasks')
 
 @router.websocket('/{task_id}')
-async def get_task(ws: WebSocket, async_redis: DependsAsyncRedis, task_id: str):
+async def get_task(ws: WebSocket, redis: DependsAsyncRedis, task_id: str):
     """Outputs task progress to websocket for reporting back to
 
     Args:
@@ -19,7 +20,7 @@ async def get_task(ws: WebSocket, async_redis: DependsAsyncRedis, task_id: str):
         task_id (str): Task to retrieve.
     """
     await ws.accept()
-    background_tasks = TaskManager(async_redis=async_redis)
+    background_tasks = TaskManager(redis=redis)
     await background_tasks.register_sub(str(task_id))
 
     async for task in background_tasks.get_message():
@@ -28,7 +29,9 @@ async def get_task(ws: WebSocket, async_redis: DependsAsyncRedis, task_id: str):
             await ws.send_text(task)
         except WebSocketDisconnect:
             break
-        if "'running': False" in task:
+        task_dict = json.loads(task)
+        if not task_dict['running']:
+            logger.debug("Task is not running, closing...")
             await ws.close()
             break
     await background_tasks.close_sub()

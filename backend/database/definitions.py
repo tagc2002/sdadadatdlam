@@ -23,7 +23,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs
 
 
-class Base(DeclarativeBase):
+class Base(DeclarativeBase, AsyncAttrs):
     pass
 
 

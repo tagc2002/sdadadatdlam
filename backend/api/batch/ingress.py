@@ -5,7 +5,7 @@ from domainlogic.taskmanager import TaskManager
 from domainlogic.ingressmanager import batch_verify_agenda
 from domainlogic.homomanager import batch_check_homologations
 from repositories.seclo.progress import ProgressReport
-from api.dependencies import DependsSeclo, DependsRedis
+from api.dependencies import DependsSeclo, DependsAsyncRedis
 from database.dbsessionmanager import DependsDb
 
 router = APIRouter(prefix="/batch")
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/batch")
 async def ingress_claims(
     db: DependsDb,
     creds: DependsSeclo,
-    redis: DependsRedis,
+    redis: DependsAsyncRedis,
     background_task: BackgroundTasks,
 ) -> str:
     """Batch API method for registering new claims from SECLO agenda.
@@ -45,7 +45,7 @@ async def ingress_claims(
 async def check_homologations(
     db: DependsDb,
     creds: DependsSeclo,
-    redis: DependsRedis,
+    redis: DependsAsyncRedis,
     background_task: BackgroundTasks,
 ) -> str:
     """Batch API method for updating homologations from SECLO.

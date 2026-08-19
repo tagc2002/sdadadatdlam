@@ -1,4 +1,6 @@
 """Module for ingressing claim data from SECLO."""
+
+import asyncio
 import base64
 import logging
 from datetime import datetime
@@ -7,15 +9,7 @@ from typing import List, Optional
 from sqlalchemy import or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
-from dataobjects.seclodataclasses import SECLONotificationData
-from dataobjects.enums import (
-    CitationStatus,
-    CitationType,
-    ClaimType,
-    PersonType,
-    RequiredAsType,
-    SECLONotificationType,
-)
+from database.dbsessionmanager import sessionmanager
 from database.definitions import (
     Address,
     Citation,
@@ -37,17 +31,28 @@ from database.definitions import (
     SecloNotificationToEmployee,
     SecloNotificationToEmployer,
 )
+from dataobjects.seclodataclasses import SECLOCitation, SECLONotificationData
+from dataobjects.enums import (
+    CitationStatus,
+    CitationType,
+    ClaimType,
+    PersonType,
+    RequiredAsType,
+    SECLONotificationType,
+)
 from repositories.seclo.exceptions import RecNotAccessibleException
-from repositories.seclo.driver import (
+from repositories.seclo.driver_playwright import (
     SECLOCalendarParser,
     SECLOLoginCredentials,
     SECLORecData,
+    SECLOSession,
 )
 from repositories.seclo.progress import ProgressReport
 
 logger = logging.getLogger(__name__)
 
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
+
 
 async def batch_verify_agenda(
     creds: SECLOLoginCredentials,
@@ -56,112 +61,159 @@ async def batch_verify_agenda(
     weeks_before: int = 0,
     weeks_after: int = 20,
 ):
-    """Iterates over SECLO agenda. 
+    """Iterates over SECLO agenda.
     Registers any missing citations (for now only from SECLO to sdadadatdlam)
-    and ingresses any missing claims. 
+    and ingresses any missing claims.
     Also updates notifications for existing citations.
 
     Args:
         creds (SECLOLoginCredentials): Credentials to use for SECLO
         db (AsyncSession): database session to check status and store changes.
-        progress (Optional[ProgressReport], optional): 
+        progress (Optional[ProgressReport], optional):
             Progress report object to share status with user. Defaults to None.
-        weeks_before (int, optional): How many weeks before today to check. 
+        weeks_before (int, optional): How many weeks before today to check.
             Defaults to 0.
-        weeks_after (int, optional): How many weeks after today to check. 
+        weeks_after (int, optional): How many weeks after today to check.
             Defaults to 20.
     """
-    first_stage = ProgressReport()
-    second_stage = ProgressReport()
-    third_stage = ProgressReport()
     if not progress:
         progress = ProgressReport()
-    (
-        progress.compose(first_stage, "Acquiring calendar data")
-        .compose(second_stage, "Acquiring notification data")
-        .compose(third_stage, "Mapping citations to claims")
+    first_stage = ProgressReport()
+    second_stage = ProgressReport()
+    await progress.compose(first_stage, "Acquiring calendar data")
+    await progress.compose(second_stage, "Loading citation data")
+
+    citation_tasks = []
+
+    async with SECLOSession(credentials=creds) as seclo:
+        async with SECLOCalendarParser(
+            seclo,
+            weeks_before=weeks_before,
+            weeks_after=weeks_after,
+            progress=first_stage,
+        ) as calendar:
+            async for citation in calendar:
+                entry_progress = ProgressReport()
+                citation_tasks.append(
+                    asyncio.get_event_loop().create_task(
+                        __verify_agenda_citation(seclo, citation, entry_progress)
+                    )
+                )
+                second_stage.set_steps(len(citation_tasks))
+                await second_stage.compose(
+                    entry_progress, f"Citation {citation.citationID}"
+                )
+        await first_stage.set_completion("Done acquiring calendar data")
+
+        ##TODO Once the frontend is working, new citations will be fetched via an API call.
+        idx = 0
+        async for citation in asyncio.as_completed(citation_tasks):
+            claim = (
+                await db.scalars(
+                    select(Claim).where(Claim.gdeID == citation.result().gdeID)
+                )
+            ).one_or_none()
+            if claim and not claim.isEvilized:
+                logger.debug(
+                    "PRINTING entry %d of %d at %s (%s)",
+                    idx + 1,
+                    len(citation_tasks),
+                    citation.result().citationDate,
+                    citation.result().citationType,
+                )
+                with open(
+                    f"{downloadPath}/{citation.result().citationDate}.pdf", "wb"
+                ) as file:
+                    file.write(base64.b64decode(citation.result().pdfString or ""))
+                claim.isEvilized = True
+            else:
+                logger.debug(
+                    "NOT PRINTING entry %d of %d at %s (%s)",
+                    idx + 1,
+                    len(citation_tasks),
+                    citation.result().citationDate,
+                    citation.result().citationType,
+                )
+            idx += 1
+    await second_stage.set_completion("Finished loading citation")
+    await progress.set_completion("DONE")
+
+
+async def __verify_agenda_citation(
+    session: SECLOSession, citation: SECLOCitation, progress: ProgressReport
+) -> SECLOCitation:
+    notification_progress = ProgressReport()
+    await progress.compose(
+        notification_progress, f"Loading notifications for {citation.gdeID}"
     )
+    ingress_progress = ProgressReport()
+    await progress.compose(ingress_progress, f"New claim {citation.gdeID}")
+    notification_progress = ProgressReport()
+    await progress.compose(notification_progress, "Mapping notifications")
 
-    with SECLOCalendarParser(creds, None, first_stage) as calendar_parser:
-        calendar_info = calendar_parser.get_calendar(
-            weeks_before=weeks_before, weeks_after=weeks_after
-        )
-    first_stage.set_completion("Done acquiring calendar data")
-
-    second_stage.set_steps(len(calendar_info))
-    with SECLORecData(creds, None, None) as rec_data:
-        for index, entry in enumerate(calendar_info):
-            entry_progress = ProgressReport()
-            second_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
-            try:
-                dbclaim = (await db.scalars(
-                    select(Claim).where(Claim.gdeID == entry.gdeID)
-                )).one_or_none()
-                if dbclaim:
-                    entry.notificationData = (
-                        rec_data.set_progress(entry_progress)
-                        .set_rec_id(dbclaim.recID)
-                        .get_notification_data()
-                    )
-                else:
-                    entry.notificationData = rec_data.set_progress(
-                        entry_progress
-                    ).get_notification_data(gde_id=entry.gdeID)
-            except RecNotAccessibleException:
-                logger.warning(
-                    "Claim %s with citation %s (%s) can't be mapped. Skipping...",
-                    entry.gdeID,
-                    entry.citationDate,
-                    entry.citationType,
-                )
-                continue
-    second_stage.set_completion("Done acquiring notification data")
-    third_stage.set_steps(len(calendar_info))
-    counter = 0
-    with db.no_autoflush, SECLORecData(creds, None, None) as rec_data:
-        for index, entry in enumerate(calendar_info):
-            entry_progress = ProgressReport()
-            third_stage.compose(entry_progress, f"{index+1} of {len(calendar_info)}")
-            local_citation = (await db.scalars(
-                select(Citation).where(Citation.secloAudID == entry.citationID)
-            )).one_or_none()
-            local_claim = (await db.scalars(
-                select(Claim).where(Claim.gdeID == entry.gdeID)
-            )).one_or_none()
-            if not local_claim:
-                counter += 1
-                ingress_progress = ProgressReport()
-                entry_progress.compose(
-                    ingress_progress,
-                    f"Found {counter} new claim{'s' if counter > 1 else ''}",
-                )
+    async with sessionmanager.session() as db:
+        with db.no_autoflush:
+            async with SECLORecData(session, None, notification_progress) as seclo:
                 try:
-                    local_claim = await __ingress_claim(
-                        gde_id=entry.gdeID,
-                        init_date=entry.initDate,
-                        progress=ingress_progress,
-                        db=db,
-                        rec_data=rec_data,
-                        citation=None,
-                    )
+                    dbclaim = (
+                        await db.scalars(
+                            select(Claim).where(Claim.gdeID == citation.gdeID)
+                        )
+                    ).one_or_none()
+                    if dbclaim:
+                        citation.notificationData = await seclo.get_notification_data(
+                            rec_id=dbclaim.recID
+                        )
+                    else:
+                        citation.notificationData = await seclo.get_notification_data(
+                            gde_id=citation.gdeID
+                        )
                 except RecNotAccessibleException:
                     logger.warning(
                         "Claim %s with citation %s (%s) can't be mapped. Skipping...",
-                        entry.gdeID,
-                        entry.citationDate,
-                        entry.citationType,
+                        citation.gdeID,
+                        citation.citationDate,
+                        citation.citationType,
                     )
-                    counter -= 1
-                    continue
+            local_claim = (
+                await db.scalars(select(Claim).where(Claim.gdeID == citation.gdeID))
+            ).one_or_none()
+            if not local_claim:
+                try:
+                    local_claim = await __ingress_claim(
+                        gde_id=citation.gdeID,
+                        init_date=citation.initDate,
+                        progress=ingress_progress,
+                        db=db,
+                        session=session,
+                        citation=None,
+                    )
+                except RecNotAccessibleException as e:
+                    logger.warning(
+                        "Claim %s with citation %s (%s) can't be mapped. Skipping... (%s)",
+                        citation.gdeID,
+                        citation.citationDate,
+                        citation.citationType,
+                        e
+                    )
+                    return citation
+            await ingress_progress.set_completion("Imported claim")
 
+            local_citation = (
+                await db.scalars(
+                    select(Citation).where(Citation.secloAudID == citation.citationID)
+                )
+            ).one_or_none()
             if not local_citation:
                 local_citation = Citation(
-                    secloAudID=entry.citationID,
-                    citationDate=entry.citationDate,
+                    secloAudID=citation.citationID,
+                    citationDate=citation.citationDate,
                     recID=local_claim.recID,
-                    citationType=CitationType.citation_string_to_enum(entry.citationType),
+                    citationType=CitationType.citation_string_to_enum(
+                        citation.citationType
+                    ),
                     citationStatus=CitationStatus.citation_string_to_enum(
-                        entry.citationType
+                        citation.citationType
                     ),
                 )
                 primarize = True
@@ -169,30 +221,28 @@ async def batch_verify_agenda(
                     local_citation.citationStatus == CitationStatus.PENDING
                     and local_citation.citationType == CitationType.FIRST
                 ):
-                    for citation in local_claim.citations:
+                    for saved_citation in local_claim.citations:
                         if (
-                            citation.isCalendarPrimary
-                            and citation.citationStatus == CitationStatus.PENDING
-                            and citation.citationType != CitationType.FIRST
+                            saved_citation.isCalendarPrimary
+                            and saved_citation.citationStatus == CitationStatus.PENDING
+                            and saved_citation.citationType != CitationType.FIRST
                         ):
                             primarize = False
                         if (
-                            citation.isCalendarPrimary
-                            and citation.citationStatus == CitationStatus.PENDING
-                            and citation.citationType == CitationType.FIRST
+                            saved_citation.isCalendarPrimary
+                            and saved_citation.citationStatus == CitationStatus.PENDING
+                            and saved_citation.citationType == CitationType.FIRST
                             and (
-                                (citation.citationDate or datetime.now())
+                                (saved_citation.citationDate or datetime.now())
                                 > (local_citation.citationDate or datetime.now())
                             )
                         ):
                             primarize = False
                     if primarize:
-                        for citation in local_claim.citations:
-                            citation.isCalendarPrimary = False
+                        for saved_citation in local_claim.citations:
+                            saved_citation.isCalendarPrimary = False
                 local_citation.isCalendarPrimary = primarize
                 db.add(local_citation)
-            notification_progress = ProgressReport()
-            entry_progress.compose(notification_progress, "Loading notification data")
 
             for lawyer in local_claim.lawyers:
                 for link in lawyer.employeeLink + lawyer.employerLink:
@@ -201,79 +251,20 @@ async def batch_verify_agenda(
             await db.flush()
             await update_notifications(
                 rec_id=local_citation.recID,
-                creds=creds,
+                session=session,
                 progress=notification_progress,
                 citation=local_citation,
-                notification_data=entry.notificationData,
+                notification_data=citation.notificationData,
                 db=db,
-                seclo=rec_data,
             )
             await db.commit()
-            entry_progress.set_completion("Done loading claim data")
-
-    ##TODO Once the frontend is working, this will be done through an api call.
-    for index, entry in enumerate(calendar_info):
-        claim = (await db.scalars(
-            select(Claim).where(Claim.gdeID == entry.gdeID)
-        )).one_or_none()
-        if claim and not claim.isEvilized:
-            logger.debug(
-                "PRINTING entry %d of %d at %s (%s)",
-                index,
-                len(calendar_info),
-                entry.citationDate,
-                entry.citationType,
-            )
-            with open(f"{downloadPath}/{entry.citationDate}.pdf", "wb") as file:
-                file.write(base64.b64decode(entry.pdfString or ""))
-            claim.isEvilized = True
-        else:
-            logger.debug(
-                "NOT PRINTING entry %d of %d at %s (%s)",
-                index,
-                len(calendar_info),
-                entry.citationDate,
-                entry.citationType,
-            )
-    third_stage.set_completion("Finished linking claims")
-    progress.set_completion("DONE")
-
-async def __update_claim_standalone(
-    citation: Citation,
-    creds: SECLOLoginCredentials,
-    rec_id: int,
-    progress: ProgressReport,
-    db: AsyncSession,
-    seclo: Optional[SECLORecData] = None,
-):
-    if seclo:
-        claim = await __ingress_claim(
-            rec_id=rec_id,
-            init_date=None,
-            rec_data=seclo,
-            progress=progress,
-            db=db,
-            update=True,
-            citation=citation,
-        )
-    else:
-        with SECLORecData(creds, rec_id, progress) as seclo:
-            claim = await __ingress_claim(
-                rec_id=rec_id,
-                init_date=None,
-                rec_data=seclo,
-                progress=progress,
-                db=db,
-                update=True,
-                citation=citation,
-            )
-    await db.commit()
-    return claim
+            await progress.set_completion("Done loading claim data")
+    return citation
 
 
 async def __ingress_claim(
     init_date: Optional[datetime],
-    rec_data: SECLORecData,
+    session: SECLOSession,
     citation: Optional[Citation],
     progress: ProgressReport,
     db: AsyncSession,
@@ -288,38 +279,40 @@ async def __ingress_claim(
     local_lawyers: List[Lawyer] = []
     statement = select(Claim).where(or_(Claim.gdeID == gde_id, Claim.recID == rec_id))
 
-    rec_data.set_progress(progress)
-    if rec_id:
-        rec_data.set_rec_id(rec_id)
-    elif gde_id:
-        rec_data.set_rec_id_from_gde_id(gde_id)
-    else:
-        raise ValueError("Missing recID and gdeID")
-    claim_data = rec_data.get_claim_data()
-    try:
-        local_claim = (await db.scalars(statement)).one()
-        logger.debug("FOUND")
-        if not update:
-            return local_claim
-    except NoResultFound:
-        local_claim = Claim(
-            recID=claim_data.recid,
-            gdeID=gde_id,
-            initDate=init_date,
-            initByEmployee=claim_data.init_by_worker,
-            title="",
-            claimType=ClaimType.enums_to_int(claim_data.claims),
-            legalStuff=claim_data.legal_stuff,
-            isEvilized=False,
-        )
+    async with SECLORecData(session, None, progress) as rec_data:
+        if rec_id:
+            rec_data.set_rec_id(rec_id)
+        elif gde_id:
+            await rec_data.set_rec_id_from_gde_id(gde_id)
+        else:
+            raise ValueError("Missing recID and gdeID")
+        claim_data = await rec_data.get_claim_data()
+        try:
+            local_claim = (await db.scalars(statement)).one()
+            logger.debug("FOUND")
+            if not update:
+                return local_claim
+        except NoResultFound:
+            local_claim = Claim(
+                recID=claim_data.recid,
+                gdeID=gde_id,
+                initDate=init_date,
+                initByEmployee=claim_data.init_by_worker,
+                title="",
+                claimType=ClaimType.enums_to_int(claim_data.claims),
+                legalStuff=claim_data.legal_stuff,
+                isEvilized=False,
+            )
     for employee in claim_data.employees:
         # try for local version
         try:
-            local_employee = (await db.scalars(
-                select(Employee)
-                .where(Employee.recID == local_claim.recID)
-                .where(Employee.cuil == employee.cuil)
-            )).one()
+            local_employee = (
+                await db.scalars(
+                    select(Employee)
+                    .where(Employee.recID == local_claim.recID)
+                    .where(Employee.cuil == employee.cuil)
+                )
+            ).one()
             local_employee.employeeName = employee.name
             local_employee.dni = employee.dni or 0
             local_employee.cuil = employee.cuil
@@ -357,7 +350,9 @@ async def __ingress_claim(
         )
         if employee_address_link not in local_employee.addresses:
             local_employee.addresses.append(employee_address_link)
-        db.add(employee_address_link)
+            db.add(employee_address_link)
+        else:
+            employee_address_link = None
 
         if employee.mail:
             local_mail = __ingress_entry_if_missing(
@@ -372,19 +367,20 @@ async def __ingress_claim(
             if employee_email_link not in local_employee.emails:
                 local_employee.emails.append(employee_email_link)
             db.add(employee_email_link)
-
     for employer in claim_data.employers:
         try:
-            local_employer = (await db.scalars(
-                select(Employer)
-                .where(Employer.recID == local_claim.recID)
-                .where(
-                    or_(
-                        Employer.cuil == employer.cuil,
-                        Employer.employerName == employer.name,
+            local_employer = (
+                await db.scalars(
+                    select(Employer)
+                    .where(Employer.recID == local_claim.recID)
+                    .where(
+                        or_(
+                            Employer.cuil == employer.cuil,
+                            Employer.employerName == employer.name,
+                        )
                     )
                 )
-            )).one()
+            ).one()
             local_employer.employerName = employer.name
             local_employer.cuil = employer.cuil
             local_employer.isValidated = employer.validated
@@ -404,21 +400,20 @@ async def __ingress_claim(
                     else __filter_rules(employer.name)
                 ),
             )
-        local_employer = __ingress_entry_if_missing(
-            local_employer, local_employers
-        )
+        local_employer = __ingress_entry_if_missing(local_employer, local_employers)
         db.add(local_employer)
 
         local_address = __ingress_entry_if_missing(
             Address.from_address_data(employer.address), local_addresses
         )
-        employer_address_link = __ingress_entry_if_missing(
-            EmployerAddressLink(
-                employer=local_employer, address=local_address
-            ),
-            local_employer.addresses
+        employer_address_link = EmployerAddressLink(
+            employer=local_employer, address=local_address
         )
-        db.add(employer_address_link)
+        if employer_address_link not in local_employer.addresses:
+            local_employer.addresses.append(employer_address_link)
+            db.add(employer_address_link)
+        else:
+            employer_address_link = None
 
         if employer.mail:
             local_mail = __ingress_entry_if_missing(
@@ -432,13 +427,10 @@ async def __ingress_claim(
                     break
             else:
                 employer_email_link = __ingress_entry_if_missing(
-                    EmployerEmailLink(
-                        email=local_mail, employer=local_employer
-                    ),
-                    local_employer.emails
+                    EmployerEmailLink(email=local_mail, employer=local_employer),
+                    local_employer.emails,
                 )
                 db.add(employer_email_link)
-
     for lawyer in claim_data.lawyers:
         local_lawyer = Lawyer(
             claim=local_claim,
@@ -500,7 +492,7 @@ async def __ingress_claim(
                         citation=citation,
                         isActualLawyer=True,
                         isSelfRepresenting=local_lawyer.lawyerName
-                            == client.employeeName,
+                        == client.employeeName,
                         clientAbsent=False,
                     )
                     if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
@@ -549,7 +541,7 @@ async def __ingress_claim(
 
 def get_cal_header(local_claim: Claim) -> str:
     """Generates a calendar header for given claim
-    formatted like (SOMEONE c/ SOMEONE ELSE) 
+    formatted like (SOMEONE c/ SOMEONE ELSE)
 
     Args:
         local_claim (Claim): claim to generate a header for.
@@ -625,29 +617,27 @@ async def __map_notification_to_owner(
 
 async def update_notifications(
     rec_id: int,
-    creds: SECLOLoginCredentials,
     db: AsyncSession,
+    session: SECLOSession,
     progress: Optional[ProgressReport] = None,
     citation: Optional[Citation] = None,
     notification_data: Optional[List[SECLONotificationData]] = None,
-    seclo: Optional[SECLORecData] = None,
 ):
     if not progress:
         progress = ProgressReport()
     if not notification_data:
-        if seclo:
-            notification_data = seclo.get_notification_data()
-        else:
-            with SECLORecData(creds, rec_id, progress) as seclo_data:
-                notification_data = seclo_data.get_notification_data()
+        async with SECLORecData(session, rec_id, progress) as seclo_data:
+            notification_data = await seclo_data.get_notification_data()
     is_retry = False
     while True:
         for notification in notification_data:
-            local_notification = (await db.scalars(
-                select(SecloNotification).where(
-                    SecloNotification.secloPostalID == notification.id
+            local_notification = (
+                await db.scalars(
+                    select(SecloNotification).where(
+                        SecloNotification.secloPostalID == notification.id
+                    )
                 )
-            )).one_or_none()
+            ).one_or_none()
             if local_notification:
                 local_notification.receptionDate = notification.notifiedDate
                 try:
@@ -676,18 +666,22 @@ async def update_notifications(
                     ):
                         if not is_retry:
                             logger.info(
-                                "Couldn't match notification %d to '%s' on %d. Will try updating",
+                                "Couldn't match notification %d to '%s' on %d. Will try updating (list: %s)",
                                 local_notification.secloPostalID,
                                 notification.person,
                                 citation.recID,
+                                [f'"{person.employerName if isinstance(person, Employer) else person.employeeName}"' for person in citation.claim.employers + citation.claim.employees]
                             )
-                            await __update_claim_standalone(
-                                creds=creds,
+                            await __ingress_claim(
                                 rec_id=rec_id,
+                                init_date=None,
+                                session=session,
                                 progress=progress,
                                 db=db,
+                                update=True,
                                 citation=citation,
                             )
+                            await db.commit()
                             is_retry = True
                             break
                         logger.warning(
@@ -698,9 +692,9 @@ async def update_notifications(
                         )
             else:
                 if not citation:
-                    with SECLOCalendarParser(creds, None, None) as cal:
-                        cal_citations = cal.get_calendar(
-                            0, 0, notification.citationDate
+                    async with SECLOCalendarParser(session, 0, 0) as cal:
+                        cal_citations = await cal.get_calendar(
+                            notification.citationDate
                         )
                         for cal_citation in cal_citations:
                             if (
@@ -727,11 +721,13 @@ async def update_notifications(
                                         select(Claim).where(Claim.recID == rec_id)
                                     ),
                                 )
-                                old_citation = (await db.scalars(
-                                    select(Citation)
-                                    .where(Citation.recID == rec_id)
-                                    .where(Citation.isCalendarPrimary)
-                                )).one_or_none()
+                                old_citation = (
+                                    await db.scalars(
+                                        select(Citation)
+                                        .where(Citation.recID == rec_id)
+                                        .where(Citation.isCalendarPrimary)
+                                    )
+                                ).one_or_none()
                                 if old_citation:
                                     old_citation.isCalendarPrimary = False
                                 db.add(citation)
@@ -771,25 +767,27 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. " +
-                                        "Will try updating",
+                                    "Couldn't match notification %d to '%s' on %d. "
+                                    + "Will try updating",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
                                 )
-                                await __update_claim_standalone(
-                                    creds=creds,
+                                await __ingress_claim(
                                     rec_id=rec_id,
+                                    init_date=None,
+                                    session=session,
                                     progress=progress,
                                     db=db,
+                                    update=True,
                                     citation=citation,
-                                    seclo=seclo,
                                 )
+                                await db.commit()
                                 is_retry = True
                                 break
                             logger.warning(
-                                "Couldn't match notification %d to '%s' on %d. " +
-                                    "Execution will continue",
+                                "Couldn't match notification %d to '%s' on %d. "
+                                + "Execution will continue",
                                 local_notification.secloPostalID,
                                 notification.person,
                                 citation.recID,
@@ -803,29 +801,31 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. " +
-                                        "Will try updating",
+                                    "Couldn't match notification %d to '%s' on %d. "
+                                    + "Will try updating",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
                                 )
-                                await __update_claim_standalone(
-                                    creds=creds,
+                                await __ingress_claim(
                                     rec_id=rec_id,
+                                    init_date=None,
+                                    session=session,
                                     progress=progress,
                                     db=db,
+                                    update=True,
                                     citation=citation,
-                                    seclo=seclo,
                                 )
+                                await db.commit()
                                 is_retry = True
                                 break
                             logger.warning(
-                                "Couldn't match notification %d to '%s' on %d. " +
-                                    "Execution will continue",
+                                "Couldn't match notification %d to '%s' on %d. "
+                                + "Execution will continue",
                                 local_notification.secloPostalID,
                                 notification.person,
                                 citation.recID,
                             )
         else:
-            progress.set_completion("")
+            await progress.set_completion("")
             break

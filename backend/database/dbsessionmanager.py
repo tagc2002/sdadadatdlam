@@ -1,6 +1,6 @@
 "Module for managing database sessions"
 import contextlib
-from typing import Annotated, AsyncIterator
+from typing import Annotated, AsyncGenerator
 
 from fastapi import Depends
 
@@ -17,7 +17,7 @@ class DatabaseSessionManager:
     "Class for managing database sessions"
 
     def __init__(self, host: str):
-        self._engine = create_async_engine(host, **{})
+        self._engine = create_async_engine(host, pool_size=20, max_overflow=100)
         self._sessionmaker = async_sessionmaker(autocommit=False, bind=self._engine)
 
     async def close(self):
@@ -30,7 +30,7 @@ class DatabaseSessionManager:
         self._sessionmaker = None
 
     @contextlib.asynccontextmanager
-    async def connect(self) -> AsyncIterator[AsyncConnection]:
+    async def connect(self) -> AsyncGenerator[AsyncConnection]:
         "Create a db connection"
         if self._engine is None:
             raise AttributeError("DatabaseSessionManager is not initialized")
@@ -43,7 +43,7 @@ class DatabaseSessionManager:
                 raise
 
     @contextlib.asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
+    async def session(self) -> AsyncGenerator[AsyncSession]:
         "Create a db session."
         if self._sessionmaker is None:
             raise AttributeError("DatabaseSessionManager is not initialized")

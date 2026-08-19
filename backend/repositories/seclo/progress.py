@@ -19,12 +19,13 @@ class ProgressReport:
     """
 
     def __init__(self, taskmanager: Optional[TaskManager] = None):
-        self.progress = 0.0
-        self.steps = 0
+        self.total_steps = 0
+        self.current_steps = 0
         self.message = ""
         self.subprogresses: List[Tuple["ProgressReport", str]] = []
         self.parent: Optional[ProgressReport] = None
         self.taskmanager = taskmanager
+        self.running = False
 
     def set_parent(self: Self, parent: "ProgressReport"):
         "Sets this progress' parent (for propagating messages and such)"
@@ -36,10 +37,12 @@ class ProgressReport:
         Allows percentage calculations and interacting with progress through increments.
         """
         logger.debug("SET STEPS %d", steps)
-        self.steps = steps
+        self.total_steps = steps
+        if self.total_steps > self.current_steps:
+            self.running=True
         return self
 
-    def compose(self: Self, subprogress: "ProgressReport", message: str = "") -> Self:
+    async def compose(self: Self, subprogress: "ProgressReport", message: str = "") -> Self:
         """
         Registers a child for this progress.
         This progress' completion percentage will be evenly distributed across each subprogress.
@@ -50,10 +53,12 @@ class ProgressReport:
         logger.debug("COMPOSE %s", f"({message})" if message else "")
         self.subprogresses.append((subprogress, message))
         subprogress.set_parent(self)
-        self.get_progress()
+        self.running=True
+        if self.parent is not None:
+            await self.parent.propagate_progress_to_parent()
         return self
 
-    def set_progress(self, step: float, message: str = "") -> Self:
+    async def set_progress(self, step: float, message: str = "") -> Self:
         """
         Sets the current progress status.
         Parameters:
@@ -62,18 +67,19 @@ class ProgressReport:
         """
         if (len(self.subprogresses)) > 0:
             raise AttributeError("Can't set progress on a composed report")
-        self.progress = step / self.steps
+        self.current_steps = step
         self.message = message
-
+        if self.current_steps < self.total_steps:
+            self.running=True
         if self.parent is not None:
-            self.parent.propagate_progress_to_parent()
+            await self.parent.propagate_progress_to_parent()
 
         logger.debug(
-            "SET PROGRESS %d %s", self.progress, f"({message})" if message else ""
+            "SET PROGRESS %d %s", self.get_progress()['progress'], f"({message})" if message else ""
         )
         return self
 
-    def increase_progress(self: Self, message: Optional[str] = None) -> Self:
+    async def increase_progress(self: Self, message: Optional[str] = None) -> Self:
         """
         Increments this progress' completion percentage by one step.
         Parameters:
@@ -81,21 +87,23 @@ class ProgressReport:
         """
         if (len(self.subprogresses)) > 0:
             raise AttributeError("Can't set progress on a composed report")
-        self.progress += 1 / self.steps
+        self.current_steps += 1
+        if not self.running:
+            self.running = True
         if message is not None:
             self.message = message
 
         if self.parent is not None:
-            self.parent.propagate_progress_to_parent()
+            await self.parent.propagate_progress_to_parent()
 
         logger.debug(
             "INCREASE PROGRESS: %.2f%% %s",
-            (100 * self.progress),
+            (100 * self.get_progress()['progress']),
             f"({message})" if message else "",
         )
         return self
 
-    def set_message(self: Self, message: str) -> Self:
+    async def set_message(self: Self, message: str) -> Self:
         """
         Overrides the current progress status message.
         Parameters:
@@ -105,23 +113,23 @@ class ProgressReport:
         self.message = message
 
         if self.parent is not None:
-            self.parent.propagate_progress_to_parent()
+            await self.parent.propagate_progress_to_parent()
         return self
 
-    def set_completion(self: Self, message: str) -> Self:
+    async def set_completion(self: Self, message: str) -> Self:
         """
         Marks this progress as done.
         Parameters:
             message (str): Status to display.
         """
         logger.debug("SET COMPLETION %s", f"({message})" if message else "")
-        self.progress = 1
+        self.running = False
         self.message = message
 
         if self.parent is not None:
-            self.parent.propagate_progress_to_parent()
+            await self.parent.propagate_progress_to_parent()
         if self.taskmanager is not None:
-            self.taskmanager.update_task_slot_progress(self.get_progress())
+            await self.taskmanager.update_task_slot_progress(self.get_progress())
         return self
 
     def get_progress(self: Self) -> Dict:
@@ -130,44 +138,51 @@ class ProgressReport:
         Returns:
             Dict: {'progress': float, 'message': str, 'status': str}
         """
-        if self.subprogresses:
-            self.progress = 0
+        current_progress = (self.current_steps / self.total_steps) if self.total_steps > 0 else 0.0
+        if current_progress > 0 and not self.running:
+            return {
+                "progress": 1.0,
+                "running": False,
+                "message": self.message
+            }
+        if len(self.subprogresses) > 0:
             progress_step = (
-                1 / self.steps if self.steps > 0 else 1 / len(self.subprogresses)
+                (1 / self.total_steps) if self.total_steps > 0 else (1 / len(self.subprogresses))
             )
-            if not self.is_complete():
-                for progress, message in self.subprogresses:
-                    if progress.is_complete():
-                        self.progress += 1 * progress_step
-                    else:
-                        current = progress.get_progress()
-                        self.progress += current["progress"] * progress_step
-                        self.message = message + (
-                            (": " + current["message"])
-                            if len(current["message"]) > 0
-                            else ""
-                        )
-                        break
+            current_progress = 0.0
+            self.running = False
+            valid_subprogresses = []
+            for progress in self.subprogresses:
+                current = progress[0].get_progress()
+                if current["progress"] > 0 and not progress[0].running:
+                    current_progress += 1 * progress_step
                 else:
-                    self.message = self.subprogresses[-1][1] + (
-                        (": " + self.subprogresses[-1][0].message)
-                        if len(self.subprogresses[-1][0].message)
-                        else ""
-                    )
+                    current_progress += current["progress"] * progress_step
+                    self.running = self.running or current["running"]
+                    valid_subprogresses.append(progress)
+            if current_progress > 0 and not self.running:
+                return {
+                    "progress": 1.0,
+                    "running": False,
+                    "message": self.message
+                }
+            return {
+                "progress": current_progress,
+                "message": self.message,
+                "running": self.running,
+                "subprogresses": 
+                    [{"name": s, "progress": p.get_progress()} for p, s in valid_subprogresses]
+            }
         return {
-            "progress": self.progress,
+            "progress": current_progress,
             "message": self.message,
-            "running": not self.is_complete(),
+            "running": self.running,
         }
 
-    def is_complete(self: Self) -> bool:
-        """Returns whether this progress is completed or not."""
-        return self.progress >= 1 or self.steps >= len(self.subprogresses)
-
-    def propagate_progress_to_parent(self: Self):
+    async def propagate_progress_to_parent(self: Self):
         "Propagates current progress up the chain to parent and eventually to user"
         progress = self.get_progress()
         if self.parent is not None:
-            self.parent.propagate_progress_to_parent()
+            await self.parent.propagate_progress_to_parent()
         if self.taskmanager is not None:
-            self.taskmanager.update_task_slot_progress(progress)
+            await self.taskmanager.update_task_slot_progress(progress)
