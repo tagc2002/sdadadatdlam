@@ -22,7 +22,7 @@ import uuid
 from playwright.async_api import (
     APIResponse,
     Browser,
-    Error,
+    Error as PlaywrightError,
     HttpCredentials,
     BrowserContext,
     Locator,
@@ -78,6 +78,22 @@ DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "./temp")
 MAX_ATTEMPTS = 3
 
 
+def retry(func):
+    "Decorator for auto retrying if errors occur"
+
+    def myinner(*args, **kwargs):
+        last_exception: PlaywrightError
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                return func(*args, **kwargs)
+            except PlaywrightError as e:
+                last_exception = e
+                logger.debug(str(e))
+        raise AttemptsExceededException() from last_exception  # type: ignore
+
+    return myinner
+
+
 class SECLOSession:
     """
     Handles creating a new browser instance for accessing the webportal.
@@ -109,7 +125,7 @@ class SECLOSession:
             )
 
     async def __proxy_req(self: Self, req: Route):
-        if "google" in req.request.url:
+        if "trabajo" not in req.request.url:
             return await req.abort()
         if re.match(
             r".*(\.axd|\.js|\.css|\.gif|\.jpg|\.png)", req.request.url, re.IGNORECASE
@@ -131,12 +147,12 @@ class SECLOSession:
                 headers["sec-fetch-site"] = "same-origin"
                 headers["sec-Gpc"] = "1"
                 ans: APIResponse
-                last_exception: Error
+                last_exception: PlaywrightError
                 for _ in range(MAX_ATTEMPTS):
                     try:
                         ans = await req.fetch(timeout=10000, headers=headers)
                         break
-                    except Error as ex:
+                    except PlaywrightError as ex:
                         last_exception = ex
                         continue
                 else:
@@ -158,7 +174,8 @@ class SECLOSession:
                 password=self.credentials.password,
                 send="unauthorized",
             ),
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
+                "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         )
         # await self.context.route("**/*", lambda req: req.fallback())
         await self.context.route("**/*", self.__proxy_req)
@@ -181,6 +198,7 @@ class SECLOSession:
         logger.warning("DONE CLEANUP")
         os.rmdir(self.downloadpath)
 
+    @retry
     async def login(self: Self):
         """Performs the auth procedure and logs into the web portal.
         Raises:
@@ -189,6 +207,8 @@ class SECLOSession:
         Returns:
             self
         """
+        if hasattr(self, "loginpage") and self.loginpage:
+            await self.loginpage.close()
         self.loginpage = await self.context.new_page()
         logger.debug("Loading adfs")
         await self.loginpage.goto(
@@ -289,6 +309,7 @@ class SECLOAccessor:
             "Unknown SECLO server error. Try initiating the request again."
         )
 
+    @retry
     async def _load_rec(self: Self):
         """
         Receives an instance of a case searchbox and populates
@@ -305,7 +326,8 @@ class SECLOAccessor:
         try:
             await self.page.wait_for_load_state()
             await self.page.evaluate(
-                f'document.getElementById("ctl00_Top_hdnReclamoId").setAttribute("value", "{self.recid}")'
+                'document.getElementById("ctl00_Top_hdnReclamoId")'+\
+                f'.setAttribute("value", "{self.recid}")'
             )
 
             # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
@@ -317,6 +339,7 @@ class SECLOAccessor:
                 "Couldn't find case searchbox element"
             ) from e
 
+    @retry
     async def set_rec_id_from_gde_id(self: Self, gde_id: str) -> Self:
         """
         Sets the current RecID to the corresponding key for the given gdeID.
@@ -336,41 +359,31 @@ class SECLOAccessor:
         gde_file = gde_id.split("-")[2]
         logger.debug("gde year: %s", gde_year)
         logger.debug("gde file: %s", gde_file)
-        last_exception = None
-        for _ in range(0, MAX_ATTEMPTS):
-            try:
-                await self.page.locator("#ctl00_Busqueda_txtNro").fill("")
-                await self.page.locator("#ctl00_Busqueda_txtNro").fill(gde_file)
-                await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
-                await self.page.locator("#ctl00_Busqueda_txtAnio").fill(gde_year)
-                await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
-            except PlaywrightTimeoutError as e:
-                logger.error("Couldn't load notifications page")
-                logger.error(e)
-                last_exception = e
-                continue
-            try:
-                await self.page.locator("#ctl00_Center_grdNotificaciones").is_visible(
-                    timeout=10000
-                )
-            except PlaywrightTimeoutError as e:
-                logger.error("Case with GDE ID '%s' not found", gde_id)
-                logger.error(e)
-                last_exception = RecNotAccessibleException("Case not found")
-            rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
-                "value"
+        await self.page.locator("#ctl00_Busqueda_txtNro").fill("")
+        await self.page.locator("#ctl00_Busqueda_txtNro").fill(gde_file)
+        await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
+        await self.page.locator("#ctl00_Busqueda_txtAnio").fill(gde_year)
+        await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
+        try:
+            await self.page.locator("#ctl00_Center_grdNotificaciones").is_visible(
+                timeout=10000
             )
-            if rec_id:
-                self.recid = int(rec_id)
-            else:
-                raise RecNotAccessibleException("Can't load recID. bummers")
-            await self.progress.set_completion("Done")
-            logger.info("recID found, set to %s", self.recid)
-            return self
-        if isinstance(last_exception, RecNotAccessibleException):
-            raise last_exception
-        raise AttemptsExceededException(last_exception) from last_exception
+        except PlaywrightTimeoutError as e:
+            raise RecNotAccessibleException(
+                f"Case with GDE ID '{gde_id}' not found"
+            ) from e
+        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
+            "value"
+        )
+        if rec_id:
+            self.recid = int(rec_id)
+        else:
+            raise RecNotAccessibleException(f"Can't load recID for {gde_id}. bummers")
+        await self.progress.set_completion("Done")
+        logger.info("recID found, set to %s", self.recid)
+        return self
 
+    @retry
     async def set_gde_id_from_rec_id(self: Self, rec_id: int) -> Self:
         """
         Sets the corresponding GDE ID for a given case.
@@ -419,7 +432,7 @@ class SECLOAccessor:
             timeout=100, state="visible"
         )
         await self.page.locator("#ctl00_Center_TRGRABANDO").wait_for(
-            timeout=10000, state="hidden"
+            timeout=20000, state="hidden"
         )
 
 
@@ -454,52 +467,46 @@ class SECLOCitationManager(SECLOAccessor):
         self.comb_selector_index = 0
         self.items: List[CitationResult] = []
 
+    @retry
     async def __load_citation_result_screen(self: Self) -> None:
         """
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                logger.debug("Accessing citation result window")
-                await self.page.goto(
-                    "https://conciliadores.trabajo.gob.ar/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
-                )
-                await self.page.locator("#ctl00_btnAudiencia").click()
-                await self._load_rec()
-            except PlaywrightTimeoutError:
-                continue
-            try:
-                if (
-                    "Registrar Resultado"
-                    in await self.page.locator(".appBoxMenu").inner_text()
-                ):
-                    if not await self.page.locator(
-                        "#ctl00_Center_cmbObjetos"
-                    ).is_enabled():
-                        logger.debug(
-                            "Claim object comb selector is disabled. This is good."
-                        )
-                        self.multiple = False
-                        self.comb_selector_length = 1
-                    else:
-                        logger.debug(
-                            "Claim object comb selector is enabled. This will be a bummer"
-                        )
-                        self.multiple = True
-                        self.comb_selector_length = (
-                            await self.page.locator("#ctl00_Center_cmbObjetos")
-                            .locator("option")
-                            .count()
-                        )
-                        self.comb_selector_index = 0
-            except Exception as e:
-                raise RecNotAccessibleException(
-                    f"Could not access result form for rec {self.recid}. Maybe its closed."
-                ) from e
-            break
-        else:
-            raise AttemptsExceededException("Cannot load citation result window")
+        logger.debug("Accessing citation result window")
+        await self.page.goto(
+            "https://conciliadores.trabajo.gob.ar/O_Audiencia.aspx"+\
+                "?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
+        )
+        await self.page.locator("#ctl00_btnAudiencia").click()
+        await self._load_rec()
+        try:
+            if (
+                "Registrar Resultado"
+                in await self.page.locator(".appBoxMenu").inner_text()
+            ):
+                if not await self.page.locator("#ctl00_Center_cmbObjetos").is_enabled():
+                    logger.debug(
+                        "Claim object comb selector is disabled. This is good."
+                    )
+                    self.multiple = False
+                    self.comb_selector_length = 1
+                else:
+                    logger.debug(
+                        "Claim object comb selector is enabled. This will be a bummer"
+                    )
+                    self.multiple = True
+                    self.comb_selector_length = (
+                        await self.page.locator("#ctl00_Center_cmbObjetos")
+                        .locator("option")
+                        .count()
+                    )
+                    self.comb_selector_index = 0
+        except Exception as e:
+            raise RecNotAccessibleException(
+                f"Could not access result form for rec {self.recid}. Maybe its closed."
+            ) from e
 
+    @retry
     async def reopen_case(self: Self) -> Self:
         """
         Reopens a given case. Does not verify if its closed, thats the responsibility of the caller.
@@ -510,23 +517,23 @@ class SECLOCitationManager(SECLOAccessor):
         self.progress.set_steps(2)
         await self.progress.set_progress(0, "Loading case for reopening")
 
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                await self.page.goto(
-                    "https://conciliadores.trabajo.gob.ar/O_Reabrir_Reclamo.aspx"
-                )
-                await self._load_rec()
-                await self.progress.increase_progress("Reopening case")
-                # if present, case was not found
-                await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible()
-            except PlaywrightTimeoutError:
-                pass  # Expected
-            else:
-                raise InvalidCaseStateException(
-                    "Case not found, probably its still open"
-                )
+        try:
+            await self.page.goto(
+                "https://conciliadores.trabajo.gob.ar/O_Reabrir_Reclamo.aspx"
+            )
+            await self._load_rec()
+            await self.progress.increase_progress("Reopening case")
+            # if present, case was not found
+            await self.page.wait_for_load_state("load")
+            await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible(
+                timeout=100
+            )
+        except PlaywrightTimeoutError:
+            pass  # Expected
+        else:
+            raise InvalidCaseStateException("Case not found, probably its still open")
 
-        logger.debug("Reopen button found")
+        logger.debug("Reopen found")
         try:
             # if present, an error was raised
             error = await self.page.locator("#ctl00_Center_lblmensaje").inner_text(
@@ -575,6 +582,7 @@ class SECLOCitationManager(SECLOAccessor):
             person=person, amount=amount, enabled=enabled, is_employee=is_employee
         )
 
+    @retry
     async def get_items(self: Self) -> List[CitationResult]:
         """
         Gets the current list of employees and employers registered in this claim.
@@ -755,6 +763,7 @@ class SECLOCitationManager(SECLOAccessor):
         else:
             raise ValidationException(self.error)
 
+    @retry
     async def create_new_citation(
         self: Self, items: Set[CitationResult], date: datetime
     ):
@@ -837,6 +846,7 @@ class SECLOCitationManager(SECLOAccessor):
             )
         await self.progress.set_completion("Done new citation request")
 
+    @retry
     async def close_case(self: Self, items: set[CitationResult]):
         """
         Sets the claim results based on the items and then closes the case.
@@ -872,10 +882,16 @@ class SECLOFileManager(SECLOAccessor):
         recid (int): Tha claim number to bind to this instance.
     """
 
-    async def __init__(self: Self, session: SECLOSession, recid: Optional[int] = None):
+    def __init__(self: Self, session: SECLOSession, recid: Optional[int] = None):
         super().__init__(session, recid)
         self.file_list: List[Tuple[str, str, datetime]] = []
 
+    async def __aenter__(self: Self) -> Self:
+        await super().__aenter__()
+        await self.__get_files()
+        return self
+
+    @retry
     async def __get_files(self: Self):
         """
         Populates internal object storage with the current files in rec.
@@ -910,6 +926,7 @@ class SECLOFileManager(SECLOAccessor):
         """
         return self.file_list[:]
 
+    @retry
     async def get_file(self: Self, index: int) -> Path:
         """
         Request a given file from the list of uploaded file.
@@ -937,6 +954,7 @@ class SECLOFileManager(SECLOAccessor):
         await (await download_event).save_as(download_path)
         return download_path
 
+    @retry
     async def upload_file(
         self: Self,
         file: str,
@@ -986,6 +1004,7 @@ class SECLOFileManager(SECLOAccessor):
             logger.warning("FILE WON'T BE SAVED IN DEBUG MODE!")
         await self.__get_files()
 
+    @retry
     async def upload_record(
         self: Self, file: str, agreement: bool, override: bool = False
     ) -> None:
@@ -1078,6 +1097,7 @@ class SECLORecData(SECLOAccessor):
     but the website is so shit I don't think it'll be reliable.
     """
 
+    @retry
     async def get_notification_data(
         self: Self, gde_id: Optional[str] = None, rec_id: Optional[int] = None
     ) -> List[SECLONotificationData]:
@@ -1089,22 +1109,15 @@ class SECLORecData(SECLOAccessor):
             List[SECLONotificationData]: The list of notification entries.
         """
 
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                if gde_id:
-                    await self.set_rec_id_from_gde_id(gde_id=gde_id)
-                else:
-                    if rec_id:
-                        self.recid = rec_id
-                    await self.page.goto(
-                        "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
-                    )
-                    await self._load_rec()
-                break
-            except PlaywrightTimeoutError:
-                continue
+        if gde_id:
+            await self.set_rec_id_from_gde_id(gde_id=gde_id)
         else:
-            raise AttemptsExceededException("Cannot load notification page")
+            if rec_id:
+                self.recid = rec_id
+            await self.page.goto(
+                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
+            )
+            await self._load_rec()
 
         self.progress.set_steps(1)
 
@@ -1405,6 +1418,7 @@ class SECLORecData(SECLOAccessor):
         other.add_mobile_phone(*await self.__get_mobile_phone(3))
         return other
 
+    @retry
     async def get_claim_data(self: Self) -> SECLOClaimData:
         """
         Accesses the given claims initiation data.
@@ -1413,135 +1427,118 @@ class SECLORecData(SECLOAccessor):
         Returns:
             SECLOClaimData: an object that contains all claim data.
         """
-        last_exception = None
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                self.progress.set_steps(1)
-                await self.progress.set_progress(0, "Loading claim data form...")
-                await self.page.goto(
-                    "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
-                    timeout=60000,
-                )
-                await self._load_rec()
-                seclo_db_ok = True
-                await self.page.wait_for_load_state()
-                total_items = (
-                    await self.page.locator("#ctl00_Center_lstTrabajadores")
-                    .locator("li")
-                    .count()
-                )
-                total_items += (
-                    await self.page.locator("#ctl00_Center_lstEmpleadores")
-                    .locator("li")
-                    .count()
-                )
-                total_items += (
-                    await self.page.locator("#ctl00_Center_lstReprentantes")
-                    .locator("li")
-                    .count()
-                )
-                total_items += (
-                    await self.page.locator("#ctl00_Center_lstDerechohabientes")
-                    .locator("li")
-                    .count()
-                )
-                self.progress.set_steps(2 + total_items)
+        self.progress.set_steps(1)
+        await self.progress.set_progress(0, "Loading claim data form...")
+        await self.page.goto(
+            "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx"+\
+                "?paramEnc=AB3u3y2175MqNXK0296jtA==",
+            timeout=60000,
+        )
+        await self._load_rec()
+        seclo_db_ok = True
+        await self.page.wait_for_load_state()
+        total_items = (
+            await self.page.locator("#ctl00_Center_lstTrabajadores")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstEmpleadores")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstReprentantes")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstDerechohabientes")
+            .locator("li")
+            .count()
+        )
+        self.progress.set_steps(2 + total_items)
 
-                # CLAIM
-                await self.progress.increase_progress("Getting claim data...")
-                claim_data = SECLOClaimData(
-                    recid=self.recid or 0,
-                    legal_stuff=await self.page.locator(
-                        "#ctl00_Center_ucReclamo_txtComentario"
-                    ).input_value(),
-                    init_by_worker=await self.page.locator(
-                        "#ctl00_Center_ucReclamo_optReclamante_0"
-                    ).is_checked(),
+        # CLAIM
+        await self.progress.increase_progress("Getting claim data...")
+        claim_data = SECLOClaimData(
+            recid=self.recid or 0,
+            legal_stuff=await self.page.locator(
+                "#ctl00_Center_ucReclamo_txtComentario"
+            ).input_value(),
+            init_by_worker=await self.page.locator(
+                "#ctl00_Center_ucReclamo_optReclamante_0"
+            ).is_checked(),
+        )
+        for row in (
+            await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
+            .locator("td")
+            .all()
+        ):
+            if await row.locator("input").is_checked():
+                claim_data.add_claim_object(
+                    ClaimType.string_to_enum(await row.locator("label").inner_text())
                 )
-                for row in (
-                    await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
-                    .locator("td")
-                    .all()
-                ):
-                    if await row.locator("input").is_checked():
-                        claim_data.add_claim_object(
-                            ClaimType.string_to_enum(
-                                await row.locator("label").inner_text()
-                            )
-                        )
-                # EMPLOYEES
-                people_list = self.page.locator(
-                    "#ctl00_Center_lstTrabajadores"
-                ).locator("li")
-                for i in range(await people_list.count()):
-                    await people_list.nth(i).locator("a").click()
-                    await self.page.wait_for_load_state()
-                    employee, seclo_db_ok = await self.__get_employee_data(seclo_db_ok)
-                    await self.progress.increase_progress(
-                        f"Employee {employee.name} ({i+1} of {await people_list.count()})"
-                    )
-                    claim_data.add_employee(employee)
-                    if seclo_db_ok:
-                        await self.page.locator(
-                            "#ctl00_Center_ctl00_btnAgregar"
-                        ).click()
+        # EMPLOYEES
+        people_list = self.page.locator("#ctl00_Center_lstTrabajadores").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            employee, seclo_db_ok = await self.__get_employee_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Employee {employee.name} ({i+1} of {await people_list.count()})"
+            )
+            claim_data.add_employee(employee)
+            if seclo_db_ok:
+                await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
 
-                # EMPLOYERS
-                await self.page.wait_for_load_state()
-                people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator(
-                    "li"
-                )
-                for i in range(await people_list.count()):
-                    await people_list.nth(i).locator("a").click()
-                    await self.page.wait_for_load_state()
-                    employer, seclo_db_ok = await self.__get_employer_data(seclo_db_ok)
-                    await self.progress.increase_progress(
-                        f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
-                    )
-                    claim_data.add_employer(employer)
-                    if seclo_db_ok:
-                        await self.page.locator(
-                            "#ctl00_Center_ctl01_btnAgregar"
-                        ).click()
+        # EMPLOYERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            employer, seclo_db_ok = await self.__get_employer_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_employer(employer)
+            if seclo_db_ok:
+                await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
 
-                # LAWYERS
-                await self.page.wait_for_load_state()
-                people_list = self.page.locator(
-                    "#ctl00_Center_lstReprentantes"
-                ).locator("li")
-                for i in range(await people_list.count()):
-                    await people_list.nth(i).locator("a").click()
-                    await self.page.wait_for_load_state()
-                    lawyer = await self.__get_lawyer_data(seclo_db_ok)
-                    await self.progress.increase_progress(
-                        f"Lawyer {lawyer.name} ({i+1} of {await people_list.count()})..."
-                    )
-                    claim_data.add_lawyer(lawyer)
+        # LAWYERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstReprentantes").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            lawyer = await self.__get_lawyer_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Lawyer {lawyer.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_lawyer(lawyer)
 
-                # OTHERS
-                await self.page.wait_for_load_state()
-                people_list = self.page.locator(
-                    "#ctl00_Center_lstDerechohabientes"
-                ).locator("li")
-                for i in range(await people_list.count()):
-                    await people_list.nth(i).locator("a").click()
-                    await self.page.wait_for_load_state()
-                    other = await self.__get_other_data()
-                    await self.progress.increase_progress(
-                        f"Other {other.name} ({i+1} of {await people_list.count()})..."
-                    )
-                    claim_data.add_other(other)
+        # OTHERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstDerechohabientes").locator(
+            "li"
+        )
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            other = await self.__get_other_data()
+            await self.progress.increase_progress(
+                f"Other {other.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_other(other)
 
-                # END
-                await self.progress.set_completion("Done getting data.")
-                if seclo_db_ok and not DEBUGMODE:
-                    await self.__save_claim_data()
-                return claim_data
-            except (PlaywrightTimeoutError, Error) as e:
-                last_exception = e
-                continue
-        raise AttemptsExceededException() from last_exception
+        # END
+        await self.progress.set_completion("Done getting data.")
+        if seclo_db_ok and not DEBUGMODE:
+            await self.__save_claim_data()
+        return claim_data
 
+    @retry
     async def get_conciliador_data(self: Self) -> str:
         """
         Returns the assigned conciliator for current case.
@@ -1568,6 +1565,7 @@ class SECLORecData(SECLOAccessor):
                     f"Address error: {await error_loc.inner_text()}"
                 )
 
+    @retry
     async def add_employer(self: Self, employer: SECLOEmployerData) -> Self:
         """
         Attempts to expand a claim with the given employer.
@@ -1583,7 +1581,8 @@ class SECLORecData(SECLOAccessor):
         for _ in range(0, 5):
             # Trying to get this bitch enabled. idk why this works but it does.
             await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+                "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx"+\
+                    "?paramEnc=AB3u3y2175MqNXK0296jtA==",
                 timeout=60000,
             )
             await self._load_rec()
@@ -1683,6 +1682,7 @@ class SECLOInvoiceParser(SECLOAccessor):
     Basically for nonagreements.
     """
 
+    @retry
     async def list_invoices(self: Self) -> List[Dict[str, Any]]:
         """
         Fetches available list of invoices to be selected
@@ -1706,6 +1706,7 @@ class SECLOInvoiceParser(SECLOAccessor):
             )
         return invoices
 
+    @retry
     async def get_invoice_details(self: Self, invoice: int) -> Dict:
         """
         Fetches detailed info for given invoice ID.
@@ -1722,7 +1723,6 @@ class SECLOInvoiceParser(SECLOAccessor):
         """
         await self.page.goto(
             "https://conciliadores.trabajo.gob.ar/FF_ConsultaLiquidaciones.aspx",
-            timeout=60000,
         )
         await self.page.locator("#ctl00_Center_cmbLiquidaciones").select_option(
             value=str(invoice)
@@ -1800,22 +1800,18 @@ class SECLOCalendarParser(SECLOAccessor):
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
         await super().__aexit__(exc_type, exc_val, exc_tb)
 
+    @retry
     async def __load_calendar(self: Self) -> datetime:
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                await self.page.goto(
-                    "https://conciliadores.trabajo.gob.ar/InicioConciliador.aspx"
-                )
-                await self.page.locator("#ctl00_Center_chkSusp").click()
-                await self.page.locator("#ctl00_Center_chkReal").click()
-                await self.page.wait_for_event("load")
-                return datetime.strptime(
-                    await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
-                    "%d/%m/%Y",
-                )
-            except PlaywrightTimeoutError:
-                continue
-        raise AttemptsExceededException("Cannot open calendar")
+        await self.page.goto(
+            "https://conciliadores.trabajo.gob.ar/InicioConciliador.aspx"
+        )
+        await self.page.locator("#ctl00_Center_chkSusp").click()
+        await self.page.locator("#ctl00_Center_chkReal").click()
+        await self.page.wait_for_event("load")
+        return datetime.strptime(
+            await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
+            "%d/%m/%Y",
+        )
 
     async def __iterate_calendar_week(self: Self) -> List[int]:
         table = self.page.locator("#ctl00_Center_DayPilotCalendar1").locator("tr")
@@ -1872,29 +1868,20 @@ class SECLOCalendarParser(SECLOAccessor):
         await self.first_stage.set_completion("Done")
         return False, []
 
+    @retry
     async def __populate_calendar_ids(self: Self):
         result = True
-        last_exception: Exception | None = None
         while result:
-            for _ in range(MAX_ATTEMPTS):
-                try:
-                    result, citation_ids = await self.__iterate_calendar_range()
-                    self.citation_tasks.extend(
-                        [
-                            asyncio.get_event_loop().create_task(
-                                self.__get_citation_info(id)
-                            )
-                            for id in citation_ids
-                        ]
-                    )
-                    self.second_stage.set_steps(
-                        self.second_stage.total_steps + len(citation_ids)
-                    )
-                except PlaywrightTimeoutError as e:
-                    last_exception = e
-        if result and last_exception is not None:
-            raise last_exception  # type: ignore
-        return
+            result, citation_ids = await self.__iterate_calendar_range()
+            self.citation_tasks.extend(
+                [
+                    asyncio.get_event_loop().create_task(self.__get_citation_info(id))
+                    for id in citation_ids
+                ]
+            )
+            self.second_stage.set_steps(
+                self.second_stage.total_steps + len(citation_ids)
+            )
 
     def __aiter__(self: Self):
         return self
@@ -1914,53 +1901,35 @@ class SECLOCalendarParser(SECLOAccessor):
         else:
             raise StopAsyncIteration  # Not really possible but complains otherwise
 
+    @retry
     async def __get_citation_info(self: Self, citation_id: int) -> SECLOCitation:
         # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
-        last_exception: Exception
-        for _ in range(MAX_ATTEMPTS):
-            async with SECLOAccessor(self.session) as session:
-                try:
-                    await session.page.goto(
-                        "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
-                        + f"AudId={citation_id}&esPortal=1"
-                    )
-                    gde_id_text = await session.page.locator(
-                        "#rcNroExpediente"
-                    ).inner_text()
-                    init_datetime_text = await session.page.locator(
-                        "#rcFecha"
-                    ).inner_text()
-                    init_datetime_text = (
-                        init_datetime_text.split()[0]
-                        + " "
-                        + init_datetime_text.split()[1].split(":")[0]
-                        + ":"
-                        + init_datetime_text.split()[1].split(":")[1]
-                    )
-                    citation_date = await session.page.locator("#rcFechaA").inner_text()
-                    citation_date = citation_date.split("a")[0]
-                    return SECLOCitation(
-                        gdeID=gde_id_text,
-                        citationDate=datetime.strptime(
-                            citation_date, r"%d/%m/%Y - %H:%M "
-                        ),
-                        initDate=datetime.strptime(
-                            init_datetime_text, r"%d/%m/%Y %H:%M"
-                        ),
-                        citationID=citation_id,
-                        citationType=await session.page.locator(
-                            "#auTipoYEstado"
-                        ).inner_text(),
-                        pdfString=base64.b64encode(await session.page.pdf()).decode(
-                            "ascii"
-                        ),
-                    )
-                except PlaywrightTimeoutError as e:
-                    last_exception = e
-        logger.warning("Error retrieving citation %d", citation_id)
-        logger.warning(last_exception)  # type: ignore
-        raise last_exception  # type: ignore
+        async with SECLOAccessor(self.session) as session:
+            await session.page.goto(
+                "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
+                + f"AudId={citation_id}&esPortal=1"
+            )
+            gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
+            init_datetime_text = await session.page.locator("#rcFecha").inner_text()
+            init_datetime_text = (
+                init_datetime_text.split()[0]
+                + " "
+                + init_datetime_text.split()[1].split(":")[0]
+                + ":"
+                + init_datetime_text.split()[1].split(":")[1]
+            )
+            citation_date = await session.page.locator("#rcFechaA").inner_text()
+            citation_date = citation_date.split("a")[0]
+            return SECLOCitation(
+                gdeID=gde_id_text,
+                citationDate=datetime.strptime(citation_date, r"%d/%m/%Y - %H:%M "),
+                initDate=datetime.strptime(init_datetime_text, r"%d/%m/%Y %H:%M"),
+                citationID=citation_id,
+                citationType=await session.page.locator("#auTipoYEstado").inner_text(),
+                pdfString=base64.b64encode(await session.page.pdf()).decode("ascii"),
+            )
 
+    @retry
     async def get_calendar(self: Self, date: datetime) -> List[SECLOCitation]:
         """
         Fetches the current calendar assignments from SECLO.
@@ -1968,19 +1937,11 @@ class SECLOCalendarParser(SECLOAccessor):
         Parameters:
             date (datetime): Override to load a specific week in absolute time.
         """
-        last_exception: Exception
-        for _ in range(MAX_ATTEMPTS):
-            citations: List[SECLOCitation] = []
-            try:
-                await self.__advance_calendar(date)
-                ids = await self.__iterate_calendar_week()
-                for citation_id in ids:
-                    citations.append(await self.__get_citation_info(citation_id))
-                return citations
-            except PlaywrightTimeoutError as e:
-                last_exception = e
-        raise last_exception  # type: ignore
+        await self.__advance_calendar(date)
+        ids = await self.__iterate_calendar_week()
+        return [await self.__get_citation_info(citation_id) for citation_id in ids]
 
+    @retry
     async def get_workable_days(
         self: Self, weeks_ahead: int = 20
     ) -> List[Tuple[datetime, bool, str]]:

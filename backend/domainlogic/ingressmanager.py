@@ -666,11 +666,16 @@ async def update_notifications(
                     ):
                         if not is_retry:
                             logger.info(
-                                "Couldn't match notification %d to '%s' on %d. Will try updating (list: %s)",
+                                "Couldn't match notification %d to '%s' on %d. "+\
+                                    "Will try updating (list: %s)",
                                 local_notification.secloPostalID,
                                 notification.person,
                                 citation.recID,
-                                [f'"{person.employerName if isinstance(person, Employer) else person.employeeName}"' for person in citation.claim.employers + citation.claim.employees]
+                                [
+                                    f'"{person.employerName if isinstance(person, Employer)
+                                    else person.employeeName}"'
+                                    for person in citation.claim.employers + citation.claim.employees
+                                ]
                             )
                             await __ingress_claim(
                                 rec_id=rec_id,
