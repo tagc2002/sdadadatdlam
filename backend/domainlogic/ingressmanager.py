@@ -108,6 +108,9 @@ async def batch_verify_agenda(
         ##TODO Once the frontend is working, new citations will be fetched via an API call.
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
+            if (citation.exception()):
+                logger.warning(citation.exception(), exc_info=True, stack_info=True)
+                continue
             claim = (
                 await db.scalars(
                     select(Claim).where(Claim.gdeID == citation.result().gdeID)
@@ -142,125 +145,127 @@ async def batch_verify_agenda(
 async def __verify_agenda_citation(
     session: SECLOSession, citation: SECLOCitation, progress: ProgressReport
 ) -> SECLOCitation:
-    notification_progress = ProgressReport()
-    await progress.compose(
-        notification_progress, f"Loading notifications for {citation.gdeID}"
-    )
-    ingress_progress = ProgressReport()
-    await progress.compose(ingress_progress, f"New claim {citation.gdeID}")
-    notification_progress = ProgressReport()
-    await progress.compose(notification_progress, "Mapping notifications")
+    try:
+        notification_progress = ProgressReport()
+        await progress.compose(
+            notification_progress, f"Loading notifications for {citation.gdeID}"
+        )
+        ingress_progress = ProgressReport()
+        await progress.compose(ingress_progress, f"Importing claim {citation.gdeID}")
+        notification_progress = ProgressReport()
+        await progress.compose(notification_progress, "Mapping notifications")
 
-    async with sessionmanager.session() as db:
-        with db.no_autoflush:
-            async with SECLORecData(session, None, notification_progress) as seclo:
-                try:
-                    dbclaim = (
-                        await db.scalars(
-                            select(Claim).where(Claim.gdeID == citation.gdeID)
-                        )
-                    ).one_or_none()
-                    if dbclaim:
-                        citation.notificationData = await seclo.get_notification_data(
-                            rec_id=dbclaim.recID
-                        )
-                    else:
-                        citation.notificationData = await seclo.get_notification_data(
-                            gde_id=citation.gdeID
-                        )
-                except RecNotAccessibleException:
-                    logger.warning(
-                        "Claim %s with citation %s (%s) can't be mapped. Skipping...",
-                        citation.gdeID,
-                        citation.citationDate,
-                        citation.citationType,
-                    )
-            local_claim = (
-                await db.scalars(select(Claim).where(Claim.gdeID == citation.gdeID))
-            ).one_or_none()
-            if not local_claim:
-                try:
-                    local_claim = await __ingress_claim(
-                        gde_id=citation.gdeID,
-                        init_date=citation.initDate,
-                        progress=ingress_progress,
-                        db=db,
-                        session=session,
-                        citation=None,
-                    )
-                except RecNotAccessibleException as e:
-                    logger.warning(
-                        "Claim %s with citation %s (%s) can't be mapped. Skipping... (%s)",
-                        citation.gdeID,
-                        citation.citationDate,
-                        citation.citationType,
-                        e
-                    )
-                    return citation
-            await ingress_progress.set_completion("Imported claim")
-
-            local_citation = (
-                await db.scalars(
-                    select(Citation).where(Citation.secloAudID == citation.citationID)
-                )
-            ).one_or_none()
-            if not local_citation:
-                local_citation = Citation(
-                    secloAudID=citation.citationID,
-                    citationDate=citation.citationDate,
-                    recID=local_claim.recID,
-                    citationType=CitationType.citation_string_to_enum(
-                        citation.citationType
-                    ),
-                    citationStatus=CitationStatus.citation_string_to_enum(
-                        citation.citationType
-                    ),
-                )
-                primarize = True
-                if (
-                    local_citation.citationStatus == CitationStatus.PENDING
-                    and local_citation.citationType == CitationType.FIRST
-                ):
-                    for saved_citation in local_claim.citations:
-                        if (
-                            saved_citation.isCalendarPrimary
-                            and saved_citation.citationStatus == CitationStatus.PENDING
-                            and saved_citation.citationType != CitationType.FIRST
-                        ):
-                            primarize = False
-                        if (
-                            saved_citation.isCalendarPrimary
-                            and saved_citation.citationStatus == CitationStatus.PENDING
-                            and saved_citation.citationType == CitationType.FIRST
-                            and (
-                                (saved_citation.citationDate or datetime.now())
-                                > (local_citation.citationDate or datetime.now())
+        async with sessionmanager.session() as db:
+            with db.no_autoflush:
+                async with SECLORecData(session, None, notification_progress) as seclo:
+                    try:
+                        dbclaim = (
+                            await db.scalars(
+                                select(Claim).where(Claim.gdeID == citation.gdeID)
                             )
-                        ):
-                            primarize = False
-                    if primarize:
+                        ).one_or_none()
+                        if dbclaim:
+                            citation.notificationData = await seclo.get_notification_data(
+                                rec_id=dbclaim.recID
+                            )
+                        else:
+                            citation.notificationData = await seclo.get_notification_data(
+                                gde_id=citation.gdeID
+                            )
+                    except RecNotAccessibleException:
+                        logger.warning(
+                            "Claim %s with citation %s (%s) can't be mapped. Skipping...",
+                            citation.gdeID,
+                            citation.citationDate,
+                            citation.citationType,
+                        )
+                local_claim = (
+                    await db.scalars(select(Claim).where(Claim.gdeID == citation.gdeID))
+                ).one_or_none()
+                if not local_claim:
+                    try:
+                        local_claim = await __ingress_claim(
+                            gde_id=citation.gdeID,
+                            init_date=citation.initDate,
+                            progress=ingress_progress,
+                            db=db,
+                            session=session,
+                            citation=None,
+                        )
+                    except RecNotAccessibleException as e:
+                        logger.warning(
+                            "Claim %s with citation %s (%s) can't be mapped. Skipping... (%s)",
+                            citation.gdeID,
+                            citation.citationDate,
+                            citation.citationType,
+                            e
+                        )
+                        return citation
+                await ingress_progress.set_completion("Imported claim")
+
+                local_citation = (
+                    await db.scalars(
+                        select(Citation).where(Citation.secloAudID == citation.citationID)
+                    )
+                ).one_or_none()
+                if not local_citation:
+                    local_citation = Citation(
+                        secloAudID=citation.citationID,
+                        citationDate=citation.citationDate,
+                        recID=local_claim.recID,
+                        citationType=CitationType.citation_string_to_enum(
+                            citation.citationType
+                        ),
+                        citationStatus=CitationStatus.citation_string_to_enum(
+                            citation.citationType
+                        ),
+                    )
+                    primarize = True
+                    if (
+                        local_citation.citationStatus == CitationStatus.PENDING
+                        and local_citation.citationType == CitationType.FIRST
+                    ):
                         for saved_citation in local_claim.citations:
-                            saved_citation.isCalendarPrimary = False
-                local_citation.isCalendarPrimary = primarize
-                db.add(local_citation)
+                            if (
+                                saved_citation.isCalendarPrimary
+                                and saved_citation.citationStatus == CitationStatus.PENDING
+                                and saved_citation.citationType != CitationType.FIRST
+                            ):
+                                primarize = False
+                            if (
+                                saved_citation.isCalendarPrimary
+                                and saved_citation.citationStatus == CitationStatus.PENDING
+                                and saved_citation.citationType == CitationType.FIRST
+                                and (
+                                    (saved_citation.citationDate or datetime.now())
+                                    > (local_citation.citationDate or datetime.now())
+                                )
+                            ):
+                                primarize = False
+                        if primarize:
+                            for saved_citation in local_claim.citations:
+                                saved_citation.isCalendarPrimary = False
+                    local_citation.isCalendarPrimary = primarize
+                    db.add(local_citation)
 
-            for lawyer in local_claim.lawyers:
-                for link in lawyer.employeeLink + lawyer.employerLink:
-                    link.citation = local_citation
-                    db.add(link)
-            await db.flush()
-            await update_notifications(
-                rec_id=local_citation.recID,
-                session=session,
-                progress=notification_progress,
-                citation=local_citation,
-                notification_data=citation.notificationData,
-                db=db,
-            )
-            await db.commit()
-            await progress.set_completion("Done loading claim data")
-    return citation
-
+                for lawyer in local_claim.lawyers:
+                    for link in lawyer.employeeLink + lawyer.employerLink:
+                        link.citation = local_citation
+                        db.add(link)
+                await db.flush()
+                await update_notifications(
+                    rec_id=local_citation.recID,
+                    session=session,
+                    progress=notification_progress,
+                    citation=local_citation,
+                    notification_data=citation.notificationData,
+                    db=db,
+                )
+                await db.commit()
+                await progress.set_completion("Done loading claim data")
+        return citation
+    except Exception as e:
+        raise RuntimeError(f"Exception in citation {citation.citationID} ({citation.gdeID} {citation.citationDate})" + str(e)) from e
 
 async def __ingress_claim(
     init_date: Optional[datetime],
@@ -376,7 +381,7 @@ async def __ingress_claim(
                     .where(
                         or_(
                             Employer.cuil == employer.cuil,
-                            Employer.employerName == employer.name,
+                            Employer.employerName == employer.name.strip(),
                         )
                     )
                 )
@@ -772,11 +777,16 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "
-                                    + "Will try updating",
+                                    "Couldn't match notification %d to '%s' on %d. "+\
+                                        "Will try updating (list: %s)",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
+                                    [
+                                        f'"{person.employerName if isinstance(person, Employer)
+                                        else person.employeeName}"'
+                                        for person in citation.claim.employers + citation.claim.employees
+                                    ]
                                 )
                                 await __ingress_claim(
                                     rec_id=rec_id,
@@ -806,11 +816,16 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "
-                                    + "Will try updating",
+                                    "Couldn't match notification %d to '%s' on %d. "+\
+                                        "Will try updating (list: %s)",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
+                                    [
+                                        f'"{person.employerName if isinstance(person, Employer)
+                                        else person.employeeName}"'
+                                        for person in citation.claim.employers + citation.claim.employees
+                                    ]
                                 )
                                 await __ingress_claim(
                                     rec_id=rec_id,
