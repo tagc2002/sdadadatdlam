@@ -164,39 +164,40 @@ class SECLOSession:
         return await req.fallback()
 
     async def __aenter__(self: Self):
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=HEADLESS, downloads_path=DOWNLOADROOT, timeout=60000
-        )
-        self.context = await self.browser.new_context(
-            http_credentials=HttpCredentials(
-                username=self.credentials.user,
-                password=self.credentials.password,
-                send="unauthorized",
-            ),
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
-                "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-        )
-        # await self.context.route("**/*", lambda req: req.fallback())
-        await self.context.route("**/*", self.__proxy_req)
-        await self.login()
-        return self
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=HEADLESS, downloads_path=DOWNLOADROOT, timeout=60000
+            )
+            self.context = await self.browser.new_context(
+                http_credentials=HttpCredentials(
+                    username=self.credentials.user,
+                    password=self.credentials.password,
+                    send="unauthorized",
+                ),
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
+                    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+            )
+            # await self.context.route("**/*", lambda req: req.fallback())
+            await self.context.route("**/*", self.__proxy_req)
+            await self.login()
+            return self
+        except PlaywrightError as e:
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+            raise e
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
-        logger.warning("CLOSING LOGIN")
         await self.loginpage.close()
-        await asyncio.sleep(5)
-        logger.warning("CLOSING CONTEXT")
         await self.context.close()
-        await asyncio.sleep(5)
-        logger.warning("CLOSING BROWSER")
         await self.browser.close()
-        await asyncio.sleep(5)
-        logger.warning("CLOSING PLAYWRIGHT")
         await self.playwright.stop()
-        await asyncio.sleep(5)
-        logger.warning("DONE CLEANUP")
         os.rmdir(self.downloadpath)
+        return False
 
     @retry
     async def login(self: Self):
@@ -210,14 +211,24 @@ class SECLOSession:
         if hasattr(self, "loginpage") and self.loginpage:
             await self.loginpage.close()
         self.loginpage = await self.context.new_page()
-        logger.debug("Loading adfs")
-        await self.loginpage.goto(
-            "https://login-int.trabajo.gob.ar/adfs/ls/wia"
-            + "?wa=wsignin1.0"
-            + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
-            + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
-            + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
-        )
+        last_exc: Exception
+        for _ in range(MAX_ATTEMPTS):
+            logger.debug("Loading adfs")
+            try:
+                await self.loginpage.goto(
+                    "https://login-int.trabajo.gob.ar/adfs/ls/wia"
+                    + "?wa=wsignin1.0"
+                    + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
+                    + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
+                    + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
+                )
+                break
+            except PlaywrightError as e:
+                last_exc = e
+                logger.warning(str(e))
+        else:
+            raise AttemptsExceededException() from last_exc # type: ignore
+
         if "adfs" in self.loginpage.url:
             raise UnauthorizedAccessException(
                 "Password is wrong or server entered inactive hours"
