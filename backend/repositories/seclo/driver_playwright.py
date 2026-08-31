@@ -183,19 +183,18 @@ class SECLOSession:
             await self.login()
             return self
         except PlaywrightError as e:
-            if self.context:
-                await self.context.close()
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
+            await self.__aexit__(e.name, e, e.stack)
             raise e
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
-        await self.loginpage.close()
-        await self.context.close()
-        await self.browser.close()
-        await self.playwright.stop()
+        if self.loginpage:
+            await self.loginpage.close()
+        if self.context:
+            await self.context.close()
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
         os.rmdir(self.downloadpath)
         return False
 
