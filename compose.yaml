@@ -32,10 +32,12 @@ services:
             - ./temp:/temp
             - /var/run/docker.sock:/var/run/docker.sock
         env_file: ".env.prod"
+        secrets:
+            - google_creds
+            - google_token
     toywrong:
         build: 
-            context: ./backend
-            dockerfile: dockerfile.playwright
+            context: ./playwright
         container_name: toywrong
         networks: 
             - playwright
@@ -82,7 +84,7 @@ services:
         container_name: selenium
         restart: always
         volumes:
-            - ./backend/selenium_config.toml:/opt/selenium/config.toml
+            - ./selenium_config.toml:/opt/selenium/config.toml
             - /var/run/docker.sock:/var/run/docker.sock
             - ./temp:/temp
             - selenium-temp:/opt/selenium/assets
@@ -112,3 +114,9 @@ configs:
 networks:
     backshots: {} 
     playwright: {}          
+
+secrets:
+    google_creds:
+        file: ./google-credentials-web.json
+    google_token:
+        file: ./token.json

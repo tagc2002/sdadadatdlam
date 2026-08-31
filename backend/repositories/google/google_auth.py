@@ -9,6 +9,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow, Flow
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
+creds_path = "/run/secrets/google_creds" if os.getenv("CONTAINER") == "TRUE" else "../google-credentials-web.json"
+token_path = "/run/secrets/google_token" if os.getenv("CONTAINER") == "TRUE" else "../token.json"
 
 def basic_auth():
     """Authenticates locally.
@@ -20,8 +22,9 @@ def basic_auth():
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -32,7 +35,7 @@ def basic_auth():
             )
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open("token.json", "w", encoding='ascii') as token:
+        with open("../token.json", "w", encoding='ascii') as token:
             token.write(creds.to_json())
     return creds
 
@@ -43,7 +46,7 @@ def oauth_login_token(token: str):
         token (str): OAuth token returned by Google
     """
     try:
-        with open("google-credentials-web.json",encoding='ascii') as googlecredentials:
+        with open(creds_path, encoding='ascii') as googlecredentials:
             client_creds = json.load(googlecredentials)
         # Specify the WEB_CLIENT_ID of the app that accesses the backend:
         print(client_creds)
@@ -103,7 +106,7 @@ def token_from_google_auth(code: str):
         Credentials: credentials object returned by Google
     """
     flow = Flow.from_client_secrets_file(
-        'google-credentials-web.json',
+        creds_path,
         scopes=SCOPES,
         #state=state
         )
