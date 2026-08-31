@@ -108,7 +108,7 @@ async def batch_verify_agenda(
         ##TODO Once the frontend is working, new citations will be fetched via an API call.
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
-            if (citation.exception()):
+            if citation.exception():
                 logger.warning(citation.exception(), exc_info=True, stack_info=True)
                 continue
             claim = (
@@ -265,7 +265,8 @@ async def __verify_agenda_citation(
                 await progress.set_completion("Done loading claim data")
         return citation
     except Exception as e:
-        raise RuntimeError(f"Exception in citation {citation.citationID} ({citation.gdeID} {citation.citationDate})" + str(e)) from e
+        raise RuntimeError(f"Exception in citation {citation.citationID} " +
+                           f"({citation.gdeID} {citation.citationDate})" + str(e)) from e
 
 async def __ingress_claim(
     init_date: Optional[datetime],
@@ -679,7 +680,7 @@ async def update_notifications(
                                 [
                                     f'"{person.employerName if isinstance(person, Employer)
                                     else person.employeeName}"'
-                                    for person in citation.claim.employers + citation.claim.employees
+                                    for person in citation.claim.employers+citation.claim.employees
                                 ]
                             )
                             await __ingress_claim(
@@ -785,7 +786,7 @@ async def update_notifications(
                                     [
                                         f'"{person.employerName if isinstance(person, Employer)
                                         else person.employeeName}"'
-                                        for person in citation.claim.employers + citation.claim.employees
+                                        for person in citation.claim.employers
                                     ]
                                 )
                                 await __ingress_claim(
@@ -811,7 +812,7 @@ async def update_notifications(
                         if not await __map_notification_to_owner(
                             notification=notification,
                             local_notification=local_notification,
-                            people=citation.claim.employers,
+                            people=citation.claim.employees,
                             db=db,
                         ):
                             if not is_retry:
@@ -824,7 +825,7 @@ async def update_notifications(
                                     [
                                         f'"{person.employerName if isinstance(person, Employer)
                                         else person.employeeName}"'
-                                        for person in citation.claim.employers + citation.claim.employees
+                                        for person in citation.claim.employees
                                     ]
                                 )
                                 await __ingress_claim(
