@@ -19,21 +19,6 @@ import re
 from typing import Any, Dict, List, Optional, Self, Set, Tuple
 import uuid
 
-from playwright.async_api import (
-    APIResponse,
-    Browser,
-    Error as PlaywrightError,
-    HttpCredentials,
-    BrowserContext,
-    Locator,
-    Page,
-    Playwright,
-    Route,
-    async_playwright,
-    TimeoutError as PlaywrightTimeoutError,
-    expect,
-)
-
 # if __name__ == "__main__":
 #     import sys
 
@@ -67,6 +52,21 @@ from repositories.seclo.exceptions import (
     UnauthorizedAccessException,
     UnknownReportedException,
     ValidationException,
+)
+
+from playwright.async_api import (
+    APIResponse,
+    Browser,
+    Error as PlaywrightError,
+    HttpCredentials,
+    BrowserContext,
+    Locator,
+    Page,
+    Playwright,
+    Route,
+    async_playwright,
+    TimeoutError as PlaywrightTimeoutError,
+    expect,
 )
 
 logger = logging.getLogger(__name__)
@@ -362,7 +362,7 @@ class SECLOAccessor:
         await self.progress.set_progress(0, "Setting recID")
         logger.debug("Setting recID from gdeID %s", gde_id)
         await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
+            "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx", timeout=60000
         )
 
         gde_year = gde_id.split("-")[1]
@@ -1125,7 +1125,7 @@ class SECLORecData(SECLOAccessor):
             if rec_id:
                 self.recid = rec_id
             await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
+                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx", timeout=60000
             )
             await self._load_rec()
 
@@ -2009,62 +2009,5 @@ class SECLOCalendarParser(SECLOAccessor):
         await self.progress.set_completion("Done getting cal info")
         return work_days
 
-
-async def get_claim_data(session: SECLOSession, gde_id: str) -> SECLOClaimData:
-    async with SECLORecData(session) as rec:
-        await rec.set_rec_id_from_gde_id(gde_id)
-        return await rec.get_claim_data()
-
-
-async def main():
-    async with SECLOSession(
-        SECLOLoginCredentials(
-            os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
-        )
-    ) as session:
-        # async with SECLORecData(session) as rec:
-        #     await rec.set_rec_id_from_gde_id("EX-2026-78736839-   -APN-DSCLOS#MCH")
-        #     claim_data = await rec.get_claim_data()
-        #     print(claim_data)
-        progress = ProgressReport()
-        citations: List[SECLOCitation] = []
-        tasks = []
-        count = 0
-        async with SECLOCalendarParser(session, 0, 20, progress) as cal:
-            async for citation in cal:
-                citations.append(citation)
-                print(citation)
-                count += 1
-                if len(tasks) < 20:
-                    tasks.append(
-                        asyncio.get_event_loop().create_task(
-                            get_claim_data(session, citations.pop().gdeID)
-                        )
-                    )
-                for task in list(tasks):
-                    if task.done():
-                        print(task.result())
-                        tasks.remove(task)
-                        tasks.append(
-                            asyncio.get_event_loop().create_task(
-                                get_claim_data(session, citations.pop().gdeID)
-                            )
-                        )
-
-            print(f"RECS: {count}")
-            while len(tasks) > 0:
-                async for task in asyncio.as_completed(tasks):
-                    print(task.result())
-                    tasks.remove(task)
-                    if len(citations) > 0:
-                        citation = citations.pop()
-                        tasks.append(
-                            asyncio.get_event_loop().create_task(
-                                get_claim_data(session, citation.gdeID)
-                            )
-                        )
-            print("DONE")
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise RuntimeError("This script cannot be run on its own")
