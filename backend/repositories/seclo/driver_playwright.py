@@ -12,6 +12,7 @@ import base64
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
+import json
 import logging
 import os
 from pathlib import Path
@@ -41,6 +42,7 @@ from dataobjects.seclodataclasses import (
     SECLOLawyerData,
     SECLONotificationData,
     SECLOOtherData,
+    SECLOPersonData,
 )
 from repositories.seclo.driver import SECLOLoginCredentials
 from repositories.seclo.progress import ProgressReport
@@ -1368,11 +1370,14 @@ class SECLORecData(SECLOAccessor):
         #       self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtNombre_lbl").text,
         #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
 
+        dni = await self.page.locator(
+                "#ctl00_Center_ctl02_txtNroDocumento_lbl"
+            ).inner_text()
+        lawyer_person_data = await SECLOClaimValidationData(session=self.session).validate_dni(dni)
         lawyer = SECLOLawyerData(
             name=name,
-            dni=await self.page.locator(
-                "#ctl00_Center_ctl02_txtNroDocumento_lbl"
-            ).inner_text(),
+            dni=dni,
+            cuil=lawyer_person_data.cuit,
             validated=seclo_db_ok and self_validated,
         )
         lawyer.add_address(await self.__get_address(2))
@@ -1897,7 +1902,7 @@ class SECLOCalendarParser(SECLOAccessor):
         # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
         async with SECLOAccessor(self.session) as session:
             await session.page.goto(
-                f"Conciliador_Audiencia.aspx?AudId={citation_id}&esPortal=1", 
+                f"Conciliador_Audiencia.aspx?AudId={citation_id}&esPortal=1",
                 timeout=60000
             )
             gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
@@ -2024,23 +2029,41 @@ class SECLOClaimValidationData(SECLOAccessor):
         ans = await self.session.context.request.post(url, headers=headers, data=data)
         return await ans.json()
 
-    def validate_cuit(self: Self, cuit: str):
+    async def validate_cuit(self: Self, cuit: str):
         """
         Tries to validate the given CUIT.
         """
-        return self.__create_request(
+        response = json.loads(await self.__create_request(
             "/ServicioCuit.aspx/GetDatosCOmpletosxCuit",
             "{'dato': '" + cuit + "'}",
+        ))
+        person = response["d"]
+        return SECLOPersonData(
+            cuit=cuit,
+            name=f"{person["Apellido"]} {person["Nombre"]}",
+            dni=int(person["NroDocumento"]),
+            birthday=datetime.strptime(person["FechaNacimiento"], "%d/%m/%Y"),
+            gender=person["SexoID"]
         )
 
-    def validate_dni(self: Self, dni: str):
+    async def validate_dni(self: Self, dni: str) -> SECLOPersonData:
         """
         Tries to validate the given dni.
         """
-        return self.__create_request(
+        response = json.loads(await self.__create_request(
             "/ServicioDocumento.aspx/getDatosxDenominacion",
             "{'dato': '" + dni + "', 'tipo': 'E'}",
-        )
+        ))
+        for person in response["d"]:
+            if person["Estado"] == "ACREDITADO":
+                return SECLOPersonData(
+                    cuit=person["Cuit"],
+                    name=person["NombreApellido"],
+                    dni=int(person["Documento"]),
+                    birthday=datetime.strptime(person["FechaNacimiento"], "%d%m%Y"),
+                    gender=person["SexoID"]
+                )
+        raise AttributeError(f"Can't find person {dni}")
 
     def validate_district(self: Self, province: str, district: str):
         """

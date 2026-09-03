@@ -446,7 +446,8 @@ async def __ingress_claim(
             registeredOn=init_date,
             registeredFrom="SECLO",
             isValidated=lawyer.validated,
-        )  # TODO MISSING CUIL
+            cuil=lawyer.cuil,
+        )
         local_lawyer = __ingress_entry_if_missing(local_lawyer, local_lawyers)
         db.add(local_lawyer)
 

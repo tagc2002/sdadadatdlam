@@ -426,3 +426,12 @@ class SECLOCitation:
 
     def __str__(self: Self) -> str:
         return f"{self.citationID} ({self.gdeID} {self.initDate}) {self.citationDate} {self.citationType}"
+
+@dataclass
+class SECLOPersonData:
+    "Dataclass for validating person data"
+    cuit: str
+    name: str
+    dni: int
+    birthday: datetime
+    gender: str
