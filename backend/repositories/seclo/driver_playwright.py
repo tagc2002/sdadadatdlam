@@ -55,7 +55,6 @@ from repositories.seclo.exceptions import (
 )
 
 from playwright.async_api import (
-    APIRequestContext,
     APIResponse,
     Browser,
     Error as PlaywrightError,
