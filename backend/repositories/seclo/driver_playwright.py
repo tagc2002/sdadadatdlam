@@ -334,7 +334,7 @@ class SECLOAccessor:
 
         logger.debug("Loading recID %d", self.recid)
         try:
-            await self.page.wait_for_load_state()
+            await self.page.wait_for_load_state(timeout=60000)
             await self.page.evaluate(
                 'document.getElementById("ctl00_Top_hdnReclamoId")'+\
                 f'.setAttribute("value", "{self.recid}")'
@@ -343,8 +343,9 @@ class SECLOAccessor:
             # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
             #     str(self.recid), force=True
             # )
-            await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
+            await self.page.locator("#ctl00_Busqueda_btnBuscar").click(timeout=60000)
         except PlaywrightTimeoutError as e:
+            logger.error(e)
             raise RecNotAccessibleException(
                 "Couldn't find case searchbox element"
             ) from e
@@ -1917,7 +1918,7 @@ class SECLOCalendarParser(SECLOAccessor):
         async with SECLOAccessor(self.session) as session:
             await session.page.goto(
                 "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
-                + f"AudId={citation_id}&esPortal=1"
+                + f"AudId={citation_id}&esPortal=1", timeout=60000
             )
             gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
             init_datetime_text = await session.page.locator("#rcFecha").inner_text()
