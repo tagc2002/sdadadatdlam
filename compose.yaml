@@ -80,7 +80,7 @@ services:
             - backshots
 
     selenium:
-        image: selenium/standalone-docker:4.40
+        image: selenium/standalone-docker:4.47.0
         container_name: selenium
         restart: always
         volumes:

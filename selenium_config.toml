@@ -2,7 +2,7 @@
 # Configs have a mapping between the Docker image to use and the capabilities that need to be matched to
 # start a container with the given image.
 configs = [
-    "selenium/standalone-chrome:144.0-chromedriver-144.0-20260120", '{"browserName": "chrome"}',
+    "selenium/standalone-chrome:151.0-chromedriver-151.0-20260808", '{"browserName": "chrome"}',
 ]
 
 # URL for connecting to the docker daemon
