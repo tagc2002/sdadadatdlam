@@ -55,6 +55,7 @@ from repositories.seclo.exceptions import (
 )
 
 from playwright.async_api import (
+    APIRequestContext,
     APIResponse,
     Browser,
     Error as PlaywrightError,
@@ -76,7 +77,8 @@ DEBUGMODE = os.getenv("DEBUGMODE", "TRUE") == "TRUE"
 HEADLESS = os.getenv("HEADLESS", "TRUE") == "TRUE"
 DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "./temp")
 MAX_ATTEMPTS = 3
-
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
+             "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 def retry(func):
     "Decorator for auto retrying if errors occur"
@@ -175,8 +177,8 @@ class SECLOSession:
                     password=self.credentials.password,
                     send="unauthorized",
                 ),
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
-                    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                user_agent=USER_AGENT,
+                base_url="https://conciliadores.trabajo.gob.ar",
             )
             # await self.context.route("**/*", lambda req: req.fallback())
             await self.context.route("**/*", self.__proxy_req)
@@ -363,7 +365,7 @@ class SECLOAccessor:
         await self.progress.set_progress(0, "Setting recID")
         logger.debug("Setting recID from gdeID %s", gde_id)
         await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx", timeout=60000
+            "/O_ConsultaNotificaciones.aspx", timeout=60000
         )
 
         gde_year = gde_id.split("-")[1]
@@ -404,7 +406,7 @@ class SECLOAccessor:
             Self: self
         """
         await self.page.goto(
-            f"https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={rec_id}"
+            f"/Conciliador_Reclamo.aspx?RecId={rec_id}"
         )
         try:
             self.gde_id = await self.page.locator("#rcNroExpediente").inner_text(
@@ -485,8 +487,7 @@ class SECLOCitationManager(SECLOAccessor):
         """
         logger.debug("Accessing citation result window")
         await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/O_Audiencia.aspx"+\
-                "?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
+            "/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
         )
         await self.page.locator("#ctl00_btnAudiencia").click()
         await self._load_rec()
@@ -529,9 +530,7 @@ class SECLOCitationManager(SECLOAccessor):
         await self.progress.set_progress(0, "Loading case for reopening")
 
         try:
-            await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/O_Reabrir_Reclamo.aspx"
-            )
+            await self.page.goto("/O_Reabrir_Reclamo.aspx")
             await self._load_rec()
             await self.progress.increase_progress("Reopening case")
             # if present, case was not found
@@ -908,9 +907,7 @@ class SECLOFileManager(SECLOAccessor):
         Populates internal object storage with the current files in rec.
         idc about congruency, this is a throwaway object that expires quickly.
         """
-        await self.page.goto(
-            f"https://conciliadores.trabajo.gob.ar/Documentacion_Adjunta.aspx?RecId={self.recid}"
-        )
+        await self.page.goto(f"Documentacion_Adjunta.aspx?RecId={self.recid}")
         files: List[Tuple[str, str, datetime]] = []
         for row in (
             await self.page.locator("#grdDocumentos").locator(".grdRowStyle").all()
@@ -981,10 +978,7 @@ class SECLOFileManager(SECLOAccessor):
             filetype: The given filetype to upload, from the enum.
             description: Only used when uploading a 'other' type of file.
         """
-        await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/"
-            + f"Documentacion_ParaAdjuntar.aspx?RecId={self.recid}"
-        )
+        await self.page.goto(f"/Documentacion_ParaAdjuntar.aspx?RecId={self.recid}")
         old_files_len = len(self.file_list)
         await self.page.locator("#Tipo_Documentacion").select_option(
             value=filetype.value[0]
@@ -1033,7 +1027,7 @@ class SECLOFileManager(SECLOAccessor):
                 raise InvalidParameterException("Missing recID and gdeID")
         logger.info(self.gde_id)
 
-        await self.page.goto("https://conciliadores.trabajo.gob.ar/Novedades.aspx")
+        await self.page.goto("/Novedades.aspx")
         await self.page.locator("#ctl00_btnActa").click()
         if agreement:
             await self.page.locator("#ctl00_Center_radTipo_0").set_checked(True)
@@ -1125,9 +1119,7 @@ class SECLORecData(SECLOAccessor):
         else:
             if rec_id:
                 self.recid = rec_id
-            await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx", timeout=60000
-            )
+            await self.page.goto("O_ConsultaNotificaciones.aspx", timeout=60000)
             await self._load_rec()
 
         self.progress.set_steps(1)
@@ -1441,8 +1433,7 @@ class SECLORecData(SECLOAccessor):
         self.progress.set_steps(1)
         await self.progress.set_progress(0, "Loading claim data form...")
         await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx"+\
-                "?paramEnc=AB3u3y2175MqNXK0296jtA==",
+            "/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
             timeout=60000,
         )
         await self._load_rec()
@@ -1554,9 +1545,7 @@ class SECLORecData(SECLOAccessor):
         """
         Returns the assigned conciliator for current case.
         """
-        await self.page.goto(
-            f"https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={self.recid}"
-        )
+        await self.page.goto(f"Conciliador_Reclamo.aspx?RecId={self.recid}")
 
         try:
             return await self.page.locator("#rcConciliador").inner_text(timeout=10000)
@@ -1592,8 +1581,7 @@ class SECLORecData(SECLOAccessor):
         for _ in range(0, 5):
             # Trying to get this bitch enabled. idk why this works but it does.
             await self.page.goto(
-                "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx"+\
-                    "?paramEnc=AB3u3y2175MqNXK0296jtA==",
+                "ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
                 timeout=60000,
             )
             await self._load_rec()
@@ -1700,10 +1688,7 @@ class SECLOInvoiceParser(SECLOAccessor):
         Returns:
             invoices: {'id': int, 'date': datetime}
         """
-        await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/FF_ConsultaLiquidaciones.aspx",
-            timeout=60000,
-        )
+        await self.page.goto("/FF_ConsultaLiquidaciones.aspx", timeout=60000)
         invoices: List[Dict[str, Any]] = []
         options = self.page.locator("#ctl00_Center_cmbLiquidaciones").locator("option")
         for option in await options.all():
@@ -1732,9 +1717,7 @@ class SECLOInvoiceParser(SECLOAccessor):
                 ]
             }
         """
-        await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/FF_ConsultaLiquidaciones.aspx",
-        )
+        await self.page.goto("/FF_ConsultaLiquidaciones.aspx")
         await self.page.locator("#ctl00_Center_cmbLiquidaciones").select_option(
             value=str(invoice)
         )
@@ -1813,9 +1796,7 @@ class SECLOCalendarParser(SECLOAccessor):
 
     @retry
     async def __load_calendar(self: Self) -> datetime:
-        await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/InicioConciliador.aspx"
-        )
+        await self.page.goto("/InicioConciliador.aspx")
         await self.page.locator("#ctl00_Center_chkSusp").click()
         await self.page.locator("#ctl00_Center_chkReal").click()
         await self.page.wait_for_event("load")
@@ -1917,8 +1898,8 @@ class SECLOCalendarParser(SECLOAccessor):
         # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
         async with SECLOAccessor(self.session) as session:
             await session.page.goto(
-                "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
-                + f"AudId={citation_id}&esPortal=1", timeout=60000
+                f"Conciliador_Audiencia.aspx?AudId={citation_id}&esPortal=1", 
+                timeout=60000
             )
             gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
             init_datetime_text = await session.page.locator("#rcFecha").inner_text()
@@ -1968,9 +1949,7 @@ class SECLOCalendarParser(SECLOAccessor):
         self.progress.set_steps(weeks_ahead * 7)
         await self.progress.set_message("Loading calendar info...")
 
-        await self.page.goto(
-            "https://conciliadores.trabajo.gob.ar/pa_Abogados_Audiencias.aspx"
-        )
+        await self.page.goto("/pa_Abogados_Audiencias.aspx")
         await self.page.locator("#ctl00_Principal_CmbFormato").select_option(
             value="1"
         )  # per-day
@@ -2009,6 +1988,143 @@ class SECLOCalendarParser(SECLOAccessor):
             await self.page.wait_for_event("load")
         await self.progress.set_completion("Done getting cal info")
         return work_days
+
+
+class SECLOClaimValidationData(SECLOAccessor):
+    """
+    Utility class for validating some data throuth a
+    very rudimentary api provided by this website.
+
+    Stuff like cuit, dni and addresses
+    """
+
+    async def __create_request(self: Self, url: str, data: str) -> str:
+        cookies = {}
+        cookie_list = await self.session.context.cookies(urls="conciliadores.trabajo.gob.ar")
+        for cookie in cookie_list:
+            cookies[cookie["name"]] = cookie["value"] # type: ignore
+        headers = {
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "es-419,es-US;q=0.9,es;q=0.8",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json; charset=UTF-8",
+            "Dnt": "1",
+            "Host": "conciliadores.trabajo.gob.ar",
+            "Origin": "https://conciliadores.trabajo.gob.ar",
+            "Refererer": "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx",
+            "sec-ch-ua-platform": "Windows",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "User-Agent": USER_AGENT,
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+        ans = await self.session.context.request.post(url, headers=headers, data=data)
+        return await ans.json()
+
+    def validate_cuit(self: Self, cuit: str):
+        """
+        Tries to validate the given CUIT.
+        """
+        return self.__create_request(
+            "/ServicioCuit.aspx/GetDatosCOmpletosxCuit",
+            "{'dato': '" + cuit + "'}",
+        )
+
+    def validate_dni(self: Self, dni: str):
+        """
+        Tries to validate the given dni.
+        """
+        return self.__create_request(
+            "/ServicioDocumento.aspx/getDatosxDenominacion",
+            "{'dato': '" + dni + "', 'tipo': 'E'}",
+        )
+
+    def validate_district(self: Self, province: str, district: str):
+        """
+        Tries to validate the given district (for given province).
+        """
+        return self.__create_request(
+            "/ServicioCPA.aspx/GetPartidos",
+            "{'dato': '" + district + "', 'prov': '" + province + "'}",
+        )
+
+    def validate_county(self: Self, province: str, district: str, county: str):
+        """
+        Tries to validate the given county (for given province and district).
+        """
+        return self.__create_request(
+            "/ServicioCPA.aspx/GetLocalidades",
+            "{'dato': '"
+            + county
+            + "', 'prov': '"
+            + province
+            + "', 'part': '"
+            + district
+            + "'}",
+        )
+
+    def validate_street(
+        self: Self, province: str, district: str, county: str, street: str
+    ):
+        """
+        Tries to validate the given street (for given province, district and county).
+        """
+        return self.__create_request(
+            "/ServicioCPA.aspx/GetCalles",
+            "{'dato': '"
+            + street
+            + "', 'prov': '"
+            + province
+            + "', 'part': '"
+            + district
+            + "', 'localidad': '"
+            + county
+            + "'}",
+        )
+
+    def validate_cpa(
+        self: Self, province: str, district: str, county: str, street: str, number: str
+    ):
+        """
+        Tries to get the CPA (for given province, district, county, address and number.
+        """
+        return self.__create_request(
+            "/ServicioCPA.aspx/getCPA",
+            "{'prov': '"
+            + province
+            + "', 'part': '"
+            + district
+            + "', 'localidad': '"
+            + county
+            + "', 'calle': '"
+            + street
+            + "', 'numero': '"
+            + number
+            + "'}",
+        )
+
+    def get_street_helper(
+        self: Self,
+        province: str,
+        street=str,
+        district: Optional[str] = None,
+        county: Optional[str] = None,
+    ):
+        """
+        Tries to use street helper api to get possible places (?).
+        """
+        return self.__create_request(
+            "/ServicioCPA.aspx/GetCallesHelper",
+            "{"
+            + f'\'prov\': \'{province}\', \'part\': \'{(district or "")}\', '
+            + f'\'localidad\': \'{(county or "")}\', \'calle\': \'{street}\''
+            + "}",
+        )
+
 
 if __name__ == "__main__":
     raise RuntimeError("This script cannot be run on its own")
