@@ -184,27 +184,7 @@ async def __verify_agenda_citation(
                 )
                 await ingress_progress.set_completion("Imported claim")
 
-                # Step 3: Load citation if missing
-                local_citation = (
-                    await db.scalars(
-                        select(Citation).where(
-                            Citation.secloAudID == citation.citationID
-                        )
-                    )
-                ).one_or_none() or __ingress_citation(
-                    db=db, citation=citation, local_claim=local_claim
-                )
-
-                # TODO is this correct? it's not
-                for lawyer in local_claim.lawyers:
-                    for link in (
-                        lawyer.employeeLink
-                        + lawyer.employerLink
-                        + lawyer.beneficiaryLink
-                    ):
-                        link.citation = local_citation
-                        db.add(link)
-                await db.flush()
+                local_citation = next(filter(lambda x: x.secloAudID==citation.citationID, local_claim.citations))
 
                 await update_notifications(
                     rec_id=local_citation.recID,
@@ -414,6 +394,7 @@ async def __ingress_lawyer(
     lawyer: SECLOLawyerData,
     local_mails: List[Email],
     local_phones: List[LawyerTelephone],
+    citation: Optional[Citation]=None
 ) -> Lawyer:
     # try for local version
     local_lawyer = next(
@@ -467,7 +448,7 @@ async def __ingress_lawyer(
                 and x.prefix == lawyer.mobile_phone[0], # type: ignore
                 local_phones,
             ),
-            None,  # type: ignore
+            None,
         ) or LawyerTelephone(
             telephone=lawyer.mobile_phone[1],
             prefix=lawyer.mobile_phone[0],
@@ -478,47 +459,52 @@ async def __ingress_lawyer(
             local_lawyer.telephones.append(local_phone)
             db.add(local_phone)
 
-    for represented in lawyer.represents:
-        for client in local_claim.employees:
-            for name in client.employeeName.replace(",", "").split():
-                if name not in represented[1]:
-                    break
-            else:
-                lawyer_employee_link = LawyerToEmployee(
-                    lawyer=local_lawyer,
-                    employee=client,
-                    isActualLawyer=True,
-                    isSelfRepresenting=local_lawyer.cuil == client.cuil,
-                    clientAbsent=False,
-                )
-                if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
-                    lawyer_employee_link.isSelfRepresenting = True
-                local_lawyer.employeeLink.append(lawyer_employee_link)
-                break
-            for client in local_claim.employers:
-                for name in client.employerName.replace(",", "").split():
-                    if name and name not in represented[1]:
+    if citation:
+        for represented in lawyer.represents:
+            for client in local_claim.employees:
+                for name in client.employeeName.replace(",", "").split():
+                    if name not in represented[1]:
                         break
                 else:
-                    lawyer_employer_link = LawyerToEmployer(
+                    lawyer_employee_link = LawyerToEmployee(
                         lawyer=local_lawyer,
-                        employer=client,
+                        employee=client,
                         isActualLawyer=True,
-                        isSelfRepresenting=False,
-                        isEmpowered=False,
+                        isSelfRepresenting=local_lawyer.cuil == client.cuil,
                         clientAbsent=False,
+                        citation=citation
                     )
-                    if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
-                        lawyer_employer_link.isSelfRepresenting = True
-                    local_lawyer.employerLink.append(lawyer_employer_link)
+                    if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
+                        lawyer_employee_link.isSelfRepresenting = True
+                    local_lawyer.employeeLink.append(lawyer_employee_link)
+                    db.add(lawyer_employee_link)
                     break
-            else:
-                logger.warning(
-                    "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
-                    local_claim.recID,
-                    local_lawyer.lawyerName,
-                    represented[1],
-                )
+                for client in local_claim.employers:
+                    for name in client.employerName.replace(",", "").split():
+                        if name and name not in represented[1]:
+                            break
+                    else:
+                        lawyer_employer_link = LawyerToEmployer(
+                            lawyer=local_lawyer,
+                            employer=client,
+                            isActualLawyer=True,
+                            isSelfRepresenting=False,
+                            isEmpowered=False,
+                            clientAbsent=False,
+                            citation=citation
+                        )
+                        if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
+                            lawyer_employer_link.isSelfRepresenting = True
+                        local_lawyer.employerLink.append(lawyer_employer_link)
+                        db.add(lawyer_employer_link)
+                        break
+                else:
+                    logger.warning(
+                        "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
+                        local_claim.recID,
+                        local_lawyer.lawyerName,
+                        represented[1],
+                    )
     return local_lawyer
 
 
@@ -587,6 +573,7 @@ async def __ingress_claim(
     progress: ProgressReport,
     db: AsyncSession,
     rec_id: int,
+    citation: Optional[SECLOCitation] = None
 ):
     local_addresses: List[Address] = []
     local_mails: List[Email] = []
@@ -611,6 +598,11 @@ async def __ingress_claim(
                 legalStuff=claim_data.legal_stuff,
                 isEvilized=False,
             )
+    # Step 3: Load citation if missing
+    local_citation = (
+        next(filter(lambda x: x.secloAudID==citation.citationID, local_claim.citations), None) or
+        __ingress_citation(db=db, citation=citation, local_claim=local_claim)
+    ) if citation else None
     for person in claim_data.employees:
         local_person = await __ingress_employee(
             db=db,
@@ -652,6 +644,7 @@ async def __ingress_claim(
             lawyer=person,
             local_mails=local_mails,
             local_phones=local_phones,
+            citation=local_citation
         )
         local_mails.extend(
             x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
@@ -693,9 +686,11 @@ def get_cal_header(local_claim: Claim) -> str:
     employee_names = []
     employer_names = []
     for employee in local_claim.employees:
-        __ingress_entry_if_missing(employee.headerName, employee_names)
+        if employee.headerName not in employee_names:
+            employee_names.append(employee.headerName)
     for employer in local_claim.employers:
-        __ingress_entry_if_missing(employer.headerName, employer_names)
+        if employer.headerName not in employer_names:
+            employer_names.append(employer.headerName)
 
     if local_claim.initByEmployee:
         for index, name in enumerate(employee_names):
@@ -715,18 +710,6 @@ def get_cal_header(local_claim: Claim) -> str:
 def __filter_rules(name: str) -> str:
     # TODO apply rules
     return name
-
-
-def __ingress_entry_if_missing[T](entry: T, entries: List[T]) -> T:
-    # only add address if not added already (one address entry can be used for multiple people)
-    if entry not in entries:
-        entries.append(entry)
-    else:
-        for loaded_entry in entries:
-            if entry == loaded_entry:
-                return loaded_entry
-    return entry
-
 
 async def __map_notification_to_owner(
     notification: SECLONotificationData,

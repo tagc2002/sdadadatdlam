@@ -785,6 +785,13 @@ class LawyerTelephone(Base):
         back_populates="telephone"
     )
 
+    def __eq__(self: Self, other: object) -> bool:
+        return isinstance(other, LawyerTelephone) and (
+            (self.telID == other.telID and self.telID is not None) or
+            (self.telephone == other.telephone and self.prefix == other.prefix and self.lawyer == other.lawyer)
+        )
+
+
 
 class Agreement(Base):
     __tablename__ = "agreement"
