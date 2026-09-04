@@ -12,7 +12,6 @@ import base64
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
-import json
 import logging
 import os
 from pathlib import Path
@@ -20,11 +19,11 @@ import re
 from typing import Any, Dict, List, Optional, Self, Set, Tuple
 import uuid
 
-# if __name__ == "__main__":
-#     import sys
+if __name__ == "__main__":
+    import sys
 
-#     sys.path.append(str(Path.cwd()))
-#     print(sys.path)
+    sys.path.append(str(Path.cwd()))
+    print(sys.path)
 
 from dataobjects.enums import (
     ClaimType,
@@ -41,7 +40,7 @@ from dataobjects.seclodataclasses import (
     SECLOEmployerData,
     SECLOLawyerData,
     SECLONotificationData,
-    SECLOOtherData,
+    SECLOBeneficiaryData,
     SECLOPersonData,
 )
 from repositories.seclo.driver import SECLOLoginCredentials
@@ -371,8 +370,6 @@ class SECLOAccessor:
 
         gde_year = gde_id.split("-")[1]
         gde_file = gde_id.split("-")[2]
-        logger.debug("gde year: %s", gde_year)
-        logger.debug("gde file: %s", gde_file)
         await self.page.locator("#ctl00_Busqueda_txtNro").fill("")
         await self.page.locator("#ctl00_Busqueda_txtNro").fill(gde_file)
         await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
@@ -1373,7 +1370,8 @@ class SECLORecData(SECLOAccessor):
         dni = await self.page.locator(
                 "#ctl00_Center_ctl02_txtNroDocumento_lbl"
             ).inner_text()
-        lawyer_person_data = await SECLOClaimValidationData(session=self.session).validate_dni(dni)
+        async with SECLOClaimValidationData(session=self.session) as data:
+            lawyer_person_data = await data.validate_dni(dni)
         lawyer = SECLOLawyerData(
             name=name,
             dni=dni,
@@ -1404,7 +1402,7 @@ class SECLORecData(SECLOAccessor):
         )
         return lawyer
 
-    async def __get_other_data(self: Self) -> SECLOOtherData:
+    async def __get_other_data(self: Self) -> SECLOBeneficiaryData:
         name = " ".join(
             [
                 await self.page.locator(
@@ -1418,7 +1416,9 @@ class SECLORecData(SECLOAccessor):
         dni = await self.page.locator(
             "#ctl00_Center_ctl03_txtNroDocumento_txt"
         ).input_value()
-        other = SECLOOtherData(name=name, dni=dni)
+        async with SECLOClaimValidationData(self.session) as data:
+            person_data = await data.validate_dni(dni)
+        other = SECLOBeneficiaryData(name=name, dni=dni, cuil=person_data.cuit)
         other.add_address(await self.__get_address(3))
         other.add_mail(await self.__get_email(3))
         other.add_phone(await self.__get_phone(3))
@@ -1475,6 +1475,9 @@ class SECLORecData(SECLOAccessor):
             init_by_worker=await self.page.locator(
                 "#ctl00_Center_ucReclamo_optReclamante_0"
             ).is_checked(),
+            gdeid=await self.page.locator(
+                "#ctl00_Center_ucReclamo_lblReclamo_GDEID"
+            ).inner_text()
         )
         for row in (
             await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
@@ -2002,9 +2005,9 @@ class SECLOClaimValidationData(SECLOAccessor):
     Stuff like cuit, dni and addresses
     """
 
-    async def __create_request(self: Self, url: str, data: str) -> str:
+    async def __create_request(self: Self, url: str, data: str) -> Dict:
         cookies = {}
-        cookie_list = await self.session.context.cookies(urls="conciliadores.trabajo.gob.ar")
+        cookie_list = await self.page.context.cookies(urls="https://conciliadores.trabajo.gob.ar")
         for cookie in cookie_list:
             cookies[cookie["name"]] = cookie["value"] # type: ignore
         headers = {
@@ -2018,25 +2021,30 @@ class SECLOClaimValidationData(SECLOAccessor):
             "Host": "conciliadores.trabajo.gob.ar",
             "Origin": "https://conciliadores.trabajo.gob.ar",
             "Refererer": "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx",
-            "sec-ch-ua-platform": "Windows",
+            "Sec-Ch-Ua-Platform": "Windows",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua": 'Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151',
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
+            "Sec-Gpc": "1",
             "User-Agent": USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        ans = await self.session.context.request.post(url, headers=headers, data=data)
+        ans = await self.page.request.fetch(url, data=data.encode(), headers=headers, method="post")
+        print(await ans.body())
+        print(ans.status)
         return await ans.json()
 
     async def validate_cuit(self: Self, cuit: str):
         """
         Tries to validate the given CUIT.
         """
-        response = json.loads(await self.__create_request(
+        response = await self.__create_request(
             "/ServicioCuit.aspx/GetDatosCOmpletosxCuit",
             "{'dato': '" + cuit + "'}",
-        ))
+        )
         person = response["d"]
         return SECLOPersonData(
             cuit=cuit,
@@ -2050,10 +2058,11 @@ class SECLOClaimValidationData(SECLOAccessor):
         """
         Tries to validate the given dni.
         """
-        response = json.loads(await self.__create_request(
-            "/ServicioDocumento.aspx/getDatosxDenominacion",
-            "{'dato': '" + dni + "', 'tipo': 'E'}",
-        ))
+        response = await self.__create_request(
+            "https://conciliadores.trabajo.gob.ar/ServicioDocumento.aspx/getDatosxDenominacion",
+            f"{{'dato': '{dni}', 'tipo': 'E'}}",
+        )
+        logger.warning(response)
         for person in response["d"]:
             if person["Estado"] == "ACREDITADO":
                 return SECLOPersonData(
@@ -2147,6 +2156,17 @@ class SECLOClaimValidationData(SECLOAccessor):
             + "}",
         )
 
+async def test():
+    async with SECLOSession(SECLOLoginCredentials("NRGONZALEZ", "Normitis.2046")) as session:
+        async with SECLOClaimValidationData(session) as data:
+            try:
+                ans = await data.validate_dni("41397415")
+                print(ans)
+            except Exception as e:
+                print(e)
+            finally:
+                await asyncio.sleep(100000)
 
 if __name__ == "__main__":
-    raise RuntimeError("This script cannot be run on its own")
+    asyncio.run(test())
+    #raise RuntimeError("This script cannot be run on its own")

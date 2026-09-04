@@ -6,12 +6,15 @@ import logging
 from datetime import datetime
 import os
 from typing import List, Optional
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.dbsessionmanager import sessionmanager
 from database.definitions import (
     Address,
+    Beneficiary,
+    BeneficiaryAddressLink,
+    BeneficiaryEmailLink,
     Citation,
     Claim,
     Email,
@@ -31,16 +34,21 @@ from database.definitions import (
     SecloNotificationToEmployee,
     SecloNotificationToEmployer,
 )
-from dataobjects.seclodataclasses import SECLOCitation, SECLONotificationData
+from dataobjects.seclodataclasses import (
+    SECLOCitation,
+    SECLOEmployeeData,
+    SECLOEmployerData,
+    SECLOLawyerData,
+    SECLONotificationData,
+    SECLOBeneficiaryData,
+)
 from dataobjects.enums import (
     CitationStatus,
     CitationType,
     ClaimType,
-    PersonType,
     RequiredAsType,
     SECLONotificationType,
 )
-from repositories.seclo.exceptions import RecNotAccessibleException
 from repositories.seclo.driver_playwright import (
     SECLOCalendarParser,
     SECLOLoginCredentials,
@@ -109,7 +117,7 @@ async def batch_verify_agenda(
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
             if citation.exception():
-                logger.warning(citation.exception(), exc_info=True, stack_info=True)
+                logger.warning(citation.exception(), exc_info=True, stack_info=True, stacklevel=2)
                 continue
             claim = (
                 await db.scalars(
@@ -154,105 +162,50 @@ async def __verify_agenda_citation(
         await progress.compose(ingress_progress, f"Importing claim {citation.gdeID}")
         notification_progress = ProgressReport()
         await progress.compose(notification_progress, "Mapping notifications")
-
         async with sessionmanager.session() as db:
             with db.no_autoflush:
                 async with SECLORecData(session, None, notification_progress) as seclo:
-                    try:
-                        dbclaim = (
-                            await db.scalars(
-                                select(Claim).where(Claim.gdeID == citation.gdeID)
-                            )
-                        ).one_or_none()
-                        if dbclaim:
-                            citation.notificationData = await seclo.get_notification_data(
-                                rec_id=dbclaim.recID
-                            )
-                        else:
-                            citation.notificationData = await seclo.get_notification_data(
-                                gde_id=citation.gdeID
-                            )
-                    except RecNotAccessibleException:
-                        logger.warning(
-                            "Claim %s with citation %s (%s) can't be mapped. Skipping...",
-                            citation.gdeID,
-                            citation.citationDate,
-                            citation.citationType,
-                        )
+                    # Step 1: Load notification data
+                    # TODO Run notification data only once per claim (?)
+                    citation.notificationData = await seclo.get_notification_data(
+                        gde_id=citation.gdeID
+                    )
+                    recid = seclo.recid
+
+                # Step 2: Load claim if missing
                 local_claim = (
                     await db.scalars(select(Claim).where(Claim.gdeID == citation.gdeID))
-                ).one_or_none()
-                if not local_claim:
-                    try:
-                        local_claim = await __ingress_claim(
-                            gde_id=citation.gdeID,
-                            init_date=citation.initDate,
-                            progress=ingress_progress,
-                            db=db,
-                            session=session,
-                            citation=None,
-                        )
-                    except RecNotAccessibleException as e:
-                        logger.warning(
-                            "Claim %s with citation %s (%s) can't be mapped. Skipping... (%s)",
-                            citation.gdeID,
-                            citation.citationDate,
-                            citation.citationType,
-                            e
-                        )
-                        return citation
+                ).one_or_none() or await __ingress_claim(
+                    rec_id=recid,
+                    init_date=citation.initDate,
+                    progress=ingress_progress,
+                    db=db,
+                    session=session,
+                )
                 await ingress_progress.set_completion("Imported claim")
 
+                # Step 3: Load citation if missing
                 local_citation = (
                     await db.scalars(
-                        select(Citation).where(Citation.secloAudID == citation.citationID)
+                        select(Citation).where(
+                            Citation.secloAudID == citation.citationID
+                        )
                     )
-                ).one_or_none()
-                if not local_citation:
-                    local_citation = Citation(
-                        secloAudID=citation.citationID,
-                        citationDate=citation.citationDate,
-                        recID=local_claim.recID,
-                        citationType=CitationType.citation_string_to_enum(
-                            citation.citationType
-                        ),
-                        citationStatus=CitationStatus.citation_string_to_enum(
-                            citation.citationType
-                        ),
-                    )
-                    primarize = True
-                    if (
-                        local_citation.citationStatus == CitationStatus.PENDING
-                        and local_citation.citationType == CitationType.FIRST
-                    ):
-                        for saved_citation in local_claim.citations:
-                            if (
-                                saved_citation.isCalendarPrimary
-                                and saved_citation.citationStatus == CitationStatus.PENDING
-                                and saved_citation.citationType != CitationType.FIRST
-                            ):
-                                primarize = False
-                            if (
-                                saved_citation.isCalendarPrimary
-                                and saved_citation.citationStatus == CitationStatus.PENDING
-                                and saved_citation.citationType == CitationType.FIRST
-                                and (
-                                    (saved_citation.citationDate or datetime.now())
-                                    > (local_citation.citationDate or datetime.now())
-                                )
-                            ):
-                                primarize = False
-                        if primarize:
-                            for saved_citation in local_claim.citations:
-                                saved_citation.isCalendarPrimary = False
-                    local_citation.isCalendarPrimary = primarize
-                    db.add(local_citation)
+                ).one_or_none() or __ingress_citation(
+                    db=db, citation=citation, local_claim=local_claim
+                )
 
+                # TODO is this correct? it's not
                 for lawyer in local_claim.lawyers:
-                    for link in lawyer.employeeLink + lawyer.employerLink:
+                    for link in (
+                        lawyer.employeeLink
+                        + lawyer.employerLink
+                        + lawyer.beneficiaryLink
+                    ):
                         link.citation = local_citation
                         db.add(link)
                 await db.flush()
+
                 await update_notifications(
                     rec_id=local_citation.recID,
                     session=session,
@@ -265,76 +218,92 @@ async def __verify_agenda_citation(
                 await progress.set_completion("Done loading claim data")
         return citation
     except Exception as e:
-        raise RuntimeError(f"Exception in citation {citation.citationID} " +
-                           f"({citation.gdeID} {citation.citationDate})" + str(e)) from e
+        raise RuntimeError(
+            f"Exception in citation {citation.citationID} "
+            + f"({citation.gdeID} {citation.citationDate})"
+            + str(e)
+        ) from e
 
-async def __ingress_claim(
-    init_date: Optional[datetime],
-    session: SECLOSession,
-    citation: Optional[Citation],
-    progress: ProgressReport,
-    db: AsyncSession,
-    update: bool = False,
-    gde_id: Optional[str] = None,
-    rec_id: Optional[int] = None,
-):
-    local_addresses: List[Address] = []
-    local_mails: List[Email] = []
-    local_phones: List[LawyerTelephone] = []
-    local_employers: List[Employer] = []
-    local_lawyers: List[Lawyer] = []
-    statement = select(Claim).where(or_(Claim.gdeID == gde_id, Claim.recID == rec_id))
 
-    async with SECLORecData(session, None, progress) as rec_data:
-        if rec_id:
-            rec_data.set_rec_id(rec_id)
-        elif gde_id:
-            await rec_data.set_rec_id_from_gde_id(gde_id)
-        else:
-            raise ValueError("Missing recID and gdeID")
-        claim_data = await rec_data.get_claim_data()
-        try:
-            local_claim = (await db.scalars(statement)).one()
-            logger.debug("FOUND")
-            if not update:
-                return local_claim
-        except NoResultFound:
-            local_claim = Claim(
-                recID=claim_data.recid,
-                gdeID=gde_id,
-                initDate=init_date,
-                initByEmployee=claim_data.init_by_worker,
-                title="",
-                claimType=ClaimType.enums_to_int(claim_data.claims),
-                legalStuff=claim_data.legal_stuff,
-                isEvilized=False,
-            )
-    for employee in claim_data.employees:
-        # try for local version
-        try:
-            local_employee = (
-                await db.scalars(
-                    select(Employee)
-                    .where(Employee.recID == local_claim.recID)
-                    .where(Employee.cuil == employee.cuil)
+def __ingress_citation(
+    db: AsyncSession, citation: SECLOCitation, local_claim: Claim
+) -> Citation:
+    local_citation = Citation(
+        secloAudID=citation.citationID,
+        citationDate=citation.citationDate,
+        recID=local_claim.recID,
+        citationType=CitationType.citation_string_to_enum(citation.citationType),
+        citationStatus=CitationStatus.citation_string_to_enum(citation.citationType),
+    )
+    primarize = True
+    if (
+        local_citation.citationStatus == CitationStatus.PENDING
+        and local_citation.citationType == CitationType.FIRST
+    ):
+        for saved_citation in local_claim.citations:
+            if (
+                saved_citation.isCalendarPrimary
+                and saved_citation.citationStatus == CitationStatus.PENDING
+                and saved_citation.citationType != CitationType.FIRST
+            ):
+                primarize = False
+            if (
+                saved_citation.isCalendarPrimary
+                and saved_citation.citationStatus == CitationStatus.PENDING
+                and saved_citation.citationType == CitationType.FIRST
+                and (
+                    (saved_citation.citationDate or datetime.now())
+                    > (local_citation.citationDate or datetime.now())
                 )
-            ).one()
-            local_employee.employeeName = employee.name
-            local_employee.dni = employee.dni or 0
-            local_employee.cuil = employee.cuil
-            local_employee.isValidated = employee.validated
-        except NoResultFound:
-            local_employee = Employee(
-                employeeName=employee.name,
-                dni=employee.dni,
-                cuil=employee.cuil,
-                isValidated=employee.validated,
-                birthDate=employee.birth_date,
-                claim=local_claim,
-                headerName=employee.name.replace(",", "").split(" ")[0],
-            )
+            ):
+                primarize = False
+        if primarize:
+            for saved_citation in local_claim.citations:
+                saved_citation.isCalendarPrimary = False
+    local_citation.isCalendarPrimary = primarize
+    db.add(local_citation)
+    return local_citation
 
-        # rest of data
+
+async def __ingress_employee(
+    db: AsyncSession,
+    local_claim: Claim,
+    employee: SECLOEmployeeData,
+    local_mails: List[Email],
+    local_addresses: List[Address],
+) -> Employee:
+    # try for local version
+    local_employee = next(
+        filter(lambda x: x.cuil == employee.cuil, local_claim.employees), None
+    )
+    if local_employee:
+        local_employee.employeeName = employee.name
+        local_employee.dni = employee.dni or 0
+        local_employee.cuil = employee.cuil
+        local_employee.isValidated = employee.validated
+    else:
+        local_employee = Employee(
+            employeeName=employee.name,
+            dni=employee.dni,
+            cuil=employee.cuil,
+            isValidated=employee.validated,
+            birthDate=employee.birth_date,
+            claim=local_claim,
+            headerName=employee.name.replace(",", "").split(" ")[0],
+        )
+        local_claim.employees.append(local_employee)
+        db.add(local_employee)
+
+    # rest of data
+    if not any(
+        rel.startDate == employee.start_date
+        and rel.endDate == employee.end_date
+        and rel.wage == employee.wage
+        and rel.cct == employee.cct
+        and rel.claimAmount == employee.claim_amount
+        and rel.category == employee.category
+        for rel in local_employee.relationshipData
+    ):
         rel_data = EmployeeRelationshipData(
             startDate=employee.start_date,
             endDate=employee.end_date,
@@ -343,204 +312,368 @@ async def __ingress_claim(
             category=employee.category,
             cct=employee.cct,
         )
-        __ingress_entry_if_missing(rel_data, local_employee.relationshipData)
-        local_employee = __ingress_entry_if_missing(
-            local_employee, local_claim.employees
-        )
+        db.add(rel_data)
+        local_employee.relationshipData.append(rel_data)
 
-        local_address = __ingress_entry_if_missing(
-            Address.from_address_data(employee.address), local_addresses
-        )
+    local_address = Address.from_address_data(employee.address)
+    if local_address in local_addresses:
+        # Avoid duplicates
+        local_address = local_addresses[local_addresses.index(local_address)]
+
+    if not any(link.address == local_address for link in local_employee.addresses):
         employee_address_link = EmployeeAddressLink(
             employee=local_employee, address=local_address
         )
-        if employee_address_link not in local_employee.addresses:
-            local_employee.addresses.append(employee_address_link)
-            db.add(employee_address_link)
-        else:
-            employee_address_link = None
+        local_employee.addresses.append(employee_address_link)
+        db.add(employee_address_link)
 
-        if employee.mail:
-            local_mail = __ingress_entry_if_missing(
-                Email(
-                    email=employee.mail, registeredOn=init_date, registeredFrom="SECLO"
-                ),
-                local_mails,
-            )
+    if employee.mail:
+        local_mail = next(
+            filter(lambda x: x.email == employee.mail, local_mails), None
+        ) or Email(
+            email=employee.mail,
+            registeredOn=local_claim.initDate,
+            registeredFrom="SECLO",
+        )
+        if not any(link.email == employee.mail for link in local_employee.emails):
             employee_email_link = EmployeeEmailLink(
                 email=local_mail, employee=local_employee
             )
-            if employee_email_link not in local_employee.emails:
-                local_employee.emails.append(employee_email_link)
+            local_employee.emails.append(employee_email_link)
             db.add(employee_email_link)
-    for employer in claim_data.employers:
-        try:
-            local_employer = (
-                await db.scalars(
-                    select(Employer)
-                    .where(Employer.recID == local_claim.recID)
-                    .where(
-                        or_(
-                            Employer.cuil == employer.cuil,
-                            Employer.employerName == employer.name.strip(),
-                        )
-                    )
-                )
-            ).one()
-            local_employer.employerName = employer.name
-            local_employer.cuil = employer.cuil
-            local_employer.isValidated = employer.validated
-        except NoResultFound:
-            local_employer = Employer(
-                claim=local_claim,
-                employerName=employer.name,
-                cuil=employer.cuil,
-                personType=employer.person_type,
-                requiredAs=RequiredAsType.UNKNOWN,
-                SECLORegisterDate=init_date,
-                mustRegisterSECLO=False,
-                isValidated=employer.validated,
-                headerName=(
-                    employer.name.split(" ")[0]
-                    if employer.person_type == PersonType.PERSON
-                    else __filter_rules(employer.name)
-                ),
-            )
-        local_employer = __ingress_entry_if_missing(local_employer, local_employers)
+    return local_employee
+
+
+async def __ingress_employer(
+    db: AsyncSession,
+    local_claim: Claim,
+    employer: SECLOEmployerData,
+    local_mails: List[Email],
+    local_addresses: List[Address],
+) -> Employer:
+    # try for local version
+    local_employer = next(
+        filter(
+            lambda x: x.cuil == employer.cuil
+            or x.employerName == employer.name.strip(),
+            local_claim.employers,
+        ),
+        None,
+    )
+    if local_employer:
+        local_employer.employerName = employer.name
+        local_employer.cuil = employer.cuil
+        local_employer.isValidated = employer.validated
+    else:
+        local_employer = Employer(
+            claim=local_claim,
+            employerName=employer.name,
+            cuil=employer.cuil,
+            personType=employer.person_type,
+            requiredAs=RequiredAsType.UNKNOWN,
+            SECLORegisterDate=local_claim.initDate,
+            mustRegisterSECLO=False,
+            isValidated=employer.validated,
+            headerName=__filter_rules(employer.name),
+        )
+        local_claim.employers.append(local_employer)
         db.add(local_employer)
 
-        local_address = __ingress_entry_if_missing(
-            Address.from_address_data(employer.address), local_addresses
-        )
+    local_address = Address.from_address_data(employer.address)
+    if local_address in local_addresses:
+        # Avoid duplicates
+        local_address = local_addresses[local_addresses.index(local_address)]
+
+    if not any(link.address == local_address for link in local_employer.addresses):
         employer_address_link = EmployerAddressLink(
             employer=local_employer, address=local_address
         )
-        if employer_address_link not in local_employer.addresses:
-            local_employer.addresses.append(employer_address_link)
-            db.add(employer_address_link)
-        else:
-            employer_address_link = None
+        local_employer.addresses.append(employer_address_link)
+        db.add(employer_address_link)
 
-        if employer.mail:
-            local_mail = __ingress_entry_if_missing(
-                Email(
-                    email=employer.mail, registeredOn=init_date, registeredFrom="SECLO"
-                ),
-                local_mails,
+    if employer.mail:
+        local_mail = next(
+            filter(lambda x: x.email == employer.mail, local_mails), None
+        ) or Email(
+            email=employer.mail,
+            registeredOn=local_claim.initDate,
+            registeredFrom="SECLO",
+        )
+        if not any(link.email == employer.mail for link in local_employer.emails):
+            employer_email_link = EmployerEmailLink(
+                email=local_mail, employer=local_employer
             )
-            for email in local_employer.emails:
-                if email.email.email == local_mail.email:
-                    break
-            else:
-                employer_email_link = __ingress_entry_if_missing(
-                    EmployerEmailLink(email=local_mail, employer=local_employer),
-                    local_employer.emails,
-                )
-                db.add(employer_email_link)
-    for lawyer in claim_data.lawyers:
+            local_employer.emails.append(employer_email_link)
+            db.add(employer_email_link)
+    return local_employer
+
+
+async def __ingress_lawyer(
+    db: AsyncSession,
+    local_claim: Claim,
+    lawyer: SECLOLawyerData,
+    local_mails: List[Email],
+    local_phones: List[LawyerTelephone],
+) -> Lawyer:
+    # try for local version
+    local_lawyer = next(
+        filter(lambda x: x.t == lawyer.t and x.f == lawyer.f, local_claim.lawyers), None
+    )
+    if local_lawyer:
+        local_lawyer.cuil = lawyer.cuil
+        local_lawyer.lawyerName = lawyer.name
+        local_lawyer.isValidated = lawyer.validated
+    else:
         local_lawyer = Lawyer(
             claim=local_claim,
             lawyerName=lawyer.name,
+            cuil=lawyer.cuil,
             t=lawyer.t,
             f=lawyer.f,
-            registeredOn=init_date,
+            registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
             isValidated=lawyer.validated,
-            cuil=lawyer.cuil,
         )
-        local_lawyer = __ingress_entry_if_missing(local_lawyer, local_lawyers)
+        local_claim.lawyers.append(local_lawyer)
         db.add(local_lawyer)
 
-        if lawyer.mail:
-            local_mail = __ingress_entry_if_missing(
-                Email(
-                    email=lawyer.mail, registeredOn=init_date, registeredFrom="SECLO"
-                ),
-                local_mails,
-            )
+    if lawyer.mail:
+        local_mail = next(
+            filter(lambda x: x.email == lawyer.mail, local_mails), None
+        ) or Email(
+            email=lawyer.mail,
+            registeredOn=local_claim.initDate,
+            registeredFrom="SECLO",
+        )
+        if not any(link.email == lawyer.mail for link in local_lawyer.emails):
             lawyer_email_link = LawyerEmailLink(email=local_mail, lawyer=local_lawyer)
-            if lawyer_email_link not in local_lawyer.emails:
-                local_lawyer.emails.append(lawyer_email_link)
+            local_lawyer.emails.append(lawyer_email_link)
             db.add(lawyer_email_link)
-        if lawyer.phone:
-            local_phone = __ingress_entry_if_missing(
-                LawyerTelephone(
-                    telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
-                ),
-                local_phones,
-            )
-            if local_phone not in local_lawyer.telephones:
-                local_lawyer.telephones.append(local_phone)
-            db.add(local_phone)
-        if lawyer.mobile_phone:
-            local_phone = __ingress_entry_if_missing(
-                LawyerTelephone(
-                    telephone=lawyer.mobile_phone[1],
-                    prefix=lawyer.mobile_phone[0],
-                    obtainedFrom="SECLO",
-                    lawyer=local_lawyer,
-                ),
-                local_phones,
-            )
-            if local_phone not in local_lawyer.telephones:
-                local_lawyer.telephones.append(local_phone)
+
+    if lawyer.phone:
+        local_phone = next(
+            filter(lambda x: x.telephone == lawyer.phone, local_phones), None
+        ) or LawyerTelephone(
+            telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
+        )
+        if local_phone not in local_lawyer.telephones:
+            local_lawyer.telephones.append(local_phone)
             db.add(local_phone)
 
-        for represented in lawyer.represents:
-            for client in local_claim.employees:
-                is_represented = True
-                for name in client.employeeName.replace(",", "").split():
-                    if name not in represented[1]:
-                        is_represented = False
-                if is_represented:
-                    lawyer_employee_link = LawyerToEmployee(
-                        lawyer=local_lawyer,
-                        employee=client,
-                        citation=citation,
-                        isActualLawyer=True,
-                        isSelfRepresenting=local_lawyer.lawyerName
-                        == client.employeeName,
-                        clientAbsent=False,
-                    )
-                    if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
-                        lawyer_employee_link.isSelfRepresenting = True
-                    local_lawyer.employeeLink.append(lawyer_employee_link)
-                    if citation:
-                        db.add(lawyer_employee_link)
+    if lawyer.mobile_phone:
+        local_phone = next(
+            filter(
+                lambda x: x.telephone == lawyer.mobile_phone[1]  # type: ignore
+                and x.prefix == lawyer.mobile_phone[0], # type: ignore
+                local_phones,
+            ),
+            None,  # type: ignore
+        ) or LawyerTelephone(
+            telephone=lawyer.mobile_phone[1],
+            prefix=lawyer.mobile_phone[0],
+            obtainedFrom="SECLO",
+            lawyer=local_lawyer,
+        )
+        if local_phone not in local_lawyer.telephones:
+            local_lawyer.telephones.append(local_phone)
+            db.add(local_phone)
+
+    for represented in lawyer.represents:
+        for client in local_claim.employees:
+            for name in client.employeeName.replace(",", "").split():
+                if name not in represented[1]:
                     break
-                for client in local_claim.employers:
-                    is_represented = True
-                    for name in client.employerName.replace(",", "").split():
-                        if name and name not in represented[1]:
-                            is_represented = False
-                    if is_represented:
-                        lawyer_employer_link = LawyerToEmployer(
-                            lawyer=local_lawyer,
-                            employer=client,
-                            citation=citation,
-                            isActualLawyer=True,
-                            isSelfRepresenting=local_lawyer.lawyerName
-                            == client.employerName,
-                            isEmpowered=False,
-                            clientAbsent=False,
-                        )
-                        if (
-                            lawyer.cuil == client.cuil
-                            or lawyer.name == client.employerName
-                        ):
-                            lawyer_employer_link.isSelfRepresenting = True
-                        local_lawyer.employerLink.append(lawyer_employer_link)
-                        if citation:
-                            db.add(lawyer_employer_link)
+            else:
+                lawyer_employee_link = LawyerToEmployee(
+                    lawyer=local_lawyer,
+                    employee=client,
+                    isActualLawyer=True,
+                    isSelfRepresenting=local_lawyer.cuil == client.cuil,
+                    clientAbsent=False,
+                )
+                if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
+                    lawyer_employee_link.isSelfRepresenting = True
+                local_lawyer.employeeLink.append(lawyer_employee_link)
+                break
+            for client in local_claim.employers:
+                for name in client.employerName.replace(",", "").split():
+                    if name and name not in represented[1]:
                         break
                 else:
-                    logger.warning(
-                        "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
-                        local_claim.recID,
-                        local_lawyer.lawyerName,
-                        represented[1],
+                    lawyer_employer_link = LawyerToEmployer(
+                        lawyer=local_lawyer,
+                        employer=client,
+                        isActualLawyer=True,
+                        isSelfRepresenting=False,
+                        isEmpowered=False,
+                        clientAbsent=False,
                     )
-    # TODO add others info
+                    if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
+                        lawyer_employer_link.isSelfRepresenting = True
+                    local_lawyer.employerLink.append(lawyer_employer_link)
+                    break
+            else:
+                logger.warning(
+                    "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
+                    local_claim.recID,
+                    local_lawyer.lawyerName,
+                    represented[1],
+                )
+    return local_lawyer
+
+
+async def __ingress_beneficiary(
+    db: AsyncSession,
+    local_claim: Claim,
+    beneficiary: SECLOBeneficiaryData,
+    local_mails: List[Email],
+    local_addresses: List[Address],
+) -> Beneficiary:
+    # try for local version
+    local_beneficiary = next(
+        filter(
+            lambda x: x.cuil == beneficiary.cuil or x.dni == beneficiary.dni,
+            local_claim.beneficiaries,
+        ),
+        None,
+    )
+    if local_beneficiary:
+        local_beneficiary.beneficiaryName = beneficiary.name
+        local_beneficiary.cuil = beneficiary.cuil
+        local_beneficiary.dni = beneficiary.dni  # type: ignore
+    else:
+        local_beneficiary = Beneficiary(
+            claim=local_claim,
+            beneficiaryName=beneficiary.name,
+            cuil=beneficiary.cuil,
+            dni=beneficiary.dni,
+            birthDate=beneficiary.birth_date,
+        )
+        local_claim.beneficiaries.append(local_beneficiary)
+        db.add(local_beneficiary)
+
+    local_address = Address.from_address_data(beneficiary.address)
+    if local_address in local_addresses:
+        # Avoid duplicates
+        local_address = local_addresses[local_addresses.index(local_address)]
+
+    if not any(link.address == local_address for link in local_beneficiary.addresses):
+        beneficiary_address_link = BeneficiaryAddressLink(
+            beneficiary=local_beneficiary, address=local_address
+        )
+        local_beneficiary.addresses.append(beneficiary_address_link)
+        db.add(beneficiary_address_link)
+
+    if beneficiary.mail:
+        local_mail = next(
+            filter(lambda x: x.email == beneficiary.mail, local_mails), None
+        ) or Email(
+            email=beneficiary.mail,
+            registeredOn=local_claim.initDate,
+            registeredFrom="SECLO",
+        )
+        if not any(link.email == beneficiary.mail for link in local_beneficiary.emails):
+            beneficiary_email_link = BeneficiaryEmailLink(
+                email=local_mail, beneficiary=local_beneficiary
+            )
+            local_beneficiary.emails.append(beneficiary_email_link)
+            db.add(beneficiary_email_link)
+    return local_beneficiary
+
+
+async def __ingress_claim(
+    init_date: Optional[datetime],  # For minute-precise data obtained before
+    session: SECLOSession,
+    progress: ProgressReport,
+    db: AsyncSession,
+    rec_id: int,
+):
+    local_addresses: List[Address] = []
+    local_mails: List[Email] = []
+    local_phones: List[LawyerTelephone] = []
+
+    async with SECLORecData(session, None, progress) as rec_data:
+        rec_data.set_rec_id(rec_id)
+        claim_data = await rec_data.get_claim_data()
+        try:
+            local_claim = (
+                await db.scalars(select(Claim).where(Claim.recID == rec_id))
+            ).one()
+            logger.debug("FOUND")
+        except NoResultFound:
+            local_claim = Claim(
+                recID=claim_data.recid,
+                gdeID=claim_data.gdeid,
+                initDate=init_date,
+                initByEmployee=claim_data.init_by_worker,
+                title="",
+                claimType=ClaimType.enums_to_int(claim_data.claims),
+                legalStuff=claim_data.legal_stuff,
+                isEvilized=False,
+            )
+    for person in claim_data.employees:
+        local_person = await __ingress_employee(
+            db=db,
+            local_claim=local_claim,
+            employee=person,
+            local_mails=local_mails,
+            local_addresses=local_addresses,
+        )
+        local_mails.extend(
+            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+        )
+        local_addresses.extend(
+            x.address
+            for x in filter(
+                lambda x: x.address not in local_addresses, local_person.addresses
+            )
+        )
+    for person in claim_data.employers:
+        local_person = await __ingress_employer(
+            db=db,
+            local_claim=local_claim,
+            employer=person,
+            local_mails=local_mails,
+            local_addresses=local_addresses,
+        )
+        local_mails.extend(
+            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+        )
+        local_addresses.extend(
+            x.address
+            for x in filter(
+                lambda x: x.address not in local_addresses, local_person.addresses
+            )
+        )
+    for person in claim_data.lawyers:
+        local_person = await __ingress_lawyer(
+            db=db,
+            local_claim=local_claim,
+            lawyer=person,
+            local_mails=local_mails,
+            local_phones=local_phones,
+        )
+        local_mails.extend(
+            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+        )
+        local_phones.extend(filter(lambda x: x not in local_phones, local_person.telephones))
+    for person in claim_data.beneficiaries:
+        local_person = await __ingress_beneficiary(
+            db=db,
+            local_claim=local_claim,
+            beneficiary=person,
+            local_mails=local_mails,
+            local_addresses=local_addresses,
+        )
+        local_mails.extend(
+            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+        )
+        local_addresses.extend(
+            x.address
+            for x in filter(
+                lambda x: x.address not in local_addresses, local_person.addresses
+            )
+        )
     db.add(local_claim)
     local_claim.title = get_cal_header(local_claim)
     return local_claim
@@ -673,16 +806,17 @@ async def update_notifications(
                     ):
                         if not is_retry:
                             logger.info(
-                                "Couldn't match notification %d to '%s' on %d. "+\
-                                    "Will try updating (list: %s)",
+                                "Couldn't match notification %d to '%s' on %d. "
+                                + "Will try updating (list: %s)",
                                 local_notification.secloPostalID,
                                 notification.person,
                                 citation.recID,
                                 [
                                     f'"{person.employerName if isinstance(person, Employer)
                                     else person.employeeName}"'
-                                    for person in citation.claim.employers+citation.claim.employees
-                                ]
+                                    for person in citation.claim.employers
+                                    + citation.claim.employees
+                                ],
                             )
                             await __ingress_claim(
                                 rec_id=rec_id,
@@ -690,8 +824,6 @@ async def update_notifications(
                                 session=session,
                                 progress=progress,
                                 db=db,
-                                update=True,
-                                citation=citation,
                             )
                             await db.commit()
                             is_retry = True
@@ -779,8 +911,8 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "+\
-                                        "Will try updating (list: %s)",
+                                    "Couldn't match notification %d to '%s' on %d. "
+                                    + "Will try updating (list: %s)",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
@@ -788,7 +920,7 @@ async def update_notifications(
                                         f'"{person.employerName if isinstance(person, Employer)
                                         else person.employeeName}"'
                                         for person in citation.claim.employers
-                                    ]
+                                    ],
                                 )
                                 await __ingress_claim(
                                     rec_id=rec_id,
@@ -796,8 +928,6 @@ async def update_notifications(
                                     session=session,
                                     progress=progress,
                                     db=db,
-                                    update=True,
-                                    citation=citation,
                                 )
                                 await db.commit()
                                 is_retry = True
@@ -818,8 +948,8 @@ async def update_notifications(
                         ):
                             if not is_retry:
                                 logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "+\
-                                        "Will try updating (list: %s)",
+                                    "Couldn't match notification %d to '%s' on %d. "
+                                    + "Will try updating (list: %s)",
                                     local_notification.secloPostalID,
                                     notification.person,
                                     citation.recID,
@@ -827,7 +957,7 @@ async def update_notifications(
                                         f'"{person.employerName if isinstance(person, Employer)
                                         else person.employeeName}"'
                                         for person in citation.claim.employees
-                                    ]
+                                    ],
                                 )
                                 await __ingress_claim(
                                     rec_id=rec_id,
@@ -835,8 +965,6 @@ async def update_notifications(
                                     session=session,
                                     progress=progress,
                                     db=db,
-                                    update=True,
-                                    citation=citation,
                                 )
                                 await db.commit()
                                 is_retry = True

@@ -54,7 +54,7 @@ from dataobjects.seclodataclasses import (
     SECLOLawyerData,
     SECLONotificationType,
     SECLONotificationData,
-    SECLOOtherData,
+    SECLOBeneficiaryData,
     CitationResult,
 )
 
@@ -1828,7 +1828,7 @@ class SECLORecData(SECLOAccessor):
                         self.progress.increase_progress(
                             f"Other {name} ({i+1} of {count})..."
                         )
-                        other = SECLOOtherData(name=name, dni=dni)
+                        other = SECLOBeneficiaryData(name=name, dni=dni)
                         other.add_address(
                             SECLOAddressData(
                                 province=self.driver.find_element(

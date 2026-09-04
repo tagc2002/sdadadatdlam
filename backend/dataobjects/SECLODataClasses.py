@@ -337,22 +337,36 @@ class SECLOLawyerData(SECLOCommonData):
         return f"{super().__str__()}T {self.t} F {self.f}\n{self.represents}"
 
 
-class SECLOOtherData(SECLOCommonData):
+class SECLOBeneficiaryData(SECLOCommonData):
     "Class for retrieving other data from SECLO."
-    # There's nothing noteworthy not contemplated in common data.
+    def __init__(
+        self: Self,
+        name: str,
+        dni: Optional[str] = None,
+        cuil: Optional[str] = None,
+    ):
+        super().__init__(name, dni, cuil, True)
+        self.birth_date = None
 
+    def add_birth_date(self: Self, birth_date: str):
+        "Register a birth date for this employee."
+        try:
+            self.birth_date = datetime.strptime(birth_date, "%d/%m/%Y")
+        except ValueError:
+            self.birth_date = None
 
 class SECLOClaimData:
     "Class for retrieving claim data from SECLO"
-    def __init__(self: Self, recid: int, legal_stuff: str, init_by_worker: bool):
+    def __init__(self: Self, recid: int, gdeid: str, legal_stuff: str, init_by_worker: bool):
         self.recid = recid
+        self.gdeid = gdeid
         self.legal_stuff = legal_stuff
         self.init_by_worker = init_by_worker
         self.claims: List[ClaimType] = []
         self.employees: List[SECLOEmployeeData] = []
         self.employers: List[SECLOEmployerData] = []
         self.lawyers: List[SECLOLawyerData] = []
-        self.others: List[SECLOOtherData] = []
+        self.beneficiaries: List[SECLOBeneficiaryData] = []
 
     def add_claim_object(self: Self, claim: ClaimType):
         "Adds a claim object to this given claim."
@@ -370,9 +384,9 @@ class SECLOClaimData:
         "Adds a lawyer to this given claim."
         self.lawyers.append(lawyer)
 
-    def add_other(self: Self, other: SECLOOtherData):
+    def add_other(self: Self, other: SECLOBeneficiaryData):
         "Adds an 'other' person to this given claim."
-        self.others.append(other)
+        self.beneficiaries.append(other)
 
     def __str__(self: Self):
         base = f"CLAIM:\n\nrecID {self.recid}\nlegal stuff: {self.legal_stuff}\n"+\
@@ -389,9 +403,9 @@ class SECLOClaimData:
         for lawyer in self.lawyers:
             base = base + f"{str(lawyer)}\n"
 
-        if len(self.others) > 0:
+        if len(self.beneficiaries) > 0:
             base = base + "\nothers:\n"
-            for other in self.others:
+            for other in self.beneficiaries:
                 base = base + f"{str(other)}\n"
         return base
 

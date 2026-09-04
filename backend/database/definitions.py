@@ -358,21 +358,16 @@ class EmployeeRelationshipData(Base):
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployeeRelationshipData):
-            if other.employeeID == self.employeeID and self.employeeID is not None:
-                return True
-            else:
-                return (
-                    self.employeeID == other.employeeID
-                    and self.startDate == other.startDate
-                    and self.endDate == other.endDate
-                    and self.wage == other.wage
-                    and self.cct == other.cct
-                    and self.claimAmount == other.claimAmount
-                    and self.category == other.category
-                )
-
-        else:
-            return False
+            return (
+                self.employeeID == other.employeeID
+                and self.startDate == other.startDate
+                and self.endDate == other.endDate
+                and self.wage == other.wage
+                and self.cct == other.cct
+                and self.claimAmount == other.claimAmount
+                and self.category == other.category
+            )
+        return False
 
 
 class EmployeeAddressLink(Base):
@@ -435,6 +430,7 @@ class Beneficiary(Base):
     recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
     beneficiaryName: Mapped[str]
     dni: Mapped[int]
+    cuil: Mapped[str | None]
     birthDate: Mapped[datetime | None]
     bankAccountID: Mapped[int | None] = mapped_column(
         ForeignKey("bankAccount.accountID")
