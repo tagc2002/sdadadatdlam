@@ -5,7 +5,7 @@ import base64
 import logging
 from datetime import datetime
 import os
-from typing import List, Optional
+from typing import Dict, List, Optional, Self, Tuple
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +62,33 @@ logger = logging.getLogger(__name__)
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 
 
+class NotificationManager:
+    def __init__(self: Self, session: SECLOSession):
+        self.session = session
+        self.notifs: Dict[str, Tuple[List[SECLONotificationData], Optional[int]]] = {}
+
+    async def get_notification(
+        self: Self, gde_id: str, notification_progress: ProgressReport
+    ) -> Tuple[List[SECLONotificationData], int]:
+        if gde_id not in self.notifs:
+            self.notifs[gde_id] = ([], None)
+            async with SECLORecData(self.session, None, notification_progress) as seclo:
+                try:
+                    notification_data = await seclo.get_notification_data(gde_id=gde_id)
+                    self.notifs[gde_id] = (notification_data, seclo.recid)
+                except Exception as e:
+                    self.notifs.pop(gde_id)
+                    raise e
+        try:
+            while not self.notifs[gde_id][1]:
+                await asyncio.sleep(0.2)
+        except KeyError as e:
+            raise AttributeError(
+                "An error occured while loading notifications, check logs for details"
+            ) from e
+        return self.notifs[gde_id]  # type: ignore
+
+
 async def batch_verify_agenda(
     creds: SECLOLoginCredentials,
     db: AsyncSession,
@@ -92,8 +119,8 @@ async def batch_verify_agenda(
     await progress.compose(second_stage, "Loading citation data")
 
     citation_tasks = []
-
     async with SECLOSession(credentials=creds) as seclo:
+        notifmanager = NotificationManager(seclo)
         async with SECLOCalendarParser(
             seclo,
             weeks_before=weeks_before,
@@ -104,7 +131,9 @@ async def batch_verify_agenda(
                 entry_progress = ProgressReport()
                 citation_tasks.append(
                     asyncio.get_event_loop().create_task(
-                        __verify_agenda_citation(seclo, citation, entry_progress)
+                        __verify_agenda_citation(
+                            seclo, citation, entry_progress, notifmanager
+                        )
                     )
                 )
                 second_stage.set_steps(len(citation_tasks))
@@ -117,7 +146,10 @@ async def batch_verify_agenda(
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
             if citation.exception():
-                logger.warning(citation.exception(), exc_info=True, stack_info=True, stacklevel=2)
+                logger.warning(
+                    citation.exception(),
+                    exc_info=citation.exception(),
+                )
                 continue
             claim = (
                 await db.scalars(
@@ -151,7 +183,10 @@ async def batch_verify_agenda(
 
 
 async def __verify_agenda_citation(
-    session: SECLOSession, citation: SECLOCitation, progress: ProgressReport
+    session: SECLOSession,
+    citation: SECLOCitation,
+    progress: ProgressReport,
+    notifmanager: NotificationManager,
 ) -> SECLOCitation:
     try:
         notification_progress = ProgressReport()
@@ -164,13 +199,10 @@ async def __verify_agenda_citation(
         await progress.compose(notification_progress, "Mapping notifications")
         async with sessionmanager.session() as db:
             with db.no_autoflush:
-                async with SECLORecData(session, None, notification_progress) as seclo:
-                    # Step 1: Load notification data
-                    # TODO Run notification data only once per claim (?)
-                    citation.notificationData = await seclo.get_notification_data(
-                        gde_id=citation.gdeID
-                    )
-                    recid = seclo.recid
+                # Step 1: Load notification data
+                citation.notificationData, recid = await notifmanager.get_notification(
+                    citation.gdeID, notification_progress
+                )
 
                 # Step 2: Load claim if missing
                 local_claim = (
@@ -181,10 +213,16 @@ async def __verify_agenda_citation(
                     progress=ingress_progress,
                     db=db,
                     session=session,
+                    citation=citation,
                 )
                 await ingress_progress.set_completion("Imported claim")
 
-                local_citation = next(filter(lambda x: x.secloAudID==citation.citationID, local_claim.citations))
+                local_citation = next(
+                    filter(
+                        lambda x: x.secloAudID == citation.citationID,
+                        local_claim.citations,
+                    ), None
+                ) or __ingress_citation(db, citation, local_claim)
 
                 await update_notifications(
                     rec_id=local_citation.recID,
@@ -241,6 +279,7 @@ def __ingress_citation(
             for saved_citation in local_claim.citations:
                 saved_citation.isCalendarPrimary = False
     local_citation.isCalendarPrimary = primarize
+    local_claim.citations.append(local_citation)
     db.add(local_citation)
     return local_citation
 
@@ -309,13 +348,17 @@ async def __ingress_employee(
 
     if employee.mail:
         local_mail = next(
-            filter(lambda x: x.email == employee.mail, local_mails), None
+            filter(
+                lambda x: x.email == employee.mail,
+                local_mails + [m.email for m in local_employee.emails],
+            ),
+            None,
         ) or Email(
             email=employee.mail,
             registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
         )
-        if not any(link.email == employee.mail for link in local_employee.emails):
+        if not any(link.email == local_mail for link in local_employee.emails):
             employee_email_link = EmployeeEmailLink(
                 email=local_mail, employee=local_employee
             )
@@ -373,13 +416,17 @@ async def __ingress_employer(
 
     if employer.mail:
         local_mail = next(
-            filter(lambda x: x.email == employer.mail, local_mails), None
+            filter(
+                lambda x: x.email == employer.mail,
+                local_mails + [m.email for m in local_employer.emails],
+            ),
+            None,
         ) or Email(
             email=employer.mail,
             registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
         )
-        if not any(link.email == employer.mail for link in local_employer.emails):
+        if not any(link.email == local_mail for link in local_employer.emails):
             employer_email_link = EmployerEmailLink(
                 email=local_mail, employer=local_employer
             )
@@ -394,7 +441,7 @@ async def __ingress_lawyer(
     lawyer: SECLOLawyerData,
     local_mails: List[Email],
     local_phones: List[LawyerTelephone],
-    citation: Optional[Citation]=None
+    citation: Optional[Citation] = None,
 ) -> Lawyer:
     # try for local version
     local_lawyer = next(
@@ -420,20 +467,28 @@ async def __ingress_lawyer(
 
     if lawyer.mail:
         local_mail = next(
-            filter(lambda x: x.email == lawyer.mail, local_mails), None
+            filter(
+                lambda x: x.email == lawyer.mail,
+                local_mails + [m.email for m in local_lawyer.emails],
+            ),
+            None,
         ) or Email(
             email=lawyer.mail,
             registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
         )
-        if not any(link.email == lawyer.mail for link in local_lawyer.emails):
+        if not any(link.email == local_mail for link in local_lawyer.emails):
             lawyer_email_link = LawyerEmailLink(email=local_mail, lawyer=local_lawyer)
             local_lawyer.emails.append(lawyer_email_link)
             db.add(lawyer_email_link)
 
     if lawyer.phone:
         local_phone = next(
-            filter(lambda x: x.telephone == lawyer.phone, local_phones), None
+            filter(
+                lambda x: x.telephone == lawyer.phone,
+                local_phones + local_lawyer.telephones,
+            ),
+            None,
         ) or LawyerTelephone(
             telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
         )
@@ -445,8 +500,8 @@ async def __ingress_lawyer(
         local_phone = next(
             filter(
                 lambda x: x.telephone == lawyer.mobile_phone[1]  # type: ignore
-                and x.prefix == lawyer.mobile_phone[0], # type: ignore
-                local_phones,
+                and x.prefix == lawyer.mobile_phone[0],  # type: ignore
+                local_phones + local_lawyer.telephones,
             ),
             None,
         ) or LawyerTelephone(
@@ -472,39 +527,42 @@ async def __ingress_lawyer(
                         isActualLawyer=True,
                         isSelfRepresenting=local_lawyer.cuil == client.cuil,
                         clientAbsent=False,
-                        citation=citation
+                        citation=citation,
                     )
                     if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
                         lawyer_employee_link.isSelfRepresenting = True
                     local_lawyer.employeeLink.append(lawyer_employee_link)
                     db.add(lawyer_employee_link)
                     break
-                for client in local_claim.employers:
-                    for name in client.employerName.replace(",", "").split():
-                        if name and name not in represented[1]:
-                            break
-                    else:
-                        lawyer_employer_link = LawyerToEmployer(
-                            lawyer=local_lawyer,
-                            employer=client,
-                            isActualLawyer=True,
-                            isSelfRepresenting=False,
-                            isEmpowered=False,
-                            clientAbsent=False,
-                            citation=citation
-                        )
-                        if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
-                            lawyer_employer_link.isSelfRepresenting = True
-                        local_lawyer.employerLink.append(lawyer_employer_link)
-                        db.add(lawyer_employer_link)
+            for client in local_claim.employers:
+                for name in client.employerName.replace(",", "").split():
+                    if name and name not in represented[1]:
                         break
                 else:
-                    logger.warning(
-                        "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
-                        local_claim.recID,
-                        local_lawyer.lawyerName,
-                        represented[1],
+                    lawyer_employer_link = LawyerToEmployer(
+                        lawyer=local_lawyer,
+                        employer=client,
+                        isActualLawyer=True,
+                        isSelfRepresenting=False,
+                        isEmpowered=False,
+                        clientAbsent=False,
+                        citation=citation,
                     )
+                    if (
+                        lawyer.cuil == client.cuil
+                        or lawyer.name == client.employerName
+                    ):
+                        lawyer_employer_link.isSelfRepresenting = True
+                    local_lawyer.employerLink.append(lawyer_employer_link)
+                    db.add(lawyer_employer_link)
+                    break
+            else:
+                logger.warning(
+                    "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
+                    local_claim.recID,
+                    local_lawyer.lawyerName,
+                    represented[1],
+                )
     return local_lawyer
 
 
@@ -552,13 +610,19 @@ async def __ingress_beneficiary(
 
     if beneficiary.mail:
         local_mail = next(
-            filter(lambda x: x.email == beneficiary.mail, local_mails), None
+            filter(
+                lambda x: x.email == beneficiary.mail,
+                local_mails + [m.email for m in local_beneficiary.emails],
+            ),
+            None,
         ) or Email(
             email=beneficiary.mail,
             registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
         )
-        if not any(link.email == beneficiary.mail for link in local_beneficiary.emails):
+        if not any(
+            link.email == local_mail for link in local_beneficiary.emails
+        ):
             beneficiary_email_link = BeneficiaryEmailLink(
                 email=local_mail, beneficiary=local_beneficiary
             )
@@ -573,7 +637,7 @@ async def __ingress_claim(
     progress: ProgressReport,
     db: AsyncSession,
     rec_id: int,
-    citation: Optional[SECLOCitation] = None
+    citation: Optional[SECLOCitation] = None,
 ):
     local_addresses: List[Address] = []
     local_mails: List[Email] = []
@@ -600,9 +664,17 @@ async def __ingress_claim(
             )
     # Step 3: Load citation if missing
     local_citation = (
-        next(filter(lambda x: x.secloAudID==citation.citationID, local_claim.citations), None) or
-        __ingress_citation(db=db, citation=citation, local_claim=local_claim)
-    ) if citation else None
+        (
+            next(
+                filter(
+                    lambda x: x.secloAudID == citation.citationID, local_claim.citations
+                ),
+                __ingress_citation(db=db, citation=citation, local_claim=local_claim),
+            )
+        )
+        if citation
+        else None
+    )
     for person in claim_data.employees:
         local_person = await __ingress_employee(
             db=db,
@@ -612,7 +684,8 @@ async def __ingress_claim(
             local_addresses=local_addresses,
         )
         local_mails.extend(
-            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+            x.email
+            for x in filter(lambda x: x.email not in local_mails, local_person.emails)
         )
         local_addresses.extend(
             x.address
@@ -629,7 +702,8 @@ async def __ingress_claim(
             local_addresses=local_addresses,
         )
         local_mails.extend(
-            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+            x.email
+            for x in filter(lambda x: x.email not in local_mails, local_person.emails)
         )
         local_addresses.extend(
             x.address
@@ -644,12 +718,15 @@ async def __ingress_claim(
             lawyer=person,
             local_mails=local_mails,
             local_phones=local_phones,
-            citation=local_citation
+            citation=local_citation,
         )
         local_mails.extend(
-            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+            x.email
+            for x in filter(lambda x: x.email not in local_mails, local_person.emails)
         )
-        local_phones.extend(filter(lambda x: x not in local_phones, local_person.telephones))
+        local_phones.extend(
+            filter(lambda x: x not in local_phones, local_person.telephones)
+        )
     for person in claim_data.beneficiaries:
         local_person = await __ingress_beneficiary(
             db=db,
@@ -659,7 +736,8 @@ async def __ingress_claim(
             local_addresses=local_addresses,
         )
         local_mails.extend(
-            x.email for x in filter(lambda x: x.email not in local_mails, local_person.emails)
+            x.email
+            for x in filter(lambda x: x.email not in local_mails, local_person.emails)
         )
         local_addresses.extend(
             x.address
@@ -711,6 +789,7 @@ def __filter_rules(name: str) -> str:
     # TODO apply rules
     return name
 
+
 async def __map_notification_to_owner(
     notification: SECLONotificationData,
     local_notification: SecloNotification,
@@ -738,6 +817,7 @@ async def __map_notification_to_owner(
     return False
 
 
+# TODO wtf
 async def update_notifications(
     rec_id: int,
     db: AsyncSession,

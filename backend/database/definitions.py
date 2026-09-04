@@ -446,6 +446,13 @@ class Beneficiary(Base):
     lawyerLink: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
         back_populates="beneficiary"
     )
+    
+    def __eq__(self: Self, other) -> bool:
+        if isinstance(other, Beneficiary):
+            return ((self.beneficiaryID == other.beneficiaryID and self.beneficiaryID is not None) or
+            (self.dni == other.dni))
+        return False
+    
 class BeneficiaryAddressLink(Base):
     __tablename__ = 'beneficiaryAddressLink'
     beneficiaryID: Mapped[int] = mapped_column(
@@ -495,7 +502,7 @@ class SecloNotificationToBeneficiary(Base):
     beneficiary: Mapped["Beneficiary"] = relationship(lazy="selectin", back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(lazy="selectin", 
         back_populates="beneficiaryLink"
-    )
+    )        
 
 class Employer(Base):
     __tablename__ = "employer"
