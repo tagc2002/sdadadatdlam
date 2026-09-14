@@ -326,37 +326,6 @@ class SECLOAccessor:
         )
 
     @retry
-    async def _load_rec(self: Self):
-        """
-        Receives an instance of a case searchbox and populates
-        the hiddenRecID field to access the case.
-        This method usually does not fail.
-        Searching normally has failed a few times before.
-
-        God I hate this shit site.
-        """
-        if self.recid is None or self.recid == 0:
-            raise InvalidParameterException("RecID Missing")
-
-        logger.debug("Loading recID %d", self.recid)
-        try:
-            await self.page.wait_for_load_state(timeout=60000)
-            await self.page.evaluate(
-                'document.getElementById("ctl00_Top_hdnReclamoId")'
-                + f'.setAttribute("value", "{self.recid}")'
-            )
-
-            # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
-            #     str(self.recid), force=True
-            # )
-            await self.page.locator("#ctl00_Busqueda_btnBuscar").click(timeout=60000)
-        except PlaywrightTimeoutError as e:
-            logger.error(e)
-            raise RecNotAccessibleException(
-                "Couldn't find case searchbox element"
-            ) from e
-
-    @retry
     async def set_rec_id_from_gde_id(self: Self, gde_id: str) -> Self:
         """
         Sets the current RecID to the corresponding key for the given gdeID.
@@ -469,9 +438,8 @@ class SECLOCitationManager(SECLOAccessor):
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
         logger.debug("Accessing citation result window")
-        await self.page.goto("/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A==")
+        await self.page.goto(f"/O_Audiencia.aspx?RecId={self.recid}")
         await self.page.wait_for_load_state("load")
-        await self._load_rec()
         try:
             if (
                 "Registrar Resultado"
@@ -509,8 +477,7 @@ class SECLOCitationManager(SECLOAccessor):
         self.progress.set_steps(2)
         await self.progress.set_progress(0, "Loading case for reopening")
 
-        await self.page.goto("/O_Reabrir_Reclamo.aspx")
-        await self._load_rec()
+        await self.page.goto(f"/O_Reabrir_Reclamo.aspx?RecId={self.recid}")
         await self.progress.increase_progress("Reopening case")
         # if present, case was not found
         await self.page.wait_for_load_state("load")
@@ -549,7 +516,7 @@ class SECLOCitationManager(SECLOAccessor):
         )
 
     @retry
-    async def get_items(self: Self) -> Set[AgreementResult]:
+    async def get_agreement_items(self: Self) -> Set[AgreementResult]:
         """
         Gets the current list of employees and employers registered in this claim.
         Modify this list with the results and new notification if needed and send it to setItems.
@@ -628,7 +595,6 @@ class SECLOCitationManager(SECLOAccessor):
         await self.progress.increase_progress("Setting results...")
         logger.debug("Setting item %s", entry)
         for idx, row in await self.__get_matching_rows(entry):
-            print(row)
             logger.debug("Row %d matches %s and is unselected, applying", idx, entry)
             agreement, amount = entry.result
             if agreement and amount:
@@ -661,7 +627,6 @@ class SECLOCitationManager(SECLOAccessor):
             logger.debug("Selected comb level entry %s", comb_option)
         try:
             for entry in self.items:
-                print(entry)
                 await self.__set_item(entry)
         except PlaywrightTimeoutError:
             await self._error_handling()
@@ -1062,8 +1027,7 @@ class SECLORecData(SECLOAccessor):
         else:
             if rec_id:
                 self.recid = rec_id
-            await self.page.goto("O_ConsultaNotificaciones.aspx", timeout=60000)
-            await self._load_rec()
+            await self.page.goto(f"O_ConsultaNotificaciones.aspx?RecId={self.recid}", timeout=60000)
 
         self.progress.set_steps(1)
 
@@ -1382,10 +1346,9 @@ class SECLORecData(SECLOAccessor):
         self.progress.set_steps(1)
         await self.progress.set_progress(0, "Loading claim data form...")
         await self.page.goto(
-            "/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+            f"/ingresoreclamos.aspx?RecId={self.recid}",
             timeout=60000,
         )
-        await self._load_rec()
         seclo_db_ok = True
         await self.page.wait_for_load_state()
         total_items = (
@@ -1533,10 +1496,9 @@ class SECLORecData(SECLOAccessor):
         for _ in range(0, 5):
             # Trying to get this bitch enabled. idk why this works but it does.
             await self.page.goto(
-                "ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+                f"ingresoreclamos.aspx?RecId={self.recid}",
                 timeout=60000,
             )
-            await self._load_rec()
             await self.page.locator("#ctl00_Center_lnkEmpleadores").click()
             cuit_box = self.page.locator("#ctl00_Center_ctl01_cuit_txtC")
             if await cuit_box.is_enabled():
@@ -1562,7 +1524,10 @@ class SECLORecData(SECLOAccessor):
         )
         await self.page.locator("#ctl00_Center_ctl01_cuit_txtC").press("Tab")
         await self.page.locator("#ctl00_Center_ctl01_cmbActividad_cmb").select_option(
-            value="22"
+            # Hardcoded 'other' bc i really can't be bothered to implement this
+            # Never used this comb irl, and i won't start now.
+            # Worst menu, easily
+            value="22" 
         )
         await self.page.locator("#ctl00_Center_ctl01_txtActividad_txt").fill(
             "alguna actividad misteriosa de la cual desconocemos"
@@ -2108,7 +2073,7 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        recid = 3719937
+        recid = 3732094
         files = [
             ("J:\\My Drive\\65686609 Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
             ("J:\\My Drive\\65686609 DNI Requerida.pdf", SECLOFileType.DNI, None),
@@ -2116,9 +2081,9 @@ async def test():
         ]
         async with SECLOCitationManager(session, recid=recid) as seclo:
             # await seclo.reopen_case()
-            items = await seclo.get_items()
+            items = await seclo.get_agreement_items()
             for item in items:
-                item.set_result(agreement=True, amount=Decimal("3500000.00"))
+                item.set_result(agreement=False)
             await seclo.close_case(items)
         async with SECLOFileManager(session, recid=recid) as seclo:
             try:
@@ -2126,9 +2091,8 @@ async def test():
                 #     await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path("J:\\My Drive\\65686609 Acuerdo firmado.pdf"),
-                        agreement=True,
-                        override=True,
+                        Path("J:\\My Drive\\Acta Sin Acuerdo 79976452.pdf"),
+                        agreement=False,
                     )
                 )
             finally:
