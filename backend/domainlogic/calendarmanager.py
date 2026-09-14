@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database.definitions import Citation, Claim, LawyerToEmployee, LawyerToEmployer
-from dataobjects.googledataclasses import (
+from dataobjects.google import (
     GoogleColorList,
     GoogleEvent,
     GoogleEventAttendee,

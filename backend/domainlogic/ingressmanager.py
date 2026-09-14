@@ -34,7 +34,7 @@ from database.definitions import (
     SecloNotificationToEmployee,
     SecloNotificationToEmployer,
 )
-from dataobjects.seclodataclasses import (
+from dataobjects.seclo import (
     SECLOCitation,
     SECLOEmployeeData,
     SECLOEmployerData,

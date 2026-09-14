@@ -31,7 +31,8 @@ from dataobjects.enums import (
     SECLOFileType,
     SECLONotificationType,
 )
-from dataobjects.seclodataclasses import (
+from dataobjects.seclo import (
+    AgreementResult,
     CitationResult,
     SECLOAddressData,
     SECLOCitation,
@@ -376,21 +377,13 @@ class SECLOAccessor:
         await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
         await self.page.locator("#ctl00_Busqueda_txtAnio").fill(gde_year)
         await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
-        try:
-            await self.page.locator("#ctl00_Center_grdNotificaciones").is_visible(
-                timeout=10000
-            )
-        except PlaywrightTimeoutError as e:
-            raise RecNotAccessibleException(
-                f"Case with GDE ID '{gde_id}' not found"
-            ) from e
-        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
-            "value", timeout=60000
-        )
-        if rec_id:
-            self.recid = int(rec_id)
-        else:
+        await self.page.wait_for_load_state("load", timeout=60000)
+        if await self.page.locator(".grdEmptyStyle").is_visible():
+            raise RecNotAccessibleException(f"Case with GDE ID '{gde_id}' not found")
+        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute("value")
+        if not rec_id:
             raise RecNotAccessibleException(f"Can't load recID for {gde_id}. bummers")
+        self.recid = int(rec_id)
         await self.progress.set_completion("Done")
         logger.info("recID found, set to %s", self.recid)
         return self
@@ -468,7 +461,7 @@ class SECLOCitationManager(SECLOAccessor):
         self.date = date or datetime.now()
         self.error = None
         self.comb_objects: List[str] = []
-        self.items: List[CitationResult] = []
+        self.items: List[AgreementResult] = []
 
     @retry
     async def __load_citation_result_screen(self: Self) -> None:
@@ -516,31 +509,20 @@ class SECLOCitationManager(SECLOAccessor):
         self.progress.set_steps(2)
         await self.progress.set_progress(0, "Loading case for reopening")
 
-        try:
-            await self.page.goto("/O_Reabrir_Reclamo.aspx")
-            await self._load_rec()
-            await self.progress.increase_progress("Reopening case")
-            # if present, case was not found
-            await self.page.wait_for_load_state("load")
-            await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible(
-                timeout=100
-            )
-        except PlaywrightTimeoutError:
-            pass  # Expected
-        else:
+        await self.page.goto("/O_Reabrir_Reclamo.aspx")
+        await self._load_rec()
+        await self.progress.increase_progress("Reopening case")
+        # if present, case was not found
+        await self.page.wait_for_load_state("load")
+        if await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible():
             raise InvalidCaseStateException("Case not found, probably its still open")
 
         logger.debug("Reopen found")
-        try:
-            # if present, an error was raised
-            error = await self.page.locator("#ctl00_Center_lblmensaje").inner_text(
-                timeout=100
-            )
-        except PlaywrightTimeoutError:
-            pass  # expected
-        else:
-            if error:
-                raise InvalidCaseStateException(error)
+
+        error_locator = self.page.locator("#ctl00_Center_lblmensaje")
+        if await error_locator.is_visible():
+            raise InvalidCaseStateException(await error_locator.inner_text())
+
         if not DEBUGMODE:
             await self.page.locator("#ctl00_Center_btnReabrir").click()
         else:
@@ -549,33 +531,25 @@ class SECLOCitationManager(SECLOAccessor):
         return self
 
     async def __row_to_result(
-        self: Self, row: Locator, is_employee: bool = True
-    ) -> CitationResult:
-        if is_employee:
-            try:
-                enabled = await row.locator("input[type=radio]").first.is_enabled(
-                    timeout=100
-                )
-            except PlaywrightTimeoutError:
-                logger.warning(
-                    "Could not access properties for agreement selector switch."
-                )
-                enabled = True
-            amount = (await row.locator("input[type=text]").input_value()).lstrip()
-            logger.debug('Amount string "%s"', amount)
-            if len(amount) == 0 or amount == "0":
-                amount = None
-            person = await row.locator("td").first.inner_text()
-        else:
+        self: Self, row: Locator
+    ) -> AgreementResult:
+        enabled = await row.locator("input[type=radio]").first.is_enabled()
+        is_agreement = None
+        if await row.locator("input[type=radio]").nth(0).is_checked():
+            is_agreement = True
+        elif await row.locator("input[type=radio]").nth(1).is_checked():
+            is_agreement = False
+        amount = (await row.locator("input[type=text]").input_value()).lstrip()
+        logger.debug('Amount string "%s"', amount)
+        if len(amount) == 0 or amount == "0":
             amount = None
-            enabled = False
-            person = await row.locator("td").nth(1).inner_text()
-        return CitationResult(
-            person=person, amount=amount, enabled=enabled, is_employee=is_employee
+        person = await row.locator("td").first.inner_text()
+        return AgreementResult(
+            person=person, amount=amount, enabled=enabled, agreement = is_agreement
         )
 
     @retry
-    async def get_items(self: Self) -> Set[CitationResult]:
+    async def get_items(self: Self) -> Set[AgreementResult]:
         """
         Gets the current list of employees and employers registered in this claim.
         Modify this list with the results and new notification if needed and send it to setItems.
@@ -589,7 +563,7 @@ class SECLOCitationManager(SECLOAccessor):
         logger.info("Performing Citation getItems")
         await self.progress.set_progress(0, "Loading case")
         await self.__load_citation_result_screen()
-        fields: List[CitationResult] = []
+        fields: List[AgreementResult] = []
         fields_len = 0
         logger.debug("Case attained")
 
@@ -597,8 +571,7 @@ class SECLOCitationManager(SECLOAccessor):
         try:
             table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
             for row in await table.locator(".grdRowStyle").all():
-                fields.append(await self.__row_to_result(row, True))
-                fields.append(await self.__row_to_result(row, False))
+                fields.append(await self.__row_to_result(row))
                 fields_len += 1
             fields_set = set(fields)
             await self.progress.set_completion("Done getting items.")
@@ -625,7 +598,7 @@ class SECLOCitationManager(SECLOAccessor):
         )
 
     async def __get_matching_rows(
-        self, entry: CitationResult
+        self, entry: AgreementResult
     ) -> List[Tuple[int, Locator]]:
         """
         For a given entry, finds all matching rows.
@@ -639,37 +612,43 @@ class SECLOCitationManager(SECLOAccessor):
         table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
 
         for i, row in enumerate(await table.locator(".grdRowStyle").all()):
-            result = await self.__row_to_result(row, True)
+            result = await self.__row_to_result(row)
             # check if matches
             logger.debug("Comparing row %s to entry %s", result, entry)
             if (
                 result == entry
-                and not await self.__row_populated_check(row)
+                and result.result != entry.result
                 and entry.enabled
                 and result.enabled
             ):
                 rows.append((i, row))
         return rows
 
-    async def __set_item(self: Self, entry: CitationResult):
+    async def __set_item(self: Self, entry: AgreementResult):
         await self.progress.increase_progress("Setting results...")
         logger.debug("Setting item %s", entry)
         for idx, row in await self.__get_matching_rows(entry):
+            print(row)
             logger.debug("Row %d matches %s and is unselected, applying", idx, entry)
-            if entry.amount:
+            agreement, amount = entry.result
+            if agreement and amount:
                 # Set agreement
                 logger.info("Agreement for %s", entry)
                 # Rad 0 is agreement
-                await row.locator("input[type=radio]").nth(0).set_checked(True)
+                rad = row.locator("input[type=radio]").nth(0)
+                await rad.evaluate("element => element.removeAttribute('onclick')")
+                await rad.set_checked(True)
                 # Matches, so populate amount
-                await row.locator("input[type=text]").fill("")
-                await row.locator("input[type=text]").fill(
-                    entry.amount.replace(".", ",")
-                )
+                textbox = row.locator("input[type=text]")
+                await textbox.evaluate("element => element.removeAttribute('disabled')")
+                await textbox.fill("")
+                await textbox.fill(amount.replace(".", ","))
             else:
                 # set non-agreement (Rad 1 is nonagreement)
                 logger.info("Non-agreement for %s", entry)
-                await row.locator("input[type=radio]").nth(1).set_checked(True)
+                rad = row.locator("input[type=radio]").nth(1)
+                await rad.evaluate("element => element.removeAttribute('onclick')")
+                await rad.set_checked(True)
 
     async def __set_items(self: Self, comb_option: Optional[str] = None) -> Self:
         logger.info("Performing Citation getItems")
@@ -681,9 +660,9 @@ class SECLOCitationManager(SECLOAccessor):
             )
             logger.debug("Selected comb level entry %s", comb_option)
         try:
-            for entry in set(self.items):
-                if entry.is_employee:
-                    await self.__set_item(entry)
+            for entry in self.items:
+                print(entry)
+                await self.__set_item(entry)
         except PlaywrightTimeoutError:
             await self._error_handling()
         await self.page.wait_for_load_state("load")
@@ -733,10 +712,10 @@ class SECLOCitationManager(SECLOAccessor):
             items (Set[CitationResult]): The set provided by getItems with attributes set.
             date: The date and time requested for the new citation.
         """
-        self.items = list(items)
-        await self.__set_items(None)
+        #TODO Access fancy notification sites with query params
+        #TODO Generate citation result items
         await self.progress.increase_progress("Setting new citation date")
-        absent_citation = any(x.absent for x in self.items)
+        absent_citation = any(x.absent for x in items)
         await self._save_standard(
             self.page.locator(
                 "#ctl00_Center_btnNuevaIncomparecencia"
@@ -762,17 +741,17 @@ class SECLOCitationManager(SECLOAccessor):
             .locator(".grdRowStyle")
             .all()
         ):
-            for entry in self.items:
+            for entry in items:
                 for name in entry.person.split():
                     if name not in await row.inner_text():
                         break
                 else:
                     if entry.absent:
                         await row.locator("input").nth(0).click()
-                    if entry.notify and absent_citation:
+                    if absent_citation:
                         await row.locator("input").nth(1).click()
                     await row.locator("select").select_option(
-                        value=entry.notif_method.value
+                        value=entry.notification.value
                     )
                     break
 
@@ -787,7 +766,7 @@ class SECLOCitationManager(SECLOAccessor):
         await self.progress.set_completion("Done new citation request")
 
     @retry
-    async def close_case(self: Self, items: set[CitationResult]):
+    async def close_case(self: Self, items: set[AgreementResult]):
         """
         Sets the claim results based on the items and then closes the case.
         This method will render this instance useless, as it will destroy the webdriver.
@@ -2123,42 +2102,31 @@ class SECLOClaimValidationData(SECLOAccessor):
             + "}",
         )
 
-
 async def test():
     async with SECLOSession(
         SECLOLoginCredentials(
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        recid = 3724526
+        recid = 3719937
         files = [
-            ("J:\\My Drive\\72033100 Poder 1.pdf", SECLOFileType.PODER, None),
-            ("J:\\My Drive\\72033100 Poder 2.pdf", SECLOFileType.PODER, None),
-            ("J:\\My Drive\\72033100 Poder 3.pdf", SECLOFileType.PODER, None),
-            ("J:\\My Drive\\72033100 DNI Traba.pdf", SECLOFileType.DNI, None),
-            (
-                "J:\\My Drive\\72033100 Credencial requirente.pdf",
-                SECLOFileType.CREDENTIAL,
-                None,
-            ),
-            (
-                "J:\\My Drive\\72033100 Credencial requerida.pdf",
-                SECLOFileType.CREDENTIAL,
-                None,
-            ),
+            ("J:\\My Drive\\65686609 Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
+            ("J:\\My Drive\\65686609 DNI Requerida.pdf", SECLOFileType.DNI, None),
+            ("J:\\My Drive\\65686609 DNI Traba.pdf", SECLOFileType.DNI, None),
         ]
         async with SECLOCitationManager(session, recid=recid) as seclo:
+            # await seclo.reopen_case()
             items = await seclo.get_items()
-            for item in filter(lambda x: x.is_employee, items):
-                item.set_result(agreement=True, amount=Decimal("2500000.00"))
+            for item in items:
+                item.set_result(agreement=True, amount=Decimal("3500000.00"))
             await seclo.close_case(items)
         async with SECLOFileManager(session, recid=recid) as seclo:
             try:
-                for file, filetype, description in files:
-                    await seclo.upload_file(Path(file), filetype, description)
+                # for file, filetype, description in files:
+                #     await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path("J:\\My Drive\\72033100 Acuerdo firmado.pdf"),
+                        Path("J:\\My Drive\\65686609 Acuerdo firmado.pdf"),
                         agreement=True,
                         override=True,
                     )

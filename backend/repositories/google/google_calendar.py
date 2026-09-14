@@ -16,7 +16,7 @@ if __name__ == "__main__":
     sys.path.append(str(Path.cwd()))
     print(sys.path)
 
-from dataobjects.googledataclasses import GoogleColors, GoogleEvent
+from dataobjects.google import GoogleColors, GoogleEvent
 from repositories.google.google_auth import basic_auth
 
 logger = logging.getLogger(__name__)

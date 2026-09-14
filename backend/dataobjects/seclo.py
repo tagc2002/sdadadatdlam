@@ -1,6 +1,7 @@
 """
 Utility classes for getting info to and from SECLO driver.
 """
+
 from decimal import Decimal
 import logging
 from datetime import datetime
@@ -11,64 +12,43 @@ from repositories.seclo.exceptions import InvalidParameterException
 
 logger = logging.getLogger(__name__)
 
-class CitationResult:
+
+class AgreementResult:
     """
-    A class designed to hold a citation result to be passed to and from the function caller.
-    Holds name, amount, agreement, notification info and whether it's an employee or employer.
+    A class designed to hold a the agreement result to be passed to and from the function caller.
+    Holds employee name, agreement status and amount (if corresponding).
     Implements fancy __eq__ to allow duplicate detection.
     """
 
-    def __init__(self: Self, person: str, notify: bool = True, absent: bool = False, notif_method: SECLONotificationType = SECLONotificationType.DONOTSEND, amount: Optional[str] = None, enabled: bool = True, is_employee: bool = True):
-        self.person=person
-        self.notify=notify
-        self.absent=absent
-        self.notif_method=notif_method
-        self.amount=amount
-        self.enabled=enabled
-        self.is_employee=is_employee
+    def __init__(
+        self: Self,
+        person: str,
+        agreement: Optional[bool] = None,
+        amount: Optional[Decimal|str] = None,
+        enabled: bool = True,
+    ):
+        self.__person = person
+        self.__agreement = agreement
+        self.__amount = Decimal(amount) if isinstance(amount, str) else amount
+        self.__enabled = enabled
 
-    def __eq__(self, other):
-        if not isinstance(other, CitationResult):
-            return NotImplemented
-        return self.person == other.person and self.is_employee == other.is_employee
+    @property
+    def result(self: Self) -> Tuple[Optional[bool], Optional[str]]:
+        return (
+            self.__agreement,
+            f"{self.__amount:.2f}".replace(".", ",") if self.__amount else None,
+        )
 
-    def __str__(self):
-        if self.amount is not None:
-            return f'person: {self.person}\t enabled: {self.enabled}\t '+\
-                f'agreement: True\t amount: {self.amount}\t {"absent\t " if self.absent else ""}'+\
-                f'{"Notify (" + self.notif_method.name + ")" if self.notify else "Don't notify"}'
-        return f'person: {self.person}\t enabled: {self.enabled}\t agreement: False\t '+\
-            f'{"absent\t " if self.absent else ""}'+\
-            f'{"Notify (" + self.notif_method.name + ")" if self.notify else "Don't notify"}'
+    @property
+    def person(self: Self) -> str:
+        return self.__person
 
-    def __hash__(self: Self) -> int:
-        if self.is_employee:
-            return hash((self.person, self.amount))
-        return hash(self.person)
-
-    def get_person(self: Self) -> str:
-        """Get person name associated with this Citation Result. 
-        Returns:
-            str: Name
-        """
-        return self.person
-
-    def get_result(self: Self) -> Tuple[bool, Optional[str]]:
-        """
-        Returns the set result for this instance. Only applicable to employees.
-
-        Returns:
-            Tuple[bool, Optional[str]]: (hasAmount, amount).
-
-        Raises:
-            InvalidParameterException: If trying to get result for an employer.
-        """
-        if self.is_employee:
-            return (isinstance(self.amount, str), self.amount)
-        raise InvalidParameterException("Can't get result for an employer")
+    @property
+    def enabled(self: Self) -> bool:
+        return self.__enabled
 
     def set_result(self: Self, agreement: bool, amount: Optional[Decimal] = None):
-        """Sets the citation result info for this citation instance. 
+        """Sets the citation result info for this citation instance.
         AKA if a given employee had an agreement and for how much.
 
         Args:
@@ -76,32 +56,74 @@ class CitationResult:
             amount (Optional[Decimal]): If agreement, for how much. Defaults to None.
 
         Raises:
-            InvalidParameterException: Instance is employer.
             InvalidParameterException: Agreement without amount.
             InvalidParameterException: Amount for nonagreement.
             InvalidParameterException: Negative amount.
         """
-        if self.is_employee:
-            if agreement:
-                if amount is None:
-                    raise InvalidParameterException(
-                        "An agreement must have a specified amount"
-                    )
-                if amount <= 0:
-                    raise InvalidParameterException("Amount must be positive.")
-                self.amount = f"{amount:.2f}".replace(".", ",")
-            else:
-                if amount is not None:
-                    raise InvalidParameterException(
-                        "Can't give an amount for a non-agreement result"
-                    )
-                self.amount = None
+        self.__agreement = agreement
+        if agreement:
+            if amount is None:
+                raise InvalidParameterException(
+                    "An agreement must have a specified amount"
+                )
+            if amount <= 0:
+                raise InvalidParameterException("Amount must be positive.")
+            self.__amount = amount
         else:
-            raise InvalidParameterException("Can only set result for employee.")
+            if amount is not None:
+                raise InvalidParameterException(
+                    "Can't give an amount for a non-agreement result"
+                )
+            self.__amount = None
+
+    def __hash__(self: Self) -> int:
+        return hash((self.__person))
+
+    def __eq__(self: Self, other: object) -> bool:
+        return isinstance(other, AgreementResult) and self.person == other.person
+
+    def __str__(self: Self) -> str:
+        return f'{self.person}: {self.__agreement} ({self.__amount}) {self.__enabled}'
+class CitationResult:
+    """
+    A class designed to hold a citation result to be passed to and from the function caller.
+    Holds name, notification info and whether it's an employee or employer.
+    Implements fancy __eq__ to allow duplicate detection.
+    """
+
+    def __init__(
+        self: Self,
+        person: str,
+        absent: bool = False,
+        notification_method: SECLONotificationType = SECLONotificationType.DONOTSEND,
+        is_employee: bool = True,
+    ):
+        self.__person = person
+        self.__is_employee = is_employee
+        self.absent = absent
+        self.notification = notification_method
+
+    @property
+    def is_employee(self: Self) -> bool:
+        return self.__is_employee
+
+    @property
+    def person(self: Self) -> str:
+        return self.__person
+
+    def __eq__(self, other):
+        if not isinstance(other, CitationResult):
+            return NotImplemented
+        return self.person == other.person and self.is_employee == other.is_employee
+
+    def __str__(self):
+        return f'person: {self.person}\t{"absent\t" if self.absent else ""}{self.notification.name}'
+
+    def __hash__(self: Self) -> int:
+        return hash((self.person, self.is_employee))
 
     def set_notification(
         self: Self,
-        notify: bool,
         absent: bool = False,
         method: SECLONotificationType = SECLONotificationType.DONOTSEND,
     ):
@@ -114,16 +136,13 @@ class CitationResult:
             absent (bool, optional): If said person was absent. Defaults to False.
             method SECLONotificationType: Notification method to use. Defaults to DONOTSEND.
         """
-        if notify:
-            self.notify = True
-            self.absent = absent
-            self.notif_method = method
-        else:
-            self.notify = False
-            self.absent = absent
+        self.absent = absent
+        self.notification = method
+
 
 class SECLOAddressData:
     "Generic class for storing address data."
+
     def __init__(
         self: Self,
         province: str,
@@ -147,14 +166,17 @@ class SECLOAddressData:
         self.bonus_data = bonus_data.strip() if bonus_data else None
 
     def __str__(self: Self):
-        return f"{self.street} {self.number}, {self.floor if self.floor else ""}"+\
-            f"{self.apt if self.apt else ""}{", " if self.floor or self.apt else ""}"+\
-            f"{self.county}, {self.district}, {self.province}, {self.cpa} "+\
-            f"{self.bonus_data if self.bonus_data else ""}"
+        return (
+            f"{self.street} {self.number}, {self.floor if self.floor else ""}"
+            + f"{self.apt if self.apt else ""}{", " if self.floor or self.apt else ""}"
+            + f"{self.county}, {self.district}, {self.province}, {self.cpa} "
+            + f"{self.bonus_data if self.bonus_data else ""}"
+        )
 
 
 class SECLOCommonData:
     "Generic class for person data. To be extended by actual person classes."
+
     def __init__(
         self: Self,
         name: str,
@@ -200,9 +222,11 @@ class SECLOCommonData:
             self.mobile_phone = None
 
     def __str__(self: Self):
-        return f"Name: {self.name}\nDNI: {self.dni}\nCUIT: {self.cuil}\n"+\
-            f"validated: {self.validated}\nphone: {self.phone} / {self.mobile_phone}\n"+\
-            f"mail: {self.mail}\naddress: {self.address}\n"
+        return (
+            f"Name: {self.name}\nDNI: {self.dni}\nCUIT: {self.cuil}\n"
+            + f"validated: {self.validated}\nphone: {self.phone} / {self.mobile_phone}\n"
+            + f"mail: {self.mail}\naddress: {self.address}\n"
+        )
 
     def __eq__(self: Self, other: Any) -> bool:
         """
@@ -223,6 +247,7 @@ class SECLOCommonData:
 
 class SECLOEmployeeData(SECLOCommonData):
     "Class for retrieving employee data from SECLO."
+
     def __init__(
         self: Self,
         name: str,
@@ -280,12 +305,16 @@ class SECLOEmployeeData(SECLOCommonData):
             self.claim_amount = None
 
     def __str__(self: Self):
-        return f"{super().__str__()}Birthdate: {self.birth_date}\n"+\
-            f"Workdates: {self.start_date} - {self.end_date}\nwage: {self.wage}\n"+\
-            f"worktype: {self.category} - {self.cct}\nclaim: {self.claim_amount}"
+        return (
+            f"{super().__str__()}Birthdate: {self.birth_date}\n"
+            + f"Workdates: {self.start_date} - {self.end_date}\nwage: {self.wage}\n"
+            + f"worktype: {self.category} - {self.cct}\nclaim: {self.claim_amount}"
+        )
+
 
 class SECLOEmployerData(SECLOCommonData):
     "Class for retrieving employer data from SECLO."
+
     def __init__(
         self: Self,
         name: str,
@@ -306,6 +335,7 @@ class SECLOEmployerData(SECLOCommonData):
 
 class SECLOLawyerData(SECLOCommonData):
     "Class for retrieving lawyer data from SECLO."
+
     def __init__(
         self: Self,
         name: str,
@@ -328,7 +358,7 @@ class SECLOLawyerData(SECLOCommonData):
             self.f = 0
 
     def add_represented(self: Self, is_employee: bool, name: str):
-        """Adds represented name for this lawyer 
+        """Adds represented name for this lawyer
         (does not actually link them, that must happen later)
         """
         self.represents.append((is_employee, name))
@@ -339,6 +369,7 @@ class SECLOLawyerData(SECLOCommonData):
 
 class SECLOBeneficiaryData(SECLOCommonData):
     "Class for retrieving other data from SECLO."
+
     def __init__(
         self: Self,
         name: str,
@@ -355,9 +386,13 @@ class SECLOBeneficiaryData(SECLOCommonData):
         except ValueError:
             self.birth_date = None
 
+
 class SECLOClaimData:
     "Class for retrieving claim data from SECLO"
-    def __init__(self: Self, recid: int, gdeid: str, legal_stuff: str, init_by_worker: bool):
+
+    def __init__(
+        self: Self, recid: int, gdeid: str, legal_stuff: str, init_by_worker: bool
+    ):
         self.recid = recid
         self.gdeid = gdeid
         self.legal_stuff = legal_stuff
@@ -389,8 +424,10 @@ class SECLOClaimData:
         self.beneficiaries.append(other)
 
     def __str__(self: Self):
-        base = f"CLAIM:\n\nrecID {self.recid}\nlegal stuff: {self.legal_stuff}\n"+\
-            f"claims:\n{self.claims}"
+        base = (
+            f"CLAIM:\n\nrecID {self.recid}\nlegal stuff: {self.legal_stuff}\n"
+            + f"claims:\n{self.claims}"
+        )
         base = base + "\n\nemployees:\n"
         for employee in self.employees:
             base = base + f"{str(employee)}\n"
@@ -413,6 +450,7 @@ class SECLOClaimData:
 @dataclass
 class SECLONotificationData:
     "Dataclass for notification data retrieved from SECLO."
+
     id: int
     person: str
     citationType: str
@@ -430,20 +468,23 @@ class SECLONotificationData:
 @dataclass
 class SECLOCitation:
     "Dataclass for citation data retrieved from SECLO."
+
     citationID: int
     gdeID: str
     initDate: datetime
     citationDate: datetime
     citationType: str
-    pdfString: Optional[str] = None # Will be deprecated once the full api is working.
+    pdfString: Optional[str] = None  # Will be deprecated once the full api is working.
     notificationData: Optional[List[SECLONotificationData]] = None
 
     def __str__(self: Self) -> str:
         return f"{self.citationID} ({self.gdeID} {self.initDate}) {self.citationDate} {self.citationType}"
 
+
 @dataclass
 class SECLOPersonData:
     "Dataclass for validating person data"
+
     cuit: str
     name: str
     dni: int

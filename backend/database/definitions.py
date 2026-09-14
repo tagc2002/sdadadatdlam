@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Self
 
-from dataobjects.seclodataclasses import SECLOAddressData
+from dataobjects.seclo import SECLOAddressData
 from dataobjects.enums import (
     CitationType,
     CitationStatus,

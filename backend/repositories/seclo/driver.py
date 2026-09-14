@@ -45,7 +45,7 @@ from repositories.seclo.exceptions import (
 )
 from repositories.seclo.progress import ProgressReport
 from dataobjects.enums import ClaimType, PersonType, SECLOFileType
-from dataobjects.seclodataclasses import (
+from dataobjects.seclo import (
     SECLOAddressData,
     SECLOCitation,
     SECLOClaimData,
