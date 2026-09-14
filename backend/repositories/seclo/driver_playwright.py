@@ -21,6 +21,7 @@ import uuid
 
 if __name__ == "__main__":
     import sys
+
     sys.path.append(str(Path.cwd()))
     print(sys.path)
 
@@ -437,7 +438,7 @@ class SECLOAccessor:
 
     async def _save_standard(self: Self, save_button: Locator):
         await save_button.click()
-        await self.page.wait_for_load_state('load')
+        await self.page.wait_for_load_state("load")
 
 
 class SECLOCitationManager(SECLOAccessor):
@@ -476,7 +477,7 @@ class SECLOCitationManager(SECLOAccessor):
         """
         logger.debug("Accessing citation result window")
         await self.page.goto("/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A==")
-        await self.page.wait_for_load_state('load')
+        await self.page.wait_for_load_state("load")
         await self._load_rec()
         try:
             if (
@@ -552,19 +553,17 @@ class SECLOCitationManager(SECLOAccessor):
     ) -> CitationResult:
         if is_employee:
             try:
-                enabled = (
-                    await row.locator("input[type=radio]").first.is_enabled(timeout=100)
+                enabled = await row.locator("input[type=radio]").first.is_enabled(
+                    timeout=100
                 )
             except PlaywrightTimeoutError:
                 logger.warning(
                     "Could not access properties for agreement selector switch."
                 )
                 enabled = True
-            amount = (
-                await row.locator("input[type=text]").input_value()
-            ).lstrip()
+            amount = (await row.locator("input[type=text]").input_value()).lstrip()
             logger.debug('Amount string "%s"', amount)
-            if len(amount) == 0 or amount == '0':
+            if len(amount) == 0 or amount == "0":
                 amount = None
             person = await row.locator("td").first.inner_text()
         else:
@@ -618,9 +617,11 @@ class SECLOCitationManager(SECLOAccessor):
         Returns:
             bool: Whether the row is populated or not
         """
-        return (
-            any([await x.is_checked() for x in await row.locator("td")
-            .nth(2).locator("input").all()])
+        return any(
+            [
+                await x.is_checked()
+                for x in await row.locator("td").nth(2).locator("input").all()
+            ]
         )
 
     async def __get_matching_rows(
@@ -685,7 +686,7 @@ class SECLOCitationManager(SECLOAccessor):
                     await self.__set_item(entry)
         except PlaywrightTimeoutError:
             await self._error_handling()
-        await self.page.wait_for_load_state('load')
+        await self.page.wait_for_load_state("load")
         for row in await (
             self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
             .locator(".grdRowStyle")
@@ -698,7 +699,9 @@ class SECLOCitationManager(SECLOAccessor):
     async def __fill_date_input(self: Self, input_id: str, date: datetime):
         logger.info(self.date.strftime("%d%m%Y"))
         await self.page.locator(f"#{input_id}").fill("")
-        await self.page.locator(f"#{input_id}").press_sequentially(date.strftime("%d%m%Y"), delay=1)
+        await self.page.locator(f"#{input_id}").press_sequentially(
+            date.strftime("%d%m%Y"), delay=1
+        )
 
     async def __advance_result_form(self: Self):
         try:
@@ -712,7 +715,7 @@ class SECLOCitationManager(SECLOAccessor):
     async def __validation_error_checker(self: Self):
         error_labels = [
             self.page.locator("#ctl00_Center_lblError"),
-            self.page.locator("#ctl00_Center_ValidationSummary5")
+            self.page.locator("#ctl00_Center_ValidationSummary5"),
         ]
         for label in error_labels:
             if await label.is_visible():
@@ -825,18 +828,19 @@ class SECLOFileManager(SECLOAccessor):
 
     def __init__(self: Self, session: SECLOSession, recid: Optional[int] = None):
         super().__init__(session, recid)
-        self.file_list: List[Tuple[str, str, datetime]] = []
 
     async def __aenter__(self: Self) -> Self:
         await super().__aenter__()
-        await self.__get_files()
+        # await self.__get_files()
         return self
 
     @retry
-    async def __get_files(self: Self):
+    async def get_files(self: Self) -> List[Tuple[str, str, datetime]]:
         """
-        Populates internal object storage with the current files in rec.
-        idc about congruency, this is a throwaway object that expires quickly.
+        Gets a list of all the registered files currently uploaded to this rec.
+
+        Returns:
+            files (Tuple[str, str, datetime]): (type, description, date)
         """
         await self.page.goto(f"Documentacion_Adjunta.aspx?RecId={self.recid}")
         files: List[Tuple[str, str, datetime]] = []
@@ -853,17 +857,7 @@ class SECLOFileManager(SECLOAccessor):
                 )
             )
             logger.debug(files[-1])
-        self.file_list = files
         return files
-
-    def get_files(self: Self) -> List[Tuple[str, str, datetime]]:
-        """
-        Gets a list of all the registered files currently uploaded to this rec.
-
-        Returns:
-            files (Tuple[str, str, datetime]): (type, description, date)
-        """
-        return self.file_list[:]
 
     @retry
     async def get_file(self: Self, index: int) -> Path:
@@ -876,8 +870,8 @@ class SECLOFileManager(SECLOAccessor):
             Nothing currently, but hopefully later a handle to the downloaded file.
             It's downloaded to a temp directory so you can go look for it tho.
         """
-
-        if index >= len(self.file_list) or index < 0:
+        file_list = await self.get_files()
+        if index >= len(file_list) or index < 0:
             raise IndexError("Requesting a file beyond bounds")
         logger.debug("Downloading file")
         download_button = (
@@ -886,17 +880,43 @@ class SECLOFileManager(SECLOAccessor):
             .nth(index)
             .locator("input[type=image]")
         )
-        download_path = self.session.downloadpath / "TEST.pdf"
+        download_path = self.session.downloadpath / f"{uuid.uuid4()}.pdf"
         logger.info(await download_button.get_attribute("title"))
         download_event = self.page.wait_for_event("download")
         await download_button.click()
         await (await download_event).save_as(download_path)
         return download_path
 
+    async def __get_files_upload(self: Self) -> List[Tuple[str, str, str, bool]]:
+        """Gets the current files listed in upload window.
+        Window must be already open, as to count temp files.
+
+        Returns:
+            List[Tuple[str, str, str, bool]]:
+                List of (file name, file type, extension, is_deletable (a.k.a. is_temp))
+        """
+        files: List[Tuple[str, str, str, bool]] = []
+        for row in (
+            await self.page.locator("#grdArchivos")
+            .locator("tr")
+            .filter(has=self.page.locator("input[type=image]"))
+            .all()
+        ):
+            column = row.locator("td")
+            files.append(
+                (
+                    await column.nth(2).inner_text(),
+                    await column.nth(3).inner_text(),
+                    await column.nth(4).inner_text(),
+                    await column.nth(1).locator("input[type=image]").is_visible(),
+                )
+            )
+        return files
+
     @retry
     async def upload_file(
         self: Self,
-        file: str,
+        file: Path,
         filetype: SECLOFileType,
         description: Optional[str] = None,
     ) -> None:
@@ -910,7 +930,7 @@ class SECLOFileManager(SECLOAccessor):
             description: Only used when uploading a 'other' type of file.
         """
         await self.page.goto(f"/Documentacion_ParaAdjuntar.aspx?RecId={self.recid}")
-        old_files_len = len(self.file_list)
+        old_files_len = len(await self.__get_files_upload())
         await self.page.locator("#Tipo_Documentacion").select_option(
             value=filetype.value[0]
         )
@@ -922,9 +942,9 @@ class SECLOFileManager(SECLOAccessor):
             await self.page.locator("#txtDescripcion").fill(description)
         await self.page.locator("#Archivo").set_input_files(file)
         await self.page.locator("#btnAgregar").click()
-        await self.__get_files()
-
-        if old_files_len == len(self.file_list):
+        await self.page.wait_for_load_state("load")
+        new_files = await self.__get_files_upload()
+        if old_files_len == len(new_files) or file.name not in [x[0] for x in new_files]:
             raise InvalidCaseStateException("File was not uploaded")
 
         if not DEBUGMODE:
@@ -938,10 +958,11 @@ class SECLOFileManager(SECLOAccessor):
                 raise ValidationException(f"Error uploading file: {error_str}")
         else:
             logger.warning("FILE WON'T BE SAVED IN DEBUG MODE!")
-        await self.__get_files()
 
     async def __get_record_file_id(self: Self, row: Locator) -> Optional[int]:
-        img_script = await row.locator("input[type=image]").get_attribute("onclick") or ""
+        img_script = (
+            await row.locator("input[type=image]").get_attribute("onclick") or ""
+        )
         search = re.search(r"Documento_ID=\d+", img_script)
         if search:
             return int(search.group(0)[13:])
@@ -949,7 +970,7 @@ class SECLOFileManager(SECLOAccessor):
 
     @retry
     async def upload_record(
-        self: Self, file: str, agreement: bool, override: bool = False
+        self: Self, file: Path, agreement: bool, override: bool = False
     ) -> Optional[int]:
         """
         Uploads a record to an already closed case.
@@ -961,7 +982,7 @@ class SECLOFileManager(SECLOAccessor):
                 it with the current one or not.
 
         Returns:
-            Optional[int]: Document ID for uploaded record (in case of success). 
+            Optional[int]: Document ID for uploaded record (in case of success).
         """
         if not self.gde_id:
             if self.recid:
@@ -976,7 +997,7 @@ class SECLOFileManager(SECLOAccessor):
         else:
             await self.page.locator("#ctl00_Center_radTipo_1").set_checked(True)
         await self.page.locator("#ctl00_Center_btnBuscar").click()
-        await self.page.wait_for_load_state('load')
+        await self.page.wait_for_load_state("load")
         table = self.page.locator("#ctl00_Center_grdReclamos")
         if await table.locator(".grdEmptyStyle").is_visible():
             raise InvalidCaseStateException(
@@ -999,9 +1020,9 @@ class SECLOFileManager(SECLOAccessor):
             )
 
         if not DEBUGMODE:
-            self.page.on('dialog', lambda x: x.accept())
+            self.page.on("dialog", lambda x: x.accept())
             await self.page.locator("#ctl00_Center_btnGenerar").click()
-            await self.page.wait_for_load_state('load')
+            await self.page.wait_for_load_state("load")
             return await self.__get_record_file_id(row)
 
         logger.warning("WON'T UPLOAD RECORD IN UPLOAD MODE!")
@@ -2102,20 +2123,53 @@ class SECLOClaimValidationData(SECLOAccessor):
             + "}",
         )
 
+
 async def test():
-    async with SECLOSession(SECLOLoginCredentials(os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", ""))) as session:
-        recid=3730913
+    async with SECLOSession(
+        SECLOLoginCredentials(
+            os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
+        )
+    ) as session:
+        recid = 3724526
+        files = [
+            ("J:\\My Drive\\72033100 Poder 1.pdf", SECLOFileType.PODER, None),
+            ("J:\\My Drive\\72033100 Poder 2.pdf", SECLOFileType.PODER, None),
+            ("J:\\My Drive\\72033100 Poder 3.pdf", SECLOFileType.PODER, None),
+            ("J:\\My Drive\\72033100 DNI Traba.pdf", SECLOFileType.DNI, None),
+            (
+                "J:\\My Drive\\72033100 Credencial requirente.pdf",
+                SECLOFileType.CREDENTIAL,
+                None,
+            ),
+            (
+                "J:\\My Drive\\72033100 Credencial requerida.pdf",
+                SECLOFileType.CREDENTIAL,
+                None,
+            ),
+        ]
         async with SECLOCitationManager(session, recid=recid) as seclo:
             items = await seclo.get_items()
             for item in filter(lambda x: x.is_employee, items):
-                item.set_result(agreement=False)
+                item.set_result(agreement=True, amount=Decimal("2500000.00"))
             await seclo.close_case(items)
         async with SECLOFileManager(session, recid=recid) as seclo:
-            print(await seclo.upload_record("J:\\My Drive\\Acta Sin Acuerdo 78736839.pdf", agreement=False, override=True))
+            try:
+                for file, filetype, description in files:
+                    await seclo.upload_file(Path(file), filetype, description)
+                print(
+                    await seclo.upload_record(
+                        Path("J:\\My Drive\\72033100 Acuerdo firmado.pdf"),
+                        agreement=True,
+                        override=True,
+                    )
+                )
+            finally:
+                input("DONE")
+
 
 if __name__ == "__main__":
-    root_logger= logging.getLogger()
+    root_logger = logging.getLogger()
     root_logger.addHandler(logging.StreamHandler())
     root_logger.setLevel(logging.DEBUG)
     asyncio.run(test())
-    #raise RuntimeError("This script cannot be run on its own")
+    # raise RuntimeError("This script cannot be run on its own")
