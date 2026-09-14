@@ -349,7 +349,9 @@ class SECLOAccessor:
         await self.page.wait_for_load_state("load", timeout=60000)
         if await self.page.locator(".grdEmptyStyle").is_visible():
             raise RecNotAccessibleException(f"Case with GDE ID '{gde_id}' not found")
-        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute("value")
+        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
+            "value"
+        )
         if not rec_id:
             raise RecNotAccessibleException(f"Can't load recID for {gde_id}. bummers")
         self.recid = int(rec_id)
@@ -497,9 +499,7 @@ class SECLOCitationManager(SECLOAccessor):
         await self.progress.set_completion("Done reopening")
         return self
 
-    async def __row_to_result(
-        self: Self, row: Locator
-    ) -> AgreementResult:
+    async def __row_to_result(self: Self, row: Locator) -> AgreementResult:
         enabled = await row.locator("input[type=radio]").first.is_enabled()
         is_agreement = None
         if await row.locator("input[type=radio]").nth(0).is_checked():
@@ -512,7 +512,7 @@ class SECLOCitationManager(SECLOAccessor):
             amount = None
         person = await row.locator("td").first.inner_text()
         return AgreementResult(
-            person=person, amount=amount, enabled=enabled, agreement = is_agreement
+            person=person, amount=amount, enabled=enabled, agreement=is_agreement
         )
 
     @retry
@@ -666,6 +666,28 @@ class SECLOCitationManager(SECLOAccessor):
                 raise ValidationException(await label.inner_text())
 
     @retry
+    async def get_citation_items(self: Self) -> Set[CitationResult]:
+        await self.page.goto(f"O_N_esima_Audiencia.aspx?RecId={self.recid}")
+        results = []
+        for employee in await self.page.locator(
+            "#ctl00_Center_grdTrabajadores.grdRowStyle"
+        ).all():
+            first_name = await employee.locator("td").nth(0).inner_text()
+            last_name = await employee.locator("td").nth(1).inner_text()
+            results.append(
+                CitationResult(first_name + " " + last_name, is_employee=True)
+            )
+        for employer in await self.page.locator(
+            "#ctl00_Center_grdEmpleadores.grdRowStyle"
+        ).all():
+            results.append(
+                CitationResult(
+                    await employer.locator("td").first.inner_text(), is_employee=False
+                )
+            )
+        return set(results)
+
+    @retry
     async def create_new_citation(
         self: Self, items: Set[CitationResult], date: datetime
     ):
@@ -677,17 +699,13 @@ class SECLOCitationManager(SECLOAccessor):
             items (Set[CitationResult]): The set provided by getItems with attributes set.
             date: The date and time requested for the new citation.
         """
-        #TODO Access fancy notification sites with query params
-        #TODO Generate citation result items
+
         await self.progress.increase_progress("Setting new citation date")
         absent_citation = any(x.absent for x in items)
-        await self._save_standard(
-            self.page.locator(
-                "#ctl00_Center_btnNuevaIncomparecencia"
-                if absent_citation
-                else "#ctl00_Center_btnNuevaAudiencia"
-            )
-        )
+        if absent_citation:
+            await self.page.goto(f"/O_Incomparecencia.aspx?RecId={self.recid}")
+        else:
+            await self.page.goto(f"/O_N_esima_Audiencia.aspx?RecId={self.recid}")
         await self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", date)
 
         await self.page.locator("#ctl00_Center_cmbHoras").select_option(
@@ -888,7 +906,9 @@ class SECLOFileManager(SECLOAccessor):
         await self.page.locator("#btnAgregar").click()
         await self.page.wait_for_load_state("load")
         new_files = await self.__get_files_upload()
-        if old_files_len == len(new_files) or file.name not in [x[0] for x in new_files]:
+        if old_files_len == len(new_files) or file.name not in [
+            x[0] for x in new_files
+        ]:
             raise InvalidCaseStateException("File was not uploaded")
 
         if not DEBUGMODE:
@@ -1027,7 +1047,9 @@ class SECLORecData(SECLOAccessor):
         else:
             if rec_id:
                 self.recid = rec_id
-            await self.page.goto(f"O_ConsultaNotificaciones.aspx?RecId={self.recid}", timeout=60000)
+            await self.page.goto(
+                f"O_ConsultaNotificaciones.aspx?RecId={self.recid}", timeout=60000
+            )
 
         self.progress.set_steps(1)
 
@@ -1527,7 +1549,7 @@ class SECLORecData(SECLOAccessor):
             # Hardcoded 'other' bc i really can't be bothered to implement this
             # Never used this comb irl, and i won't start now.
             # Worst menu, easily
-            value="22" 
+            value="22"
         )
         await self.page.locator("#ctl00_Center_ctl01_txtActividad_txt").fill(
             "alguna actividad misteriosa de la cual desconocemos"
@@ -2067,6 +2089,7 @@ class SECLOClaimValidationData(SECLOAccessor):
             + "}",
         )
 
+
 async def test():
     async with SECLOSession(
         SECLOLoginCredentials(
@@ -2075,7 +2098,11 @@ async def test():
     ) as session:
         recid = 3732094
         files = [
-            ("J:\\My Drive\\65686609 Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
+            (
+                "J:\\My Drive\\65686609 Credencial requerida.pdf",
+                SECLOFileType.CREDENTIAL,
+                None,
+            ),
             ("J:\\My Drive\\65686609 DNI Requerida.pdf", SECLOFileType.DNI, None),
             ("J:\\My Drive\\65686609 DNI Traba.pdf", SECLOFileType.DNI, None),
         ]
