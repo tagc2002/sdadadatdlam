@@ -21,7 +21,6 @@ import uuid
 
 if __name__ == "__main__":
     import sys
-
     sys.path.append(str(Path.cwd()))
     print(sys.path)
 
@@ -77,8 +76,11 @@ DEBUGMODE = os.getenv("DEBUGMODE", "TRUE") == "TRUE"
 HEADLESS = os.getenv("HEADLESS", "TRUE") == "TRUE"
 DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "./temp")
 MAX_ATTEMPTS = 3
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "+\
-             "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    + "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
+
 
 def retry(func):
     "Decorator for auto retrying if errors occur"
@@ -228,7 +230,7 @@ class SECLOSession:
                 last_exc = e
                 logger.warning(str(e))
         else:
-            raise AttemptsExceededException() from last_exc # type: ignore
+            raise AttemptsExceededException() from last_exc  # type: ignore
 
         if "adfs" in self.loginpage.url:
             raise UnauthorizedAccessException(
@@ -289,7 +291,7 @@ class SECLOAccessor:
         self.recid = recid
         self.progress = progress_report or ProgressReport()
         self.page: Page
-        self.gde_id: str
+        self.gde_id: str = ""
 
     async def __aenter__(self: Self):
         self.page = await self.session.context.new_page()
@@ -338,8 +340,8 @@ class SECLOAccessor:
         try:
             await self.page.wait_for_load_state(timeout=60000)
             await self.page.evaluate(
-                'document.getElementById("ctl00_Top_hdnReclamoId")'+\
-                f'.setAttribute("value", "{self.recid}")'
+                'document.getElementById("ctl00_Top_hdnReclamoId")'
+                + f'.setAttribute("value", "{self.recid}")'
             )
 
             # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
@@ -364,9 +366,7 @@ class SECLOAccessor:
         self.progress.set_steps(1)
         await self.progress.set_progress(0, "Setting recID")
         logger.debug("Setting recID from gdeID %s", gde_id)
-        await self.page.goto(
-            "/O_ConsultaNotificaciones.aspx", timeout=60000
-        )
+        await self.page.goto("/O_ConsultaNotificaciones.aspx", timeout=60000)
 
         gde_year = gde_id.split("-")[1]
         gde_file = gde_id.split("-")[2]
@@ -384,7 +384,7 @@ class SECLOAccessor:
                 f"Case with GDE ID '{gde_id}' not found"
             ) from e
         rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
-            "value"
+            "value", timeout=60000
         )
         if rec_id:
             self.recid = int(rec_id)
@@ -403,9 +403,7 @@ class SECLOAccessor:
         Returns:
             Self: self
         """
-        await self.page.goto(
-            f"/Conciliador_Reclamo.aspx?RecId={rec_id}"
-        )
+        await self.page.goto(f"/Conciliador_Reclamo.aspx?RecId={rec_id}")
         try:
             self.gde_id = await self.page.locator("#rcNroExpediente").inner_text(
                 timeout=100
@@ -439,12 +437,7 @@ class SECLOAccessor:
 
     async def _save_standard(self: Self, save_button: Locator):
         await save_button.click()
-        await self.page.locator("#ctl00_Center_TRGRABANDO").wait_for(
-            timeout=100, state="visible"
-        )
-        await self.page.locator("#ctl00_Center_TRGRABANDO").wait_for(
-            timeout=20000, state="hidden"
-        )
+        await self.page.wait_for_load_state('load')
 
 
 class SECLOCitationManager(SECLOAccessor):
@@ -473,9 +466,7 @@ class SECLOCitationManager(SECLOAccessor):
         super().__init__(session, recid, progress_report=progress)
         self.date = date or datetime.now()
         self.error = None
-        self.multiple = False
-        self.comb_selector_length = 0
-        self.comb_selector_index = 0
+        self.comb_objects: List[str] = []
         self.items: List[CitationResult] = []
 
     @retry
@@ -484,33 +475,30 @@ class SECLOCitationManager(SECLOAccessor):
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
         logger.debug("Accessing citation result window")
-        await self.page.goto(
-            "/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A=="
-        )
-        await self.page.locator("#ctl00_btnAudiencia").click()
+        await self.page.goto("/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A==")
+        await self.page.wait_for_load_state('load')
         await self._load_rec()
         try:
             if (
                 "Registrar Resultado"
-                in await self.page.locator(".appBoxMenu").inner_text()
+                in await self.page.locator("#ctl00_Center_tb").inner_text()
             ):
                 if not await self.page.locator("#ctl00_Center_cmbObjetos").is_enabled():
                     logger.debug(
                         "Claim object comb selector is disabled. This is good."
                     )
-                    self.multiple = False
-                    self.comb_selector_length = 1
                 else:
                     logger.debug(
                         "Claim object comb selector is enabled. This will be a bummer"
                     )
-                    self.multiple = True
-                    self.comb_selector_length = (
+                    for option in (
                         await self.page.locator("#ctl00_Center_cmbObjetos")
                         .locator("option")
-                        .count()
-                    )
-                    self.comb_selector_index = 0
+                        .all()
+                    ):
+                        value = await option.get_attribute("value")
+                        if value is not None:
+                            self.comb_objects.append(value)
         except Exception as e:
             raise RecNotAccessibleException(
                 f"Could not access result form for rec {self.recid}. Maybe its closed."
@@ -565,10 +553,7 @@ class SECLOCitationManager(SECLOAccessor):
         if is_employee:
             try:
                 enabled = (
-                    await row.locator("td")
-                    .nth(2)
-                    .locator("td")
-                    .first.is_enabled(timeout=100)
+                    await row.locator("input[type=radio]").first.is_enabled(timeout=100)
                 )
             except PlaywrightTimeoutError:
                 logger.warning(
@@ -576,10 +561,10 @@ class SECLOCitationManager(SECLOAccessor):
                 )
                 enabled = True
             amount = (
-                await row.locator("td").nth(4).locator("input").input_value()
+                await row.locator("input[type=text]").input_value()
             ).lstrip()
             logger.debug('Amount string "%s"', amount)
-            if len(amount) == 0 or amount == 0:
+            if len(amount) == 0 or amount == '0':
                 amount = None
             person = await row.locator("td").first.inner_text()
         else:
@@ -591,7 +576,7 @@ class SECLOCitationManager(SECLOAccessor):
         )
 
     @retry
-    async def get_items(self: Self) -> List[CitationResult]:
+    async def get_items(self: Self) -> Set[CitationResult]:
         """
         Gets the current list of employees and employers registered in this claim.
         Modify this list with the results and new notification if needed and send it to setItems.
@@ -605,7 +590,7 @@ class SECLOCitationManager(SECLOAccessor):
         logger.info("Performing Citation getItems")
         await self.progress.set_progress(0, "Loading case")
         await self.__load_citation_result_screen()
-        fields = []
+        fields: List[CitationResult] = []
         fields_len = 0
         logger.debug("Case attained")
 
@@ -616,9 +601,9 @@ class SECLOCitationManager(SECLOAccessor):
                 fields.append(await self.__row_to_result(row, True))
                 fields.append(await self.__row_to_result(row, False))
                 fields_len += 1
-            fields = set(fields)
+            fields_set = set(fields)
             await self.progress.set_completion("Done getting items.")
-            return list(fields)
+            return fields_set
         except Exception as e:
             raise InvalidCaseStateException(
                 "Something bad happenned loading the results."
@@ -634,18 +619,8 @@ class SECLOCitationManager(SECLOAccessor):
             bool: Whether the row is populated or not
         """
         return (
-            await row.locator("td")
-            .nth(2)
-            .locator("td")
-            .nth(1)
-            .locator("input")
-            .is_checked()
-            or await row.locator("td")
-            .nth(2)
-            .locator("td")
-            .nth(0)
-            .locator("input")
-            .is_checked()
+            any([await x.is_checked() for x in await row.locator("td")
+            .nth(2).locator("input").all()])
         )
 
     async def __get_matching_rows(
@@ -665,6 +640,7 @@ class SECLOCitationManager(SECLOAccessor):
         for i, row in enumerate(await table.locator(".grdRowStyle").all()):
             result = await self.__row_to_result(row, True)
             # check if matches
+            logger.debug("Comparing row %s to entry %s", result, entry)
             if (
                 result == entry
                 and not await self.__row_populated_check(row)
@@ -675,60 +651,41 @@ class SECLOCitationManager(SECLOAccessor):
         return rows
 
     async def __set_item(self: Self, entry: CitationResult):
-        loop = True
-        # TODO better algo
-        while loop:
-            loop = False
-            rows = await self.__get_matching_rows(entry)
-            await self.progress.increase_progress("Setting results...")
-            for i, row in rows:
-                logger.debug("Row %d matches %s and is unselected, applying", i, entry)
-                if entry.amount:
-                    # Set agreement
-                    logger.info("Agreement for %s", entry)
-                    await row.locator("td").nth(2).get_by_text("Sí").set_checked(True)
-                    # Flag so we iterate again, there may be another row for employee
-                    # Yes, this site sucks, i'm well aware of that, even moreso by now
-                    loop = True
+        await self.progress.increase_progress("Setting results...")
+        logger.debug("Setting item %s", entry)
+        for idx, row in await self.__get_matching_rows(entry):
+            logger.debug("Row %d matches %s and is unselected, applying", idx, entry)
+            if entry.amount:
+                # Set agreement
+                logger.info("Agreement for %s", entry)
+                # Rad 0 is agreement
+                await row.locator("input[type=radio]").nth(0).set_checked(True)
+                # Matches, so populate amount
+                await row.locator("input[type=text]").fill("")
+                await row.locator("input[type=text]").fill(
+                    entry.amount.replace(".", ",")
+                )
+            else:
+                # set non-agreement (Rad 1 is nonagreement)
+                logger.info("Non-agreement for %s", entry)
+                await row.locator("input[type=radio]").nth(1).set_checked(True)
 
-                    # Matches, so populate amount
-                    await row.locator("input[type=text]").fill("")
-                    await row.locator("input[type=text]").fill(
-                        entry.amount.replace(".", ",")
-                    )
-                else:
-                    # set non-agreement
-                    logger.info("Non-agreement for %s", entry)
-                    await row.locator("td").nth(2).get_by_text("No").set_checked(True)
-                    loop = True
-
-    async def __set_items(self: Self, ignore_multiple_comb: bool = False) -> Self:
+    async def __set_items(self: Self, comb_option: Optional[str] = None) -> Self:
         logger.info("Performing Citation getItems")
         await self.__load_citation_result_screen()
 
-        if self.multiple:
-            if (
-                self.comb_selector_index == self.comb_selector_length
-                or ignore_multiple_comb
-            ):
-                logger.debug("Done setting items.")
-                return await self.__advance_result_form()
+        if comb_option:
             await self.page.locator("#ctl00_Center_cmbObjetos").select_option(
-                index=self.comb_selector_index
+                value=comb_option
             )
-            logger.debug(
-                "Selected comb level entry %d of %d",
-                self.comb_selector_index + 1,
-                self.comb_selector_length,
-            )
-            self.comb_selector_index += 1
-        self.progress.set_steps(1 + self.comb_selector_length * (len(self.items) + 1))
+            logger.debug("Selected comb level entry %s", comb_option)
         try:
             for entry in set(self.items):
                 if entry.is_employee:
                     await self.__set_item(entry)
         except PlaywrightTimeoutError:
             await self._error_handling()
+        await self.page.wait_for_load_state('load')
         for row in await (
             self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
             .locator(".grdRowStyle")
@@ -741,7 +698,7 @@ class SECLOCitationManager(SECLOAccessor):
     async def __fill_date_input(self: Self, input_id: str, date: datetime):
         logger.info(self.date.strftime("%d%m%Y"))
         await self.page.locator(f"#{input_id}").fill("")
-        await self.page.locator(f"#{input_id}").fill(date.strftime("%d%m%Y"))
+        await self.page.locator(f"#{input_id}").press_sequentially(date.strftime("%d%m%Y"), delay=1)
 
     async def __advance_result_form(self: Self):
         try:
@@ -753,23 +710,13 @@ class SECLOCitationManager(SECLOAccessor):
         return self
 
     async def __validation_error_checker(self: Self):
-        try:
-            self.error = await self.page.locator("#ctl00_Center_lblError").inner_text(
-                timeout=100
-            )
-        except PlaywrightTimeoutError:
-            pass  # Expected, means no errors
-        else:
-            raise ValidationException(self.error)
-
-        try:
-            self.error = await self.page.locator(
-                "#ctl00_Center_ValidationSummary5"
-            ).inner_text(timeout=100)
-        except PlaywrightTimeoutError:
-            pass  # Expected, means no errors
-        else:
-            raise ValidationException(self.error)
+        error_labels = [
+            self.page.locator("#ctl00_Center_lblError"),
+            self.page.locator("#ctl00_Center_ValidationSummary5")
+        ]
+        for label in error_labels:
+            if await label.is_visible():
+                raise ValidationException(await label.inner_text())
 
     @retry
     async def create_new_citation(
@@ -784,20 +731,16 @@ class SECLOCitationManager(SECLOAccessor):
             date: The date and time requested for the new citation.
         """
         self.items = list(items)
-        await self.__set_items(True)
-        absent_citation = False
+        await self.__set_items(None)
         await self.progress.increase_progress("Setting new citation date")
-        for item in self.items:
-            if item.absent:
-                absent_citation = True
-        if absent_citation:
-            await self._save_standard(
-                self.page.locator("#ctl00_Center_btnNuevaIncomparecencia")
+        absent_citation = any(x.absent for x in self.items)
+        await self._save_standard(
+            self.page.locator(
+                "#ctl00_Center_btnNuevaIncomparecencia"
+                if absent_citation
+                else "#ctl00_Center_btnNuevaAudiencia"
             )
-        else:
-            await self._save_standard(
-                self.page.locator("#ctl00_Center_btnNuevaAudiencia")
-            )
+        )
         await self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", date)
 
         await self.page.locator("#ctl00_Center_cmbHoras").select_option(
@@ -811,38 +754,24 @@ class SECLOCitationManager(SECLOAccessor):
             self.page.locator("#ctl00_Center_grdTrabajadores")
             .locator(".grdRowStyle")
             .all()
-        ):
-            for entry in self.items:
-                if (
-                    await row.locator("td").nth(0).inner_text() in entry.get_person()
-                    and await row.locator("td").nth(1).inner_text()
-                    in entry.get_person()
-                ):
-                    if entry.absent:
-                        await row.locator("td").nth(2).locator("input").click()
-                    if entry.notify:
-                        if absent_citation:
-                            await row.locator("td").nth(3).locator("input").click()
-                    await row.locator("select").select_option(
-                        value=entry.notif_method.value
-                    )
-                    break
-
-        for row in await (
+        ) + await (
             self.page.locator("#ctl00_Center_grdEmpleadores")
             .locator(".grdRowStyle")
             .all()
         ):
             for entry in self.items:
-                if await row.locator("td").nth(0).inner_text() in entry.get_person():
+                for name in entry.person.split():
+                    if name not in await row.inner_text():
+                        break
+                else:
                     if entry.absent:
-                        await row.locator("td").nth(1).locator("input").click()
-                    if entry.notify:
-                        if absent_citation:
-                            await row.locator("td").nth(2).locator("input").click()
+                        await row.locator("input").nth(0).click()
+                    if entry.notify and absent_citation:
+                        await row.locator("input").nth(1).click()
                     await row.locator("select").select_option(
                         value=entry.notif_method.value
                     )
+                    break
 
         if not DEBUGMODE:
             await self._save_standard(self.page.locator("#ctl00_Center_btnGrabar"))
@@ -863,19 +792,23 @@ class SECLOCitationManager(SECLOAccessor):
             items (set[CitationResult]): The modified set provided by getItems with results set.
         """
         self.items = list(items)
-        if self.multiple:
-            while self.comb_selector_index < self.comb_selector_length:
-                await self.__set_items(False)
-                await self.progress.increase_progress("Closing partial claim")
-        else:
-            await self.__set_items(False)
-            await self.progress.increase_progress("Closing claim")
+        has_comb = len(self.comb_objects) > 0
+        while True:
+            await self.__set_items(self.comb_objects.pop(0) if has_comb else None)
+            await self.progress.increase_progress("Closing partial claim")
+            if not DEBUGMODE:
+                await self._save_standard(
+                    self.page.locator(
+                        "#ctl00_Center_btnGrabar"
+                        if has_comb
+                        else "#ctl00_Center_btnGrabarTotal"
+                    )
+                )
+            else:
+                logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
+            if not self.comb_objects:
+                break
 
-        if not DEBUGMODE:
-            await self._save_standard(self.page.locator("#ctl00_Center_btnGrabarTotal"))
-
-        else:
-            logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
         await self.progress.set_completion("Done closing claim")
 
 
@@ -1007,16 +940,28 @@ class SECLOFileManager(SECLOAccessor):
             logger.warning("FILE WON'T BE SAVED IN DEBUG MODE!")
         await self.__get_files()
 
+    async def __get_record_file_id(self: Self, row: Locator) -> Optional[int]:
+        img_script = await row.locator("input[type=image]").get_attribute("onclick") or ""
+        search = re.search(r"Documento_ID=\d+", img_script)
+        if search:
+            return int(search.group(0)[13:])
+        return None
+
     @retry
     async def upload_record(
         self: Self, file: str, agreement: bool, override: bool = False
-    ) -> None:
+    ) -> Optional[int]:
         """
         Uploads a record to an already closed case.
         Parameters:
             file (str): Path to the desired record to upload.
             agreement (bool): Whether its an agreement or not,
                 because the way of uploading them is different for some godforsaken reason.
+            override (bool): In case there's a record already uploaded, whether to override
+                it with the current one or not.
+
+        Returns:
+            Optional[int]: Document ID for uploaded record (in case of success). 
         """
         if not self.gde_id:
             if self.recid:
@@ -1025,14 +970,13 @@ class SECLOFileManager(SECLOAccessor):
                 raise InvalidParameterException("Missing recID and gdeID")
         logger.info(self.gde_id)
 
-        await self.page.goto("/Novedades.aspx")
-        await self.page.locator("#ctl00_btnActa").click()
+        await self.page.goto("/ActasCierres.aspx")
         if agreement:
             await self.page.locator("#ctl00_Center_radTipo_0").set_checked(True)
         else:
             await self.page.locator("#ctl00_Center_radTipo_1").set_checked(True)
         await self.page.locator("#ctl00_Center_btnBuscar").click()
-
+        await self.page.wait_for_load_state('load')
         table = self.page.locator("#ctl00_Center_grdReclamos")
         if await table.locator(".grdEmptyStyle").is_visible():
             raise InvalidCaseStateException(
@@ -1047,7 +991,7 @@ class SECLOFileManager(SECLOAccessor):
                     "agreement" if agreement else "nonagreement",
                 )
                 if not override:
-                    return
+                    return await self.__get_record_file_id(row)
             await row.locator("input[type=file]").set_input_files(file)
         else:
             raise InvalidCaseStateException(
@@ -1055,12 +999,13 @@ class SECLOFileManager(SECLOAccessor):
             )
 
         if not DEBUGMODE:
+            self.page.on('dialog', lambda x: x.accept())
             await self.page.locator("#ctl00_Center_btnGenerar").click()
-            await self.page.locator("#ctl00_Center_grdReclamos").is_visible()
+            await self.page.wait_for_load_state('load')
+            return await self.__get_record_file_id(row)
 
-        else:
-            logger.warning("WON'T UPLOAD RECORD IN UPLOAD MODE!")
-        return
+        logger.warning("WON'T UPLOAD RECORD IN UPLOAD MODE!")
+        return None
 
     def __shit_date_to_datetime(self: Self, date: str) -> datetime:
         """
@@ -1368,8 +1313,8 @@ class SECLORecData(SECLOAccessor):
         #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
 
         dni = await self.page.locator(
-                "#ctl00_Center_ctl02_txtNroDocumento_lbl"
-            ).inner_text()
+            "#ctl00_Center_ctl02_txtNroDocumento_lbl"
+        ).inner_text()
         async with SECLOClaimValidationData(session=self.session) as data:
             lawyer_person_data = await data.validate_dni(dni)
         lawyer = SECLOLawyerData(
@@ -1477,7 +1422,7 @@ class SECLORecData(SECLOAccessor):
             ).is_checked(),
             gdeid=await self.page.locator(
                 "#ctl00_Center_ucReclamo_lblReclamo_GDEID"
-            ).inner_text()
+            ).inner_text(),
         )
         for row in (
             await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
@@ -1906,7 +1851,7 @@ class SECLOCalendarParser(SECLOAccessor):
         async with SECLOAccessor(self.session) as session:
             await session.page.goto(
                 f"Conciliador_Audiencia.aspx?AudId={citation_id}&esPortal=1",
-                timeout=60000
+                timeout=60000,
             )
             gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
             init_datetime_text = await session.page.locator("#rcFecha").inner_text()
@@ -2007,9 +1952,11 @@ class SECLOClaimValidationData(SECLOAccessor):
 
     async def __create_request(self: Self, url: str, data: str) -> Dict:
         cookies = {}
-        cookie_list = await self.page.context.cookies(urls="https://conciliadores.trabajo.gob.ar")
+        cookie_list = await self.page.context.cookies(
+            urls="https://conciliadores.trabajo.gob.ar"
+        )
         for cookie in cookie_list:
-            cookies[cookie["name"]] = cookie["value"] # type: ignore
+            cookies[cookie["name"]] = cookie["value"]  # type: ignore
         headers = {
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -2032,9 +1979,9 @@ class SECLOClaimValidationData(SECLOAccessor):
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        ans = await self.page.request.fetch(url, data=data.encode(), headers=headers, method="post")
-        print(await ans.body())
-        print(ans.status)
+        ans = await self.page.request.fetch(
+            url, data=data.encode(), headers=headers, method="post"
+        )
         return await ans.json()
 
     async def validate_cuit(self: Self, cuit: str):
@@ -2051,7 +1998,7 @@ class SECLOClaimValidationData(SECLOAccessor):
             name=f"{person["Apellido"]} {person["Nombre"]}",
             dni=int(person["NroDocumento"]),
             birthday=datetime.strptime(person["FechaNacimiento"], "%d/%m/%Y"),
-            gender=person["SexoID"]
+            gender=person["SexoID"],
         )
 
     async def validate_dni(self: Self, dni: str) -> SECLOPersonData:
@@ -2062,7 +2009,6 @@ class SECLOClaimValidationData(SECLOAccessor):
             "https://conciliadores.trabajo.gob.ar/ServicioDocumento.aspx/getDatosxDenominacion",
             f"{{'dato': '{dni}', 'tipo': 'E'}}",
         )
-        logger.warning(response)
         for person in response["d"]:
             if person["Estado"] == "ACREDITADO":
                 return SECLOPersonData(
@@ -2070,7 +2016,7 @@ class SECLOClaimValidationData(SECLOAccessor):
                     name=person["NombreApellido"],
                     dni=int(person["Documento"]),
                     birthday=datetime.strptime(person["FechaNacimiento"], "%d%m%Y"),
-                    gender=person["SexoID"]
+                    gender=person["SexoID"],
                 )
         raise AttributeError(f"Can't find person {dni}")
 
@@ -2157,16 +2103,19 @@ class SECLOClaimValidationData(SECLOAccessor):
         )
 
 async def test():
-    async with SECLOSession(SECLOLoginCredentials("NRGONZALEZ", "Normitis.2046")) as session:
-        async with SECLOClaimValidationData(session) as data:
-            try:
-                ans = await data.validate_dni("41397415")
-                print(ans)
-            except Exception as e:
-                print(e)
-            finally:
-                await asyncio.sleep(100000)
+    async with SECLOSession(SECLOLoginCredentials(os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", ""))) as session:
+        recid=3730913
+        async with SECLOCitationManager(session, recid=recid) as seclo:
+            items = await seclo.get_items()
+            for item in filter(lambda x: x.is_employee, items):
+                item.set_result(agreement=False)
+            await seclo.close_case(items)
+        async with SECLOFileManager(session, recid=recid) as seclo:
+            print(await seclo.upload_record("J:\\My Drive\\Acta Sin Acuerdo 78736839.pdf", agreement=False, override=True))
 
 if __name__ == "__main__":
+    root_logger= logging.getLogger()
+    root_logger.addHandler(logging.StreamHandler())
+    root_logger.setLevel(logging.DEBUG)
     asyncio.run(test())
     #raise RuntimeError("This script cannot be run on its own")

@@ -11,20 +11,21 @@ from repositories.seclo.exceptions import InvalidParameterException
 
 logger = logging.getLogger(__name__)
 
-@dataclass
 class CitationResult:
     """
     A class designed to hold a citation result to be passed to and from the function caller.
     Holds name, amount, agreement, notification info and whether it's an employee or employer.
     Implements fancy __eq__ to allow duplicate detection.
     """
-    person: str
-    notify: bool = True
-    absent: bool = False
-    notif_method: SECLONotificationType = SECLONotificationType.DONOTSEND
-    amount: Optional[str] = None
-    enabled: bool = True
-    is_employee: bool = True
+
+    def __init__(self: Self, person: str, notify: bool = True, absent: bool = False, notif_method: SECLONotificationType = SECLONotificationType.DONOTSEND, amount: Optional[str] = None, enabled: bool = True, is_employee: bool = True):
+        self.person=person
+        self.notify=notify
+        self.absent=absent
+        self.notif_method=notif_method
+        self.amount=amount
+        self.enabled=enabled
+        self.is_employee=is_employee
 
     def __eq__(self, other):
         if not isinstance(other, CitationResult):
@@ -40,7 +41,7 @@ class CitationResult:
             f'{"absent\t " if self.absent else ""}'+\
             f'{"Notify (" + self.notif_method.name + ")" if self.notify else "Don't notify"}'
 
-    def __hash__(self):
+    def __hash__(self: Self) -> int:
         if self.is_employee:
             return hash((self.person, self.amount))
         return hash(self.person)
@@ -86,10 +87,9 @@ class CitationResult:
                     raise InvalidParameterException(
                         "An agreement must have a specified amount"
                     )
-                elif amount <= 0:
+                if amount <= 0:
                     raise InvalidParameterException("Amount must be positive.")
-                else:
-                    self.amount = f"{amount:.2f}".replace(".", ",")
+                self.amount = f"{amount:.2f}".replace(".", ",")
             else:
                 if amount is not None:
                     raise InvalidParameterException(
