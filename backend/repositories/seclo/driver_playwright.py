@@ -326,6 +326,37 @@ class SECLOAccessor:
         )
 
     @retry
+    async def _load_rec(self: Self):
+        """
+        Receives an instance of a case searchbox and populates
+        the hiddenRecID field to access the case.
+        This method usually does not fail.
+        Searching normally has failed a few times before.
+
+        God I hate this shit site.
+        """
+        if self.recid is None or self.recid == 0:
+            raise InvalidParameterException("RecID Missing")
+
+        logger.debug("Loading recID %d", self.recid)
+        try:
+            await self.page.wait_for_load_state(timeout=60000)
+            await self.page.evaluate(
+                'document.getElementById("ctl00_Top_hdnReclamoId")'
+                + f'.setAttribute("value", "{self.recid}")'
+            )
+
+            # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
+            #     str(self.recid), force=True
+            # )
+            await self.page.locator("#ctl00_Busqueda_btnBuscar").click(timeout=60000)
+        except PlaywrightTimeoutError as e:
+            logger.error(e)
+            raise RecNotAccessibleException(
+                "Couldn't find case searchbox element"
+            ) from e
+
+    @retry
     async def set_rec_id_from_gde_id(self: Self, gde_id: str) -> Self:
         """
         Sets the current RecID to the corresponding key for the given gdeID.
@@ -440,7 +471,8 @@ class SECLOCitationManager(SECLOAccessor):
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
         logger.debug("Accessing citation result window")
-        await self.page.goto(f"/O_Audiencia.aspx?RecId={self.recid}")
+        await self.page.goto("/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A==")
+        await self._load_rec()
         await self.page.wait_for_load_state("load")
         try:
             if (
@@ -2096,7 +2128,7 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        recid = 3732094
+        gdeid = 80800667
         files = [
             (
                 "J:\\My Drive\\65686609 Credencial requerida.pdf",
@@ -2106,7 +2138,9 @@ async def test():
             ("J:\\My Drive\\65686609 DNI Requerida.pdf", SECLOFileType.DNI, None),
             ("J:\\My Drive\\65686609 DNI Traba.pdf", SECLOFileType.DNI, None),
         ]
-        async with SECLOCitationManager(session, recid=recid) as seclo:
+        async with SECLOCitationManager(session) as seclo:
+            await seclo.set_rec_id_from_gde_id(f'EX-2026-{gdeid}')
+            recid=seclo.recid
             # await seclo.reopen_case()
             items = await seclo.get_agreement_items()
             for item in items:
@@ -2118,7 +2152,7 @@ async def test():
                 #     await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path("J:\\My Drive\\Acta Sin Acuerdo 79976452.pdf"),
+                        Path(f"J:\\My Drive\\Acta Sin Acuerdo {gdeid}.pdf"),
                         agreement=False,
                     )
                 )
