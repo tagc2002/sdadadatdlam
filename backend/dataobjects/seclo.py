@@ -490,3 +490,5 @@ class SECLOPersonData:
     dni: int
     birthday: datetime
     gender: str
+    first_name: str
+    last_name: str

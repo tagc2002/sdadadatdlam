@@ -559,7 +559,7 @@ class SECLOCitationManager(SECLOAccessor):
                 information and fed to closeCase() or createNewCitation().
         """
         self.progress.set_steps(2)
-        logger.info("Performing Citation getItems")
+        logger.info("Performing agreement getItems")
         await self.progress.set_progress(0, "Loading case")
         await self.__load_citation_result_screen()
         fields: List[AgreementResult] = []
@@ -699,6 +699,13 @@ class SECLOCitationManager(SECLOAccessor):
 
     @retry
     async def get_citation_items(self: Self) -> Set[CitationResult]:
+        """Returns the citation items for loading notification config 
+        for each person for the next citation. Basically, a list of people
+        where you can set if they're absent and how to notify them.
+
+        Returns:
+            Set[CitationResult]: People to be notified
+        """
         await self.page.goto(f"O_N_esima_Audiencia.aspx?RecId={self.recid}")
         results = []
         for employee in await self.page.locator(
@@ -825,7 +832,6 @@ class SECLOFileManager(SECLOAccessor):
 
     async def __aenter__(self: Self) -> Self:
         await super().__aenter__()
-        # await self.__get_files()
         return self
 
     @retry
@@ -1246,6 +1252,9 @@ class SECLORecData(SECLOAccessor):
                 "#ctl00_Center_ctl00_txtRemuneracion_txt"
             ).input_value()
         )
+
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
         return employee, seclo_db_ok
 
     async def __get_employer_data(
@@ -1284,6 +1293,8 @@ class SECLORecData(SECLOAccessor):
                 )
                 break
         employer.add_phone(await self.__get_phone(1))
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
         return employer, seclo_db_ok
 
     async def __get_lawyer_data(self: Self, seclo_db_ok: bool) -> SECLOLawyerData:
@@ -1365,7 +1376,12 @@ class SECLORecData(SECLOAccessor):
         )
         return lawyer
 
-    async def __get_other_data(self: Self) -> SECLOBeneficiaryData:
+    async def __get_other_data(self: Self, seclo_db_ok: bool) -> Tuple[SECLOBeneficiaryData, bool]:
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl03_txtNroDocumento_txt"
+        ).input_value()
+        async with SECLOClaimValidationData(self.session) as data:
+            person_data = await data.validate_dni(dni)
         name = " ".join(
             [
                 await self.page.locator(
@@ -1376,17 +1392,31 @@ class SECLORecData(SECLOAccessor):
                 ).input_value(),
             ]
         )
-        dni = await self.page.locator(
-            "#ctl00_Center_ctl03_txtNroDocumento_txt"
-        ).input_value()
-        async with SECLOClaimValidationData(self.session) as data:
-            person_data = await data.validate_dni(dni)
+        if seclo_db_ok and person_data:
+            if 'null null' in person_data.name:
+                seclo_db_ok = False
+            else:
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtApellido_txt"
+                ).fill("")
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtApellido_txt"
+                ).fill(person_data.last_name)
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtNombre_txt"
+                ).fill("")
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtNombre_txt"
+                ).fill(person_data.first_name)
+                name = person_data.name
         other = SECLOBeneficiaryData(name=name, dni=dni, cuil=person_data.cuit)
         other.add_address(await self.__get_address(3))
         other.add_mail(await self.__get_email(3))
         other.add_phone(await self.__get_phone(3))
         other.add_mobile_phone(*await self.__get_mobile_phone(3))
-        return other
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl03_btnAgregar").click()
+        return other, seclo_db_ok
 
     @retry
     async def get_claim_data(self: Self) -> SECLOClaimData:
@@ -1497,7 +1527,7 @@ class SECLORecData(SECLOAccessor):
         for i in range(await people_list.count()):
             await people_list.nth(i).locator("a").click()
             await self.page.wait_for_load_state()
-            other = await self.__get_other_data()
+            other, seclo_db_ok = await self.__get_other_data(seclo_db_ok)
             await self.progress.increase_progress(
                 f"Other {other.name} ({i+1} of {await people_list.count()})..."
             )
@@ -2018,6 +2048,8 @@ class SECLOClaimValidationData(SECLOAccessor):
             dni=int(person["NroDocumento"]),
             birthday=datetime.strptime(person["FechaNacimiento"], "%d/%m/%Y"),
             gender=person["SexoID"],
+            first_name=person['Nombre'],
+            last_name=person["Apellido"],
         )
 
     async def validate_dni(self: Self, dni: str) -> SECLOPersonData:
@@ -2030,12 +2062,15 @@ class SECLOClaimValidationData(SECLOAccessor):
         )
         for person in response["d"]:
             if person["Estado"] == "ACREDITADO":
+                print(person)
                 return SECLOPersonData(
                     cuit=person["Cuit"],
                     name=person["NombreApellido"],
                     dni=int(person["Documento"]),
                     birthday=datetime.strptime(person["FechaNacimiento"], "%d%m%Y"),
                     gender=person["SexoID"],
+                    first_name=person['Nombre'],
+                    last_name=person['Apellido'],
                 )
         raise AttributeError(f"Can't find person {dni}")
 
