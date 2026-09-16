@@ -1430,9 +1430,10 @@ class SECLORecData(SECLOAccessor):
         self.progress.set_steps(1)
         await self.progress.set_progress(0, "Loading claim data form...")
         await self.page.goto(
-            f"/ingresoreclamos.aspx?RecId={self.recid}",
+            "/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
             timeout=60000,
         )
+        await self._load_rec()
         seclo_db_ok = True
         await self.page.wait_for_load_state()
         total_items = (
@@ -1580,9 +1581,10 @@ class SECLORecData(SECLOAccessor):
         for _ in range(0, 5):
             # Trying to get this bitch enabled. idk why this works but it does.
             await self.page.goto(
-                f"ingresoreclamos.aspx?RecId={self.recid}",
+                "ingresoreclamos.aspx??paramEnc=AB3u3y2175MqNXK0296jtA==",
                 timeout=60000,
             )
+            await self._load_rec()
             await self.page.locator("#ctl00_Center_lnkEmpleadores").click()
             cuit_box = self.page.locator("#ctl00_Center_ctl01_cuit_txtC")
             if await cuit_box.is_enabled():
@@ -2062,7 +2064,6 @@ class SECLOClaimValidationData(SECLOAccessor):
         )
         for person in response["d"]:
             if person["Estado"] == "ACREDITADO":
-                print(person)
                 return SECLOPersonData(
                     cuit=person["Cuit"],
                     name=person["NombreApellido"],
