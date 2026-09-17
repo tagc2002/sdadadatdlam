@@ -193,13 +193,13 @@ class SECLOSession:
             raise e
 
     async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
-        if self.loginpage:
+        if hasattr(self, "loginpage") and self.loginpage:
             await self.loginpage.close()
-        if self.context:
+        if hasattr(self, "context") and self.context:
             await self.context.close()
-        if self.browser:
+        if hasattr(self, "browser") and self.browser:
             await self.browser.close()
-        if self.playwright:
+        if hasattr(self, "playwright") and self.playwright:
             await self.playwright.stop()
         os.rmdir(self.downloadpath)
         return False
@@ -466,7 +466,7 @@ class SECLOCitationManager(SECLOAccessor):
         self.items: List[AgreementResult] = []
 
     @retry
-    async def __load_citation_result_screen(self: Self) -> None:
+    async def __load_citation_result_screen(self: Self, initial: bool = False) -> None:
         """
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
@@ -487,14 +487,15 @@ class SECLOCitationManager(SECLOAccessor):
                     logger.debug(
                         "Claim object comb selector is enabled. This will be a bummer"
                     )
-                    for option in (
-                        await self.page.locator("#ctl00_Center_cmbObjetos")
-                        .locator("option")
-                        .all()
-                    ):
-                        value = await option.get_attribute("value")
-                        if value is not None:
-                            self.comb_objects.append(value)
+                    if initial:
+                        for option in (
+                            await self.page.locator("#ctl00_Center_cmbObjetos")
+                            .locator("option")
+                            .all()
+                        ):
+                            value = await option.get_attribute("value")
+                            if value is not None:
+                                self.comb_objects.append(value)
         except Exception as e:
             raise RecNotAccessibleException(
                 f"Could not access result form for rec {self.recid}. Maybe its closed."
@@ -561,7 +562,7 @@ class SECLOCitationManager(SECLOAccessor):
         self.progress.set_steps(2)
         logger.info("Performing agreement getItems")
         await self.progress.set_progress(0, "Loading case")
-        await self.__load_citation_result_screen()
+        await self.__load_citation_result_screen(initial=True)
         fields: List[AgreementResult] = []
         fields_len = 0
         logger.debug("Case attained")
@@ -609,7 +610,7 @@ class SECLOCitationManager(SECLOAccessor):
         rows = []
         logger.info("Getting table contents")
         table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
-
+        await expect(table.locator(".grdRowStyle").first).to_be_visible(timeout=30000)
         for i, row in enumerate(await table.locator(".grdRowStyle").all()):
             result = await self.__row_to_result(row)
             # check if matches
@@ -657,6 +658,7 @@ class SECLOCitationManager(SECLOAccessor):
                 value=comb_option
             )
             logger.debug("Selected comb level entry %s", comb_option)
+            await self.page.wait_for_load_state("load")
         try:
             for entry in self.items:
                 await self.__set_item(entry)
@@ -797,6 +799,7 @@ class SECLOCitationManager(SECLOAccessor):
         """
         self.items = list(items)
         has_comb = len(self.comb_objects) > 0
+        self.progress.set_steps(2 * (len(self.comb_objects) if has_comb else 1))
         while True:
             await self.__set_items(self.comb_objects.pop(0) if has_comb else None)
             await self.progress.increase_progress("Closing partial claim")
@@ -810,7 +813,7 @@ class SECLOCitationManager(SECLOAccessor):
                 )
             else:
                 logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
-            if not self.comb_objects:
+            if len(self.comb_objects) == 0:
                 break
 
         await self.progress.set_completion("Done closing claim")
@@ -1100,6 +1103,7 @@ class SECLORecData(SECLOAccessor):
                     person=await row.locator("td").nth(1).inner_text(),
                     citationType=await row.locator("td").nth(2).inner_text(),
                     isEmployer=await row.locator("td").nth(3).inner_text() == "Emp",
+                    isDH=await row.locator("td").nth(3).inner_text() == "DH",
                     notificationType=SECLONotificationType.notification_short_to_enum(
                         await row.locator("td").nth(4).inner_text()
                     ),
@@ -2175,15 +2179,11 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        gdeid = 80800667
+        gdeid = 68025505
         files = [
-            (
-                "J:\\My Drive\\65686609 Credencial requerida.pdf",
-                SECLOFileType.CREDENTIAL,
-                None,
-            ),
-            ("J:\\My Drive\\65686609 DNI Requerida.pdf", SECLOFileType.DNI, None),
-            ("J:\\My Drive\\65686609 DNI Traba.pdf", SECLOFileType.DNI, None),
+            ("J:\\My Drive\\68025505 Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
+            ("J:\\My Drive\\68025505 DNI Requerida.pdf", SECLOFileType.DNI, None),
+            ("J:\\My Drive\\68025505 Estatuto.pdf", SECLOFileType.OTHER, "Estatuto"),
         ]
         async with SECLOCitationManager(session) as seclo:
             await seclo.set_rec_id_from_gde_id(f'EX-2026-{gdeid}')
@@ -2191,16 +2191,16 @@ async def test():
             # await seclo.reopen_case()
             items = await seclo.get_agreement_items()
             for item in items:
-                item.set_result(agreement=False)
+                item.set_result(agreement=True, amount=Decimal("4500000.00"))
             await seclo.close_case(items)
         async with SECLOFileManager(session, recid=recid) as seclo:
             try:
-                # for file, filetype, description in files:
-                #     await seclo.upload_file(Path(file), filetype, description)
+                for file, filetype, description in files:
+                    await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path(f"J:\\My Drive\\Acta Sin Acuerdo {gdeid}.pdf"),
-                        agreement=False,
+                        Path(f"J:\\My Drive\\{gdeid} Acuerdo firmado.pdf"),
+                        agreement=True,
                     )
                 )
             finally:

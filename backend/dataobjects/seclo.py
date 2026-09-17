@@ -462,6 +462,7 @@ class SECLONotificationData:
     person: str
     citationType: str
     isEmployer: bool
+    isDH: bool
     notificationType: SECLONotificationType
     generatedDate: datetime
     notifiedDate: Optional[datetime]
