@@ -699,7 +699,7 @@ class SECLOCitationManager(SECLOAccessor):
 
     @retry
     async def get_citation_items(self: Self) -> Set[CitationResult]:
-        """Returns the citation items for loading notification config 
+        """Returns the citation items for loading notification config
         for each person for the next citation. Basically, a list of people
         where you can set if they're absent and how to notify them.
 
@@ -1128,6 +1128,12 @@ class SECLORecData(SECLOAccessor):
 
     async def __save_claim_data(self: Self):
         await self.page.locator("#ctl00_Center_lnkFinalizar").click()
+        await self.page.wait_for_load_state("load")
+        if await self.page.locator("#ctl00_Center_optTipoEnvio").is_visible():
+            raise InvalidCaseStateException(
+                f"On {self.recid}, while updating claim data, SECLO will try to create a new claim!"
+                + "That's not good. Claim ingress will not proceed until this is fixed, for safety."
+            )
         await self.page.locator("#ctl00_Center_btnAceptarRec").click()
         await self.page.wait_for_load_state()
         if await self.page.locator("#ctl00_Center_btnSi").is_visible():
@@ -1209,6 +1215,7 @@ class SECLORecData(SECLOAccessor):
             else:
                 name = validated_name
 
+        internal_id = await self.page.locator("#ctl00_Center_ctl00_hdnId").get_attribute("value")
         employee = SECLOEmployeeData(
             name=name,
             dni=await self.page.locator(
@@ -1216,6 +1223,7 @@ class SECLORecData(SECLOAccessor):
             ).input_value(),
             cuil=(await cuil.input_value()).replace("-", ""),
             validated=seclo_db_ok,
+            internal_id=internal_id
         )
         employee.add_address(await self.__get_address(0))
         employee.add_birth_date(
@@ -1274,11 +1282,13 @@ class SECLORecData(SECLOAccessor):
         dni = await self.page.locator(
             "#ctl00_Center_ctl01_txtNroDocumento_txt"
         ).input_value()
+        internal_id = await self.page.locator("#ctl00_Center_ctl01_hdnId").get_attribute("value")
         employer = SECLOEmployerData(
             name=name,
             dni=dni,
             cuil=cuil,
             validated=seclo_db_ok and len(cuil) > 0,
+            internal_id = internal_id
         )
         employer.add_address(await self.__get_address(1))
         employer.add_mail(await self.__get_email(1))
@@ -1346,11 +1356,13 @@ class SECLORecData(SECLOAccessor):
         ).inner_text()
         async with SECLOClaimValidationData(session=self.session) as data:
             lawyer_person_data = await data.validate_dni(dni)
+        internal_id = await self.page.locator("#ctl00_Center_ctl02_hdnId").get_attribute("value")
         lawyer = SECLOLawyerData(
             name=name,
             dni=dni,
             cuil=lawyer_person_data.cuit,
             validated=seclo_db_ok and self_validated,
+            internal_id=internal_id
         )
         lawyer.add_address(await self.__get_address(2))
 
@@ -1376,7 +1388,9 @@ class SECLORecData(SECLOAccessor):
         )
         return lawyer
 
-    async def __get_other_data(self: Self, seclo_db_ok: bool) -> Tuple[SECLOBeneficiaryData, bool]:
+    async def __get_other_data(
+        self: Self, seclo_db_ok: bool
+    ) -> Tuple[SECLOBeneficiaryData, bool]:
         dni = await self.page.locator(
             "#ctl00_Center_ctl03_txtNroDocumento_txt"
         ).input_value()
@@ -1393,23 +1407,20 @@ class SECLORecData(SECLOAccessor):
             ]
         )
         if seclo_db_ok and person_data:
-            if 'null null' in person_data.name:
+            if "null null" in person_data.name:
                 seclo_db_ok = False
             else:
-                await self.page.locator(
-                    "#ctl00_Center_ctl03_txtApellido_txt"
-                ).fill("")
-                await self.page.locator(
-                    "#ctl00_Center_ctl03_txtApellido_txt"
-                ).fill(person_data.last_name)
-                await self.page.locator(
-                    "#ctl00_Center_ctl03_txtNombre_txt"
-                ).fill("")
-                await self.page.locator(
-                    "#ctl00_Center_ctl03_txtNombre_txt"
-                ).fill(person_data.first_name)
+                await self.page.locator("#ctl00_Center_ctl03_txtApellido_txt").fill("")
+                await self.page.locator("#ctl00_Center_ctl03_txtApellido_txt").fill(
+                    person_data.last_name
+                )
+                await self.page.locator("#ctl00_Center_ctl03_txtNombre_txt").fill("")
+                await self.page.locator("#ctl00_Center_ctl03_txtNombre_txt").fill(
+                    person_data.first_name
+                )
                 name = person_data.name
-        other = SECLOBeneficiaryData(name=name, dni=dni, cuil=person_data.cuit)
+        internal_id = await self.page.locator("#ctl00_Center_ctl03_hdnId").get_attribute("value")
+        other = SECLOBeneficiaryData(name=name, dni=dni, cuil=person_data.cuit, internal_id=internal_id, validated=seclo_db_ok)
         other.add_address(await self.__get_address(3))
         other.add_mail(await self.__get_email(3))
         other.add_phone(await self.__get_phone(3))
@@ -2050,7 +2061,7 @@ class SECLOClaimValidationData(SECLOAccessor):
             dni=int(person["NroDocumento"]),
             birthday=datetime.strptime(person["FechaNacimiento"], "%d/%m/%Y"),
             gender=person["SexoID"],
-            first_name=person['Nombre'],
+            first_name=person["Nombre"],
             last_name=person["Apellido"],
         )
 
@@ -2070,8 +2081,8 @@ class SECLOClaimValidationData(SECLOAccessor):
                     dni=int(person["Documento"]),
                     birthday=datetime.strptime(person["FechaNacimiento"], "%d%m%Y"),
                     gender=person["SexoID"],
-                    first_name=person['Nombre'],
-                    last_name=person['Apellido'],
+                    first_name=person["Nombre"],
+                    last_name=person["Apellido"],
                 )
         raise AttributeError(f"Can't find person {dni}")
 

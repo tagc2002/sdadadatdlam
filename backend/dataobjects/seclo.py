@@ -183,6 +183,7 @@ class SECLOCommonData:
         dni: Optional[str] = None,
         cuil: Optional[str] = None,
         validated: bool = False,
+        internal_id: Optional[str] = None
     ):
         self.name: str = name.strip()
         self.address: Optional[SECLOAddressData] = None
@@ -192,6 +193,7 @@ class SECLOCommonData:
         self.validated: bool = validated
         self.dni: Optional[int]
         self.cuil: Optional[str]
+        self.internal_id: Optional[str] = internal_id
         try:
             self.dni = int(dni or "")
         except ValueError:
@@ -254,8 +256,9 @@ class SECLOEmployeeData(SECLOCommonData):
         dni: Optional[str] = None,
         cuil: Optional[str] = None,
         validated: bool = False,
+        internal_id: Optional[str] = None,
     ):
-        super().__init__(name, dni, cuil, validated)
+        super().__init__(name, dni, cuil, validated, internal_id)
         self.birth_date = None
         self.start_date = None
         self.end_date = None
@@ -321,8 +324,9 @@ class SECLOEmployerData(SECLOCommonData):
         dni: str | None = None,
         cuil: str | None = None,
         validated: bool = False,
+        internal_id: Optional[str] = None,
     ):
-        super().__init__(name, dni, cuil, validated)
+        super().__init__(name, dni, cuil, validated, internal_id)
         self.person_type = None
 
     def add_person_type(self: Self, person_type: PersonType):
@@ -342,8 +346,9 @@ class SECLOLawyerData(SECLOCommonData):
         dni: Optional[str] = None,
         cuil: Optional[str] = None,
         validated: bool = False,
+        internal_id: Optional[str] = None,
     ):
-        super().__init__(name, dni, cuil, validated)
+        super().__init__(name, dni, cuil, validated, internal_id)
         self.represents: List[Tuple[bool, str]] = []
         self.t = None
         self.f = None
@@ -375,8 +380,10 @@ class SECLOBeneficiaryData(SECLOCommonData):
         name: str,
         dni: Optional[str] = None,
         cuil: Optional[str] = None,
+        validated: bool = False,
+        internal_id: Optional[str] = None,
     ):
-        super().__init__(name, dni, cuil, True)
+        super().__init__(name, dni, cuil, validated, internal_id)
         self.birth_date = None
 
     def add_birth_date(self: Self, birth_date: str):
