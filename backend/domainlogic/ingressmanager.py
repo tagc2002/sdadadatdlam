@@ -163,9 +163,7 @@ async def batch_verify_agenda(
                     entry_progress, f"Citation {citation.citationID}"
                 )
         await first_stage.set_completion("Done acquiring calendar data")
-        # TODO Perform notification loading only on final case (?)
-        # Or find a way to avoid concurrency and duplicated pkeys on mapping to people
-        ##TODO Once the frontend is working, new citations will be fetched via an API call.
+        # TODO Once the frontend is working, new citations will be fetched via an API call.
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
             if citation.exception():
@@ -335,9 +333,8 @@ async def __ingress_employee(
             isValidated=employee.validated,
             birthDate=employee.birth_date,
             claim=local_claim,
-            headerName=employee.name.replace(",", "").split(" ")[0],
+            headerName=employee.name.split(" ")[0],
         )
-        local_claim.employees.append(local_employee)
         db.add(local_employee)
 
     # rest of data
@@ -357,9 +354,9 @@ async def __ingress_employee(
             claimAmount=employee.claim_amount,
             category=employee.category,
             cct=employee.cct,
+            employee=local_employee
         )
         db.add(rel_data)
-        local_employee.relationshipData.append(rel_data)
 
     local_address = Address.from_address_data(employee.address)
     if local_address in local_addresses:
@@ -370,7 +367,6 @@ async def __ingress_employee(
         employee_address_link = EmployeeAddressLink(
             employee=local_employee, address=local_address
         )
-        local_employee.addresses.append(employee_address_link)
         db.add(employee_address_link)
 
     if employee.mail:
@@ -389,7 +385,6 @@ async def __ingress_employee(
             employee_email_link = EmployeeEmailLink(
                 email=local_mail, employee=local_employee
             )
-            local_employee.emails.append(employee_email_link)
             db.add(employee_email_link)
     return local_employee
 
@@ -426,7 +421,6 @@ async def __ingress_employer(
             isValidated=employer.validated,
             headerName=__filter_rules(employer.name),
         )
-        local_claim.employers.append(local_employer)
         db.add(local_employer)
 
     local_address = Address.from_address_data(employer.address)
@@ -438,7 +432,6 @@ async def __ingress_employer(
         employer_address_link = EmployerAddressLink(
             employer=local_employer, address=local_address
         )
-        local_employer.addresses.append(employer_address_link)
         db.add(employer_address_link)
 
     if employer.mail:
@@ -457,7 +450,6 @@ async def __ingress_employer(
             employer_email_link = EmployerEmailLink(
                 email=local_mail, employer=local_employer
             )
-            local_employer.emails.append(employer_email_link)
             db.add(employer_email_link)
     return local_employer
 
@@ -489,7 +481,6 @@ async def __ingress_lawyer(
             registeredFrom="SECLO",
             isValidated=lawyer.validated,
         )
-        local_claim.lawyers.append(local_lawyer)
         db.add(local_lawyer)
 
     if lawyer.mail:
@@ -506,7 +497,6 @@ async def __ingress_lawyer(
         )
         if not any(link.email == local_mail for link in local_lawyer.emails):
             lawyer_email_link = LawyerEmailLink(email=local_mail, lawyer=local_lawyer)
-            local_lawyer.emails.append(lawyer_email_link)
             db.add(lawyer_email_link)
 
     if lawyer.phone:
@@ -520,7 +510,6 @@ async def __ingress_lawyer(
             telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
         )
         if local_phone not in local_lawyer.telephones:
-            local_lawyer.telephones.append(local_phone)
             db.add(local_phone)
 
     if lawyer.mobile_phone:
@@ -538,12 +527,11 @@ async def __ingress_lawyer(
             lawyer=local_lawyer,
         )
         if local_phone not in local_lawyer.telephones:
-            local_lawyer.telephones.append(local_phone)
             db.add(local_phone)
 
     for _, represented in lawyer.represents:
         for client in local_claim.employees:
-            for name in client.employeeName.replace(",", "").split():
+            for name in client.employeeName.split():
                 if name not in represented:
                     break
             else:
@@ -557,36 +545,34 @@ async def __ingress_lawyer(
                 )
                 if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
                     lawyer_employee_link.isSelfRepresenting = True
-                local_lawyer.employeeLink.append(lawyer_employee_link)
                 db.add(lawyer_employee_link)
                 break
-        for client in local_claim.employers:
-            for name in client.employerName.replace(",", "").split():
-                if name and name not in represented:
+        else:
+            for client in local_claim.employers:
+                for name in client.employerName.split():
+                    if name and name not in represented:
+                        break
+                else:
+                    lawyer_employer_link = LawyerToEmployer(
+                        lawyer=local_lawyer,
+                        employer=client,
+                        isActualLawyer=True,
+                        isSelfRepresenting=False,
+                        isEmpowered=False,
+                        clientAbsent=False,
+                        citation=citation,
+                    )
+                    if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
+                        lawyer_employer_link.isSelfRepresenting = True
+                    db.add(lawyer_employer_link)
                     break
             else:
-                lawyer_employer_link = LawyerToEmployer(
-                    lawyer=local_lawyer,
-                    employer=client,
-                    isActualLawyer=True,
-                    isSelfRepresenting=False,
-                    isEmpowered=False,
-                    clientAbsent=False,
-                    citation=citation,
+                logger.warning(
+                    "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
+                    local_claim.recID,
+                    local_lawyer.lawyerName,
+                    represented,
                 )
-                if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
-                    lawyer_employer_link.isSelfRepresenting = True
-                local_lawyer.employerLink.append(lawyer_employer_link)
-                db.add(lawyer_employer_link)
-                break
-        else:
-            logger.warning(
-                "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed (List %s)",
-                local_claim.recID,
-                local_lawyer.lawyerName,
-                represented,
-                [e.employeeName for e in local_claim.employees] + [e.employerName for e in local_claim.employers]
-            )
     return local_lawyer
 
 
@@ -617,7 +603,6 @@ async def __ingress_beneficiary(
             dni=beneficiary.dni,
             birthDate=beneficiary.birth_date,
         )
-        local_claim.beneficiaries.append(local_beneficiary)
         db.add(local_beneficiary)
 
     local_address = Address.from_address_data(beneficiary.address)
@@ -629,7 +614,6 @@ async def __ingress_beneficiary(
         beneficiary_address_link = BeneficiaryAddressLink(
             beneficiary=local_beneficiary, address=local_address
         )
-        local_beneficiary.addresses.append(beneficiary_address_link)
         db.add(beneficiary_address_link)
 
     if beneficiary.mail:
@@ -648,7 +632,6 @@ async def __ingress_beneficiary(
             beneficiary_email_link = BeneficiaryEmailLink(
                 email=local_mail, beneficiary=local_beneficiary
             )
-            local_beneficiary.emails.append(beneficiary_email_link)
             db.add(beneficiary_email_link)
     return local_beneficiary
 

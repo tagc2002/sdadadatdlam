@@ -1273,6 +1273,7 @@ class SECLORecData(SECLOAccessor):
 
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
+            await self.page.wait_for_load_state('load')
         return employee, seclo_db_ok
 
     async def __get_employer_data(
@@ -1317,6 +1318,7 @@ class SECLORecData(SECLOAccessor):
         employer.add_phone(await self.__get_phone(1))
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
+            await self.page.wait_for_load_state('load')
         return employer, seclo_db_ok
 
     async def __get_lawyer_data(self: Self, seclo_db_ok: bool) -> SECLOLawyerData:
@@ -1449,6 +1451,7 @@ class SECLORecData(SECLOAccessor):
         other.add_mobile_phone(*await self.__get_mobile_phone(3))
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl03_btnAgregar").click()
+            await self.page.wait_for_load_state('load')
         return other, seclo_db_ok
 
     @retry
@@ -1469,6 +1472,7 @@ class SECLORecData(SECLOAccessor):
         await self._load_rec()
         seclo_db_ok = True
         await self.page.wait_for_load_state(timeout=60000)
+        await expect(self.page.locator("#ctl00_Center_lstTrabajadores")).to_be_visible(timeout=30000)
         total_items = (
             await self.page.locator("#ctl00_Center_lstTrabajadores")
             .locator("li")
@@ -2198,23 +2202,24 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        gdeid = 68025505
+        gdeid = 83737442
+        agreement = False
+        amount = None
+        reopen = False
         files = [
-            (
-                "J:\\My Drive\\68025505 Credencial requerida.pdf",
-                SECLOFileType.CREDENTIAL,
-                None,
-            ),
-            ("J:\\My Drive\\68025505 DNI Requerida.pdf", SECLOFileType.DNI, None),
-            ("J:\\My Drive\\68025505 Estatuto.pdf", SECLOFileType.OTHER, "Estatuto"),
+            # (f"J:\\My Drive\\{gdeid} Credencial requirente.pdf", SECLOFileType.CREDENTIAL, None),
+            # (f"J:\\My Drive\\{gdeid} Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
+            # (f"J:\\My Drive\\{gdeid} DNI Traba.pdf", SECLOFileType.DNI, None),
+            # (f"J:\\My Drive\\{gdeid} Poder.pdf", SECLOFileType.PODER, None),
         ]
         async with SECLOCitationManager(session) as seclo:
             await seclo.set_rec_id_from_gde_id(f"EX-2026-{gdeid}")
             recid = seclo.recid
-            # await seclo.reopen_case()
+            if reopen:
+                await seclo.reopen_case()
             items = await seclo.get_agreement_items()
             for item in items:
-                item.set_result(agreement=True, amount=Decimal("4500000.00"))
+                item.set_result(agreement=agreement, amount=amount)
             await seclo.close_case(items)
         async with SECLOFileManager(session, recid=recid) as seclo:
             try:
@@ -2222,8 +2227,8 @@ async def test():
                     await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path(f"J:\\My Drive\\{gdeid} Acuerdo firmado.pdf"),
-                        agreement=True,
+                        Path(f"J:\\My Drive\\{"Acta Sin Acuerdo " if not agreement else ""}{gdeid}{" Acuerdo firmado" if agreement else ""}.pdf"),
+                        agreement=agreement,
                     )
                 )
             finally:
