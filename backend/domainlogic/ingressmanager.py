@@ -31,6 +31,7 @@ from database.definitions import (
     LawyerToEmployee,
     LawyerToEmployer,
     SecloNotification,
+    SecloNotificationToBeneficiary,
     SecloNotificationToEmployee,
     SecloNotificationToEmployer,
 )
@@ -63,30 +64,51 @@ downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
 
 
 class NotificationManager:
+    SLEEP_TIME = 0.2
+
     def __init__(self: Self, session: SECLOSession):
-        self.session = session
-        self.notifs: Dict[str, Tuple[List[SECLONotificationData], Optional[int]]] = {}
+        self.__session = session
+        self.__notifs: Dict[str, Tuple[List[SECLONotificationData], Optional[int]]] = {}
+        self.__working: Dict[str, bool] = {}
 
     async def get_notification(
         self: Self, gde_id: str, notification_progress: ProgressReport
     ) -> Tuple[List[SECLONotificationData], int]:
-        if gde_id not in self.notifs:
-            self.notifs[gde_id] = ([], None)
-            async with SECLORecData(self.session, None, notification_progress) as seclo:
+        if gde_id not in self.__notifs:
+            self.__notifs[gde_id] = ([], None)
+            self.__working[gde_id] = False
+            async with SECLORecData(
+                self.__session, None, notification_progress
+            ) as seclo:
                 try:
                     notification_data = await seclo.get_notification_data(gde_id=gde_id)
-                    self.notifs[gde_id] = (notification_data, seclo.recid)
+                    self.__notifs[gde_id] = (notification_data, seclo.recid)
                 except Exception as e:
-                    self.notifs.pop(gde_id)
+                    self.__notifs.pop(gde_id)
                     raise e
         try:
-            while not self.notifs[gde_id][1]:
-                await asyncio.sleep(0.2)
+            while not self.__notifs[gde_id][1]:
+                await asyncio.sleep(self.SLEEP_TIME)
         except KeyError as e:
             raise AttributeError(
                 "An error occured while loading notifications, check logs for details"
             ) from e
-        return self.notifs[gde_id]  # type: ignore
+        return self.__notifs[gde_id]  # type: ignore
+
+    async def set_working(self: Self, gde_id: str) -> None:
+        if gde_id in self.__working:
+            if self.__working[gde_id]:
+                while True:
+                    await asyncio.sleep(self.SLEEP_TIME)
+                    if not self.__working[gde_id]:
+                        break
+            self.__working[gde_id] = True
+        else:
+            raise AttributeError("Missing GDE ID")
+
+    def set_done(self: Self, gde_id: str) -> None:
+        if gde_id in self.__working:
+            self.__working[gde_id] = False
 
 
 async def batch_verify_agenda(
@@ -141,7 +163,8 @@ async def batch_verify_agenda(
                     entry_progress, f"Citation {citation.citationID}"
                 )
         await first_stage.set_completion("Done acquiring calendar data")
-
+        # TODO Perform notification loading only on final case (?)
+        # Or find a way to avoid concurrency and duplicated pkeys on mapping to people
         ##TODO Once the frontend is working, new citations will be fetched via an API call.
         idx = 0
         async for citation in asyncio.as_completed(citation_tasks):
@@ -197,12 +220,13 @@ async def __verify_agenda_citation(
         await progress.compose(ingress_progress, f"Importing claim {citation.gdeID}")
         notification_progress = ProgressReport()
         await progress.compose(notification_progress, "Mapping notifications")
+        # Step 1: Load notification data
+        citation.notificationData, recid = await notifmanager.get_notification(
+            citation.gdeID, notification_progress
+        )
+        await notifmanager.set_working(citation.gdeID)
         async with sessionmanager.session() as db:
             with db.no_autoflush:
-                # Step 1: Load notification data
-                citation.notificationData, recid = await notifmanager.get_notification(
-                    citation.gdeID, notification_progress
-                )
 
                 # Step 2: Load claim if missing
                 local_claim = (
@@ -221,7 +245,8 @@ async def __verify_agenda_citation(
                     filter(
                         lambda x: x.secloAudID == citation.citationID,
                         local_claim.citations,
-                    ), None
+                    ),
+                    None,
                 ) or __ingress_citation(db, citation, local_claim)
 
                 await update_notifications(
@@ -241,6 +266,8 @@ async def __verify_agenda_citation(
             + f"({citation.gdeID} {citation.citationDate})"
             + str(e)
         ) from e
+    finally:
+        notifmanager.set_done(citation.gdeID)
 
 
 def __ingress_citation(
@@ -441,7 +468,7 @@ async def __ingress_lawyer(
     lawyer: SECLOLawyerData,
     local_mails: List[Email],
     local_phones: List[LawyerTelephone],
-    citation: Optional[Citation] = None,
+    citation: Citation,
 ) -> Lawyer:
     # try for local version
     local_lawyer = next(
@@ -514,55 +541,52 @@ async def __ingress_lawyer(
             local_lawyer.telephones.append(local_phone)
             db.add(local_phone)
 
-    if citation:
-        for represented in lawyer.represents:
-            for client in local_claim.employees:
-                for name in client.employeeName.replace(",", "").split():
-                    if name not in represented[1]:
-                        break
-                else:
-                    lawyer_employee_link = LawyerToEmployee(
-                        lawyer=local_lawyer,
-                        employee=client,
-                        isActualLawyer=True,
-                        isSelfRepresenting=local_lawyer.cuil == client.cuil,
-                        clientAbsent=False,
-                        citation=citation,
-                    )
-                    if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
-                        lawyer_employee_link.isSelfRepresenting = True
-                    local_lawyer.employeeLink.append(lawyer_employee_link)
-                    db.add(lawyer_employee_link)
-                    break
-            for client in local_claim.employers:
-                for name in client.employerName.replace(",", "").split():
-                    if name and name not in represented[1]:
-                        break
-                else:
-                    lawyer_employer_link = LawyerToEmployer(
-                        lawyer=local_lawyer,
-                        employer=client,
-                        isActualLawyer=True,
-                        isSelfRepresenting=False,
-                        isEmpowered=False,
-                        clientAbsent=False,
-                        citation=citation,
-                    )
-                    if (
-                        lawyer.cuil == client.cuil
-                        or lawyer.name == client.employerName
-                    ):
-                        lawyer_employer_link.isSelfRepresenting = True
-                    local_lawyer.employerLink.append(lawyer_employer_link)
-                    db.add(lawyer_employer_link)
+    for _, represented in lawyer.represents:
+        for client in local_claim.employees:
+            for name in client.employeeName.replace(",", "").split():
+                if name not in represented:
                     break
             else:
-                logger.warning(
-                    "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
-                    local_claim.recID,
-                    local_lawyer.lawyerName,
-                    represented[1],
+                lawyer_employee_link = LawyerToEmployee(
+                    lawyer=local_lawyer,
+                    employee=client,
+                    isActualLawyer=True,
+                    isSelfRepresenting=local_lawyer.cuil == client.cuil,
+                    clientAbsent=False,
+                    citation=citation,
                 )
+                if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
+                    lawyer_employee_link.isSelfRepresenting = True
+                local_lawyer.employeeLink.append(lawyer_employee_link)
+                db.add(lawyer_employee_link)
+                break
+        for client in local_claim.employers:
+            for name in client.employerName.replace(",", "").split():
+                if name and name not in represented:
+                    break
+            else:
+                lawyer_employer_link = LawyerToEmployer(
+                    lawyer=local_lawyer,
+                    employer=client,
+                    isActualLawyer=True,
+                    isSelfRepresenting=False,
+                    isEmpowered=False,
+                    clientAbsent=False,
+                    citation=citation,
+                )
+                if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
+                    lawyer_employer_link.isSelfRepresenting = True
+                local_lawyer.employerLink.append(lawyer_employer_link)
+                db.add(lawyer_employer_link)
+                break
+        else:
+            logger.warning(
+                "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed (List %s)",
+                local_claim.recID,
+                local_lawyer.lawyerName,
+                represented,
+                [e.employeeName for e in local_claim.employees] + [e.employerName for e in local_claim.employers]
+            )
     return local_lawyer
 
 
@@ -620,9 +644,7 @@ async def __ingress_beneficiary(
             registeredOn=local_claim.initDate,
             registeredFrom="SECLO",
         )
-        if not any(
-            link.email == local_mail for link in local_beneficiary.emails
-        ):
+        if not any(link.email == local_mail for link in local_beneficiary.emails):
             beneficiary_email_link = BeneficiaryEmailLink(
                 email=local_mail, beneficiary=local_beneficiary
             )
@@ -637,7 +659,7 @@ async def __ingress_claim(
     progress: ProgressReport,
     db: AsyncSession,
     rec_id: int,
-    citation: Optional[SECLOCitation] = None,
+    citation: SECLOCitation,
 ):
     local_addresses: List[Address] = []
     local_mails: List[Email] = []
@@ -663,17 +685,9 @@ async def __ingress_claim(
                 isEvilized=False,
             )
     # Step 3: Load citation if missing
-    local_citation = (
-        (
-            next(
-                filter(
-                    lambda x: x.secloAudID == citation.citationID, local_claim.citations
-                ),
-                __ingress_citation(db=db, citation=citation, local_claim=local_claim),
-            )
-        )
-        if citation
-        else None
+    local_citation = next(
+        filter(lambda x: x.secloAudID == citation.citationID, local_claim.citations),
+        __ingress_citation(db=db, citation=citation, local_claim=local_claim),
     )
     for person in claim_data.employees:
         local_person = await __ingress_employee(
@@ -793,12 +807,22 @@ def __filter_rules(name: str) -> str:
 async def __map_notification_to_owner(
     notification: SECLONotificationData,
     local_notification: SecloNotification,
-    people: List[Employee] | List[Employer] | List[Employee | Employer],
+    people: (
+        List[Employee]
+        | List[Employer]
+        | List[Beneficiary]
+        | List[Employee | Employer | Beneficiary]
+    ),
     db: AsyncSession,
 ) -> bool:
     for person in people:
         is_employer = isinstance(person, Employer)
-        fullname = person.employerName if is_employer else person.employeeName
+        is_employee = isinstance(person, Employee)
+        fullname = (
+            person.employerName
+            if is_employer
+            else person.employeeName if is_employee else person.beneficiaryName
+        )
         for name in fullname.split():
             if name.strip() not in notification.person:
                 break
@@ -808,16 +832,161 @@ async def __map_notification_to_owner(
                     employer=person, notification=local_notification
                 )
                 db.add(local_notification.employerLink)
-            else:
+            elif is_employee:
                 local_notification.employeeLink = SecloNotificationToEmployee(
                     employee=person, notification=local_notification
                 )
                 db.add(local_notification.employeeLink)
+            else:
+                local_notification.beneficiaryLink = SecloNotificationToBeneficiary(
+                    beneficiary=person, notification=local_notification
+                )
+                db.add(local_notification.beneficiaryLink)
             return True
     return False
 
 
-# TODO wtf
+async def __update_notification(
+    local_notification: SecloNotification,
+    seclo_notification: SECLONotificationData,
+    db: AsyncSession,
+    session: SECLOSession,
+):
+    local_notification.receptionDate = seclo_notification.notifiedDate
+
+    try:
+        local_notification.deliveryCode = int(seclo_notification.notificationCode)
+    except ValueError:
+        local_notification.deliveryCode = None
+
+    local_notification.deliveryDescription = (
+        seclo_notification.notificationStatus
+        + (" (Leida)" if seclo_notification.afipRead else " (No leida)")
+        if seclo_notification.notificationType == SECLONotificationType.AFIP
+        else ""
+    )
+
+    local_notification.citation.citationStatus = CitationStatus.citation_string_to_enum(
+        seclo_notification.citationStatus
+    )
+
+    if (
+        not local_notification.beneficiaryLink
+        and not local_notification.employerLink
+        and not local_notification.employeeLink
+    ):
+        local_claim = local_notification.citation.claim
+        if not await __map_notification_to_owner(
+            seclo_notification,
+            local_notification,
+            local_claim.employees + local_claim.employers + local_claim.beneficiaries,
+            db,
+        ):
+            async with SECLORecData(
+                session, local_notification.citation.recID
+            ) as seclo:
+                new_data = await seclo.get_notification_data()
+                new_notification = next(
+                    filter(
+                        lambda x: x.id == local_notification.secloPostalID, new_data
+                    ),
+                    None,
+                )
+                if not new_notification or not await __map_notification_to_owner(
+                    new_notification,
+                    local_notification,
+                    local_claim.employees
+                    + local_claim.employers
+                    + local_claim.beneficiaries,
+                    db,
+                ):
+                    logger.warning(
+                        "Couldn't match notification %d to '%s' on %d. (%d)"
+                        + "Execution will continue and notification will remain for later mapping",
+                        local_notification.secloPostalID,
+                        seclo_notification.person,
+                        local_notification.citation.recID,
+                        # Can never be None if we have a notification!
+                        datetime.strftime(
+                            local_notification.citation.citationDate,  # type: ignore
+                            "%d/%m/%Y %H:%M:%S",
+                        ),
+                    )
+
+
+async def __import_notification(
+    seclo_notification: SECLONotificationData,
+    citation: Optional[Citation],
+    db: AsyncSession,
+    session: SECLOSession,
+) -> Optional[SecloNotification]:
+    if not citation:
+        local_citations = (
+            await db.scalars(
+                select(Citation)
+                .where(Citation.citationDate == seclo_notification.citationDate)
+                .where(
+                    Citation.citationStatus
+                    == CitationStatus.citation_string_to_enum(
+                        seclo_notification.citationStatus
+                    )
+                )
+                .order_by(Citation.secloAudID)
+            )
+        ).all()
+        for local_citation in local_citations:
+            count = 0
+            for local_notification in local_citation.notifications:
+                if (
+                    local_notification.beneficiaryLink
+                    and local_notification.beneficiaryLink.beneficiary.beneficiaryName
+                    == seclo_notification.person
+                ):
+                    count += 1
+                    if count >= len(
+                        local_notification.beneficiaryLink.beneficiary.addresses
+                    ):
+                        break
+                elif (
+                    local_notification.employeeLink
+                    and local_notification.employeeLink.employee.employeeName
+                    == seclo_notification.person
+                ):
+                    count += 1
+                    if count >= len(local_notification.employeeLink.employee.addresses):
+                        break
+                elif (
+                    local_notification.employerLink
+                    and local_notification.employerLink.employer.employerName
+                    == seclo_notification.person
+                ):
+                    count += 1
+                    if count >= len(local_notification.employerLink.employer.addresses):
+                        break
+            else:
+                citation = local_citation
+                break
+        else:
+            logger.warning(
+                "Couldn't find matching citation for notification %d on %s. "
+                + "Maybe it's a new citation and it's not loaded yet. "
+                + "If this is a batch job, you can ignore this message, as it will be "
+                + "eventually loaded. Probably",
+                seclo_notification.id,
+                datetime.strftime(seclo_notification.citationDate, "%d/%m/%Y %H:%M%S"),
+            )
+            return None
+
+    local_notification = SecloNotification(
+        citation=citation,
+        notificationType=seclo_notification.notificationType,
+        secloPostalID=seclo_notification.id,
+        emissionDate=seclo_notification.generatedDate,
+    )
+    await __update_notification(local_notification, seclo_notification, db, session)
+    db.add(local_notification)
+
+
 async def update_notifications(
     rec_id: int,
     db: AsyncSession,
@@ -831,214 +1000,18 @@ async def update_notifications(
     if not notification_data:
         async with SECLORecData(session, rec_id, progress) as seclo_data:
             notification_data = await seclo_data.get_notification_data()
-    is_retry = False
-    while True:
-        for notification in notification_data:
-            local_notification = (
-                await db.scalars(
-                    select(SecloNotification).where(
-                        SecloNotification.secloPostalID == notification.id
-                    )
+
+    for notification in sorted(notification_data, key=lambda x: x.id):
+        local_notification = (
+            await db.scalars(
+                select(SecloNotification).where(
+                    SecloNotification.secloPostalID == notification.id
                 )
-            ).one_or_none()
-            if local_notification:
-                local_notification.receptionDate = notification.notifiedDate
-                try:
-                    local_notification.deliveryCode = int(notification.notificationCode)
-                except ValueError:
-                    local_notification.deliveryCode = None
-                local_notification.deliveryDescription = (
-                    notification.notificationStatus
-                    + (" (Leida)" if notification.afipRead else " (No leida)")
-                    if notification.notificationType == SECLONotificationType.AFIP
-                    else ""
-                )
-                local_notification.citation.citationStatus = (
-                    CitationStatus.citation_string_to_enum(notification.citationStatus)
-                )
-                if (
-                    not local_notification.employeeLink
-                    and not local_notification.employerLink
-                    and citation
-                ):
-                    if not await __map_notification_to_owner(
-                        notification=notification,
-                        local_notification=local_notification,
-                        people=citation.claim.employers + citation.claim.employees,
-                        db=db,
-                    ):
-                        if not is_retry:
-                            logger.info(
-                                "Couldn't match notification %d to '%s' on %d. "
-                                + "Will try updating (list: %s)",
-                                local_notification.secloPostalID,
-                                notification.person,
-                                citation.recID,
-                                [
-                                    f'"{person.employerName if isinstance(person, Employer)
-                                    else person.employeeName}"'
-                                    for person in citation.claim.employers
-                                    + citation.claim.employees
-                                ],
-                            )
-                            await __ingress_claim(
-                                rec_id=rec_id,
-                                init_date=None,
-                                session=session,
-                                progress=progress,
-                                db=db,
-                            )
-                            await db.commit()
-                            is_retry = True
-                            break
-                        logger.warning(
-                            "Couldn't match notification %d to '%s' on %d. Execution will continue",
-                            local_notification.secloPostalID,
-                            notification.person,
-                            citation.recID,
-                        )
-            else:
-                if not citation:
-                    async with SECLOCalendarParser(session, 0, 0) as cal:
-                        cal_citations = await cal.get_calendar(
-                            notification.citationDate
-                        )
-                        for cal_citation in cal_citations:
-                            if (
-                                cal_citation.citationDate == notification.citationDate
-                                and CitationStatus.citation_string_to_enum(
-                                    cal_citation.citationType
-                                )
-                                == CitationStatus.citation_string_to_enum(
-                                    notification.citationStatus
-                                )
-                            ):
-                                citation = Citation(
-                                    secloAudID=cal_citation.citationID,
-                                    citationDate=cal_citation.citationDate,
-                                    citationType=CitationType.citation_string_to_enum(
-                                        cal_citation.citationType
-                                    ),
-                                    citationStatus=CitationStatus.citation_string_to_enum(
-                                        cal_citation.citationType
-                                    ),
-                                    isCalendarPrimary=True,
-                                    recID=rec_id,
-                                    claim=db.scalar(
-                                        select(Claim).where(Claim.recID == rec_id)
-                                    ),
-                                )
-                                old_citation = (
-                                    await db.scalars(
-                                        select(Citation)
-                                        .where(Citation.recID == rec_id)
-                                        .where(Citation.isCalendarPrimary)
-                                    )
-                                ).one_or_none()
-                                if old_citation:
-                                    old_citation.isCalendarPrimary = False
-                                db.add(citation)
-                                break
-                        else:
-                            continue
-                if citation.citationDate == notification.citationDate:
-                    local_notification = SecloNotification(
-                        citation=citation,
-                        notificationType=notification.notificationType,
-                        secloPostalID=notification.id,
-                        emissionDate=notification.generatedDate,
-                        receptionDate=notification.notifiedDate,
-                        deliveryDescription=(
-                            notification.notificationStatus
-                            + (" (Leida)" if notification.afipRead else " (No leida)")
-                            if notification.notificationType
-                            == SECLONotificationType.AFIP
-                            else ""
-                        ),
-                    )
-                    try:
-                        local_notification.deliveryCode = int(
-                            notification.notificationCode
-                        )
-                    except ValueError:
-                        local_notification.deliveryCode = (
-                            00 if notification.afipRead else None
-                        )
-                    db.add(local_notification)
-                    if notification.isEmployer:
-                        if not await __map_notification_to_owner(
-                            notification=notification,
-                            local_notification=local_notification,
-                            people=citation.claim.employers,
-                            db=db,
-                        ):
-                            if not is_retry:
-                                logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "
-                                    + "Will try updating (list: %s)",
-                                    local_notification.secloPostalID,
-                                    notification.person,
-                                    citation.recID,
-                                    [
-                                        f'"{person.employerName if isinstance(person, Employer)
-                                        else person.employeeName}"'
-                                        for person in citation.claim.employers
-                                    ],
-                                )
-                                await __ingress_claim(
-                                    rec_id=rec_id,
-                                    init_date=None,
-                                    session=session,
-                                    progress=progress,
-                                    db=db,
-                                )
-                                await db.commit()
-                                is_retry = True
-                                break
-                            logger.warning(
-                                "Couldn't match notification %d to '%s' on %d. "
-                                + "Execution will continue",
-                                local_notification.secloPostalID,
-                                notification.person,
-                                citation.recID,
-                            )
-                    else:
-                        if not await __map_notification_to_owner(
-                            notification=notification,
-                            local_notification=local_notification,
-                            people=citation.claim.employees,
-                            db=db,
-                        ):
-                            if not is_retry:
-                                logger.info(
-                                    "Couldn't match notification %d to '%s' on %d. "
-                                    + "Will try updating (list: %s)",
-                                    local_notification.secloPostalID,
-                                    notification.person,
-                                    citation.recID,
-                                    [
-                                        f'"{person.employerName if isinstance(person, Employer)
-                                        else person.employeeName}"'
-                                        for person in citation.claim.employees
-                                    ],
-                                )
-                                await __ingress_claim(
-                                    rec_id=rec_id,
-                                    init_date=None,
-                                    session=session,
-                                    progress=progress,
-                                    db=db,
-                                )
-                                await db.commit()
-                                is_retry = True
-                                break
-                            logger.warning(
-                                "Couldn't match notification %d to '%s' on %d. "
-                                + "Execution will continue",
-                                local_notification.secloPostalID,
-                                notification.person,
-                                citation.recID,
-                            )
+            )
+        ).one_or_none()
+        if local_notification:
+            await __update_notification(local_notification, notification, db, session)
         else:
-            await progress.set_completion("")
-            break
+            local_notification = await __import_notification(
+                notification, citation, db, session
+            )
