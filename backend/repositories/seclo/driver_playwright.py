@@ -136,37 +136,37 @@ class SECLOSession:
         if re.match(
             r".*(\.axd|\.js|\.css|\.gif|\.jpg|\.png)", req.request.url, re.IGNORECASE
         ):
-            try:
+            if req.request.url in self.cache:
                 await req.fulfill(response=self.cache[req.request.url])
                 return
-            except KeyError as exc:
-                headers = req.request.headers
-                headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-                headers["Accept-Language"] = "es-419,es-US;q=0.9,es;q=0.8"
-                headers["Cache-Control"] = "no-cache"
-                headers["Connection"] = "keep-alive"
-                headers["Dnt"] = "1"
-                headers["Host"] = "conciliadores.trabajo.gob.ar"
-                headers["Pragma"] = "no-cache"
-                headers["sec-ch-ua-platform"] = "Windows"
-                headers["sec-fetch-mode"] = "no-cors"
-                headers["sec-fetch-site"] = "same-origin"
-                headers["sec-Gpc"] = "1"
-                ans: APIResponse
-                last_exception: PlaywrightError
-                for _ in range(MAX_ATTEMPTS):
-                    try:
-                        ans = await req.fetch(timeout=10000, headers=headers)
-                        break
-                    except PlaywrightError as ex:
-                        last_exception = ex
-                        continue
-                else:
-                    raise last_exception from exc  # type: ignore
-                if ans.status == 200:
-                    self.cache[ans.url] = ans
-                await req.fulfill(response=ans)
-                return
+            headers = req.request.headers
+            headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
+            headers["Accept-Language"] = "es-419,es-US;q=0.9,es;q=0.8"
+            headers["Cache-Control"] = "no-cache"
+            headers["Connection"] = "keep-alive"
+            headers["Dnt"] = "1"
+            headers["Host"] = "conciliadores.trabajo.gob.ar"
+            headers["Pragma"] = "no-cache"
+            headers["sec-ch-ua-platform"] = "Windows"
+            headers["sec-fetch-mode"] = "no-cors"
+            headers["sec-fetch-site"] = "same-origin"
+            headers["sec-Gpc"] = "1"
+            ans: APIResponse
+            last_exception: PlaywrightError
+            for _ in range(MAX_ATTEMPTS):
+                try:
+                    ans = await req.fetch(timeout=10000, headers=headers)
+                    break
+                except PlaywrightError as ex:
+                    last_exception = ex
+                    logger.debug(ex)
+                    continue
+            else:
+                raise last_exception  # type: ignore
+            if ans.status == 200:
+                self.cache[ans.url] = ans
+            await req.fulfill(response=ans)
+            return
         return await req.fallback()
 
     async def __aenter__(self: Self):
@@ -225,19 +225,23 @@ class SECLOSession:
                     + "?wa=wsignin1.0"
                     + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
                     + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
-                    + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
+                    + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust",
+                    wait_until="commit",
                 )
                 break
             except PlaywrightError as e:
                 last_exc = e
-                logger.warning(str(e))
+                logger.warning(e.message)
         else:
+            if (
+                await self.loginpage.locator(".error-code").is_visible()
+                and "401" in await self.loginpage.locator(".error-code").inner_text()
+            ):
+                raise UnauthorizedAccessException(
+                    "Password is wrong or server entered inactive hours"
+                )
             raise AttemptsExceededException() from last_exc  # type: ignore
 
-        if "adfs" in self.loginpage.url:
-            raise UnauthorizedAccessException(
-                "Password is wrong or server entered inactive hours"
-            )
         await self.loginpage.locator("#ctl00_Center_btnAceptar").click()
         logger.debug("Logged in.")
         try:
@@ -1219,7 +1223,9 @@ class SECLORecData(SECLOAccessor):
             else:
                 name = validated_name
 
-        internal_id = await self.page.locator("#ctl00_Center_ctl00_hdnId").get_attribute("value")
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl00_hdnId"
+        ).get_attribute("value")
         employee = SECLOEmployeeData(
             name=name,
             dni=await self.page.locator(
@@ -1227,7 +1233,7 @@ class SECLORecData(SECLOAccessor):
             ).input_value(),
             cuil=(await cuil.input_value()).replace("-", ""),
             validated=seclo_db_ok,
-            internal_id=internal_id
+            internal_id=internal_id,
         )
         employee.add_address(await self.__get_address(0))
         employee.add_birth_date(
@@ -1286,13 +1292,15 @@ class SECLORecData(SECLOAccessor):
         dni = await self.page.locator(
             "#ctl00_Center_ctl01_txtNroDocumento_txt"
         ).input_value()
-        internal_id = await self.page.locator("#ctl00_Center_ctl01_hdnId").get_attribute("value")
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl01_hdnId"
+        ).get_attribute("value")
         employer = SECLOEmployerData(
             name=name,
             dni=dni,
             cuil=cuil,
             validated=seclo_db_ok and len(cuil) > 0,
-            internal_id = internal_id
+            internal_id=internal_id,
         )
         employer.add_address(await self.__get_address(1))
         employer.add_mail(await self.__get_email(1))
@@ -1360,13 +1368,15 @@ class SECLORecData(SECLOAccessor):
         ).inner_text()
         async with SECLOClaimValidationData(session=self.session) as data:
             lawyer_person_data = await data.validate_dni(dni)
-        internal_id = await self.page.locator("#ctl00_Center_ctl02_hdnId").get_attribute("value")
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl02_hdnId"
+        ).get_attribute("value")
         lawyer = SECLOLawyerData(
             name=name,
             dni=dni,
             cuil=lawyer_person_data.cuit,
             validated=seclo_db_ok and self_validated,
-            internal_id=internal_id
+            internal_id=internal_id,
         )
         lawyer.add_address(await self.__get_address(2))
 
@@ -1423,8 +1433,16 @@ class SECLORecData(SECLOAccessor):
                     person_data.first_name
                 )
                 name = person_data.name
-        internal_id = await self.page.locator("#ctl00_Center_ctl03_hdnId").get_attribute("value")
-        other = SECLOBeneficiaryData(name=name, dni=dni, cuil=person_data.cuit, internal_id=internal_id, validated=seclo_db_ok)
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl03_hdnId"
+        ).get_attribute("value")
+        other = SECLOBeneficiaryData(
+            name=name,
+            dni=dni,
+            cuil=person_data.cuit,
+            internal_id=internal_id,
+            validated=seclo_db_ok,
+        )
         other.add_address(await self.__get_address(3))
         other.add_mail(await self.__get_email(3))
         other.add_phone(await self.__get_phone(3))
@@ -1837,6 +1855,7 @@ class SECLOCalendarParser(SECLOAccessor):
                     aud_id = re.search(r"PK:\d+", aud_id)
                     if aud_id:
                         ids.append(int(aud_id.group(0)[3:]))
+                        ids.sort()
         return ids
 
     async def __advance_calendar(self: Self, date: datetime):
@@ -2181,13 +2200,17 @@ async def test():
     ) as session:
         gdeid = 68025505
         files = [
-            ("J:\\My Drive\\68025505 Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
+            (
+                "J:\\My Drive\\68025505 Credencial requerida.pdf",
+                SECLOFileType.CREDENTIAL,
+                None,
+            ),
             ("J:\\My Drive\\68025505 DNI Requerida.pdf", SECLOFileType.DNI, None),
             ("J:\\My Drive\\68025505 Estatuto.pdf", SECLOFileType.OTHER, "Estatuto"),
         ]
         async with SECLOCitationManager(session) as seclo:
-            await seclo.set_rec_id_from_gde_id(f'EX-2026-{gdeid}')
-            recid=seclo.recid
+            await seclo.set_rec_id_from_gde_id(f"EX-2026-{gdeid}")
+            recid = seclo.recid
             # await seclo.reopen_case()
             items = await seclo.get_agreement_items()
             for item in items:
