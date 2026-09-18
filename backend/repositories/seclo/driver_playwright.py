@@ -1468,7 +1468,7 @@ class SECLORecData(SECLOAccessor):
         )
         await self._load_rec()
         seclo_db_ok = True
-        await self.page.wait_for_load_state()
+        await self.page.wait_for_load_state(timeout=60000)
         total_items = (
             await self.page.locator("#ctl00_Center_lstTrabajadores")
             .locator("li")
