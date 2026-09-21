@@ -278,6 +278,9 @@ def __ingress_citation(
         citationType=CitationType.citation_string_to_enum(citation.citationType),
         citationStatus=CitationStatus.citation_string_to_enum(citation.citationType),
     )
+    # TODO Fix bad primary citation marking method!!
+    # Marks many as primary if loading multiple citations
+    # aka the one thing it's trying to fix
     primarize = True
     if (
         local_citation.citationStatus == CitationStatus.PENDING
@@ -354,7 +357,7 @@ async def __ingress_employee(
             claimAmount=employee.claim_amount,
             category=employee.category,
             cct=employee.cct,
-            employee=local_employee
+            employee=local_employee,
         )
         db.add(rel_data)
 
@@ -529,12 +532,29 @@ async def __ingress_lawyer(
         if local_phone not in local_lawyer.telephones:
             db.add(local_phone)
 
-    for _, represented in lawyer.represents:
+    await __map_lawyer_to_client(
+        lawyer.represents, local_lawyer, local_claim, citation, db
+    )
+    return local_lawyer
+
+
+def __matches_name(name1: str, name2: str) -> bool:
+    for name in name1.split():
+        if name not in name2:
+            return False
+    return True
+
+
+async def __map_lawyer_to_client(
+    represents: List[Tuple[bool, str]],
+    local_lawyer: Lawyer,
+    local_claim: Claim,
+    citation: Citation,
+    db: AsyncSession,
+):
+    for _, represented in represents:
         for client in local_claim.employees:
-            for name in client.employeeName.split():
-                if name not in represented:
-                    break
-            else:
+            if __matches_name(client.employeeName, represented):
                 lawyer_employee_link = LawyerToEmployee(
                     lawyer=local_lawyer,
                     employee=client,
@@ -543,16 +563,16 @@ async def __ingress_lawyer(
                     clientAbsent=False,
                     citation=citation,
                 )
-                if lawyer.cuil == client.cuil or lawyer.name == client.employeeName:
+                if (
+                    local_lawyer.cuil == client.cuil
+                    or local_lawyer.lawyerName == client.employeeName
+                ):
                     lawyer_employee_link.isSelfRepresenting = True
                 db.add(lawyer_employee_link)
                 break
         else:
             for client in local_claim.employers:
-                for name in client.employerName.split():
-                    if name and name not in represented:
-                        break
-                else:
+                if __matches_name(client.employerName, represented):
                     lawyer_employer_link = LawyerToEmployer(
                         lawyer=local_lawyer,
                         employer=client,
@@ -562,7 +582,10 @@ async def __ingress_lawyer(
                         clientAbsent=False,
                         citation=citation,
                     )
-                    if lawyer.cuil == client.cuil or lawyer.name == client.employerName:
+                    if (
+                        local_lawyer.cuil == client.cuil
+                        or local_lawyer.lawyerName == client.employerName
+                    ):
                         lawyer_employer_link.isSelfRepresenting = True
                     db.add(lawyer_employer_link)
                     break
@@ -573,7 +596,6 @@ async def __ingress_lawyer(
                     local_lawyer.lawyerName,
                     represented,
                 )
-    return local_lawyer
 
 
 async def __ingress_beneficiary(
