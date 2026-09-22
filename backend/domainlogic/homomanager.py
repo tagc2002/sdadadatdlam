@@ -100,8 +100,8 @@ async def check_homologation(
     Returns:
         Optional[Homologation]: This agreement's homologation record, if homologated.
     """
-    with SECLOFileManager(credentials=creds, recid=agreement.recID) as seclo:
-        files = seclo.set_rec_id(agreement.recID).get_files()
+    with SECLOFileManager(credentials=creds, recid=agreement.rec_id) as seclo:
+        files = seclo.set_rec_id(agreement.rec_id).get_files()
         for file_index, file_entry in enumerate(files):
             if "Disposici" in file_entry[0]:  # regular homologation
                 file = seclo.get_file(file_index)
@@ -109,14 +109,14 @@ async def check_homologation(
                 if homo_info.gde_id:  # is valid (aka not a draft)
                     for homologation in agreement.homologations:
                         if (
-                            homologation.gdeID == homo_info.gde_id
+                            homologation.gde_id == homo_info.gde_id
                         ):  # already stored, bummer
                             break
                     else:  # brand new homologation
                         for (
                             homologation
                         ) in agreement.homologations:  # delete any drafts
-                            if not homologation.signedDate:
+                            if not homologation.signed_date:
                                 if homologation.document:
                                     await db.delete(homologation.document)
                                 await db.delete(homologation)
@@ -124,16 +124,16 @@ async def check_homologation(
                 else:  # is draft
                     for homologation in agreement.homologations:
                         if (
-                            not homologation.signedDate
-                            and homologation.registeredDate >= file_entry[2]
+                            not homologation.signed_date
+                            and homologation.registered_date >= file_entry[2]
                         ):  # already registered draft
                             break
                     else:
                         await save_homologation(file, homo_info, agreement, db)
             elif (
                 "Documento con firma digital" in file_entry[0]
-                and agreement.signedSendDate
-                and file_entry[2] > agreement.signedSendDate
+                and agreement.signed_send_date
+                and file_entry[2] > agreement.signed_send_date
             ):
                 file = seclo.get_file(file_index)
                 homo_info = parse_homologation_pdf(file)
@@ -156,14 +156,14 @@ async def batch_check_homologations(
     """
     missing = (await db.scalars(
         select(Agreement)
-        .distinct(Agreement.agreementID)
+        .distinct(Agreement.id)
         .join(Homologation, isouter=True)
-        .where(Agreement.signedSendDate != null())
+        .where(Agreement.signed_send_date != null())
         .where(
             or_(
-                Homologation.signedDate == null(),
+                Homologation.signed_date == null(),
                 ~Agreement.homologations.any(),
-                and_(not_(Homologation.isApproved), Homologation.complaintLink.any()),
+                and_(not_(Homologation.is_approved), Homologation.complaint_link.any()),
             )
         )
     )).all()
@@ -171,7 +171,7 @@ async def batch_check_homologations(
     found = 0
 
     for index, agreement in enumerate(missing):
-        progress.increase_progress(
+        await progress.increase_progress(
             f"Getting documentation ({index+1} of {len(missing)}) "
             + f"{"{found} found" if found > 0 else ""}",
         )

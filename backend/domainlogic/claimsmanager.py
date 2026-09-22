@@ -21,6 +21,7 @@ from domainlogic.ingressmanager import update_notifications
 from repositories.seclo.driver import (
     SECLOLoginCredentials,
 )
+from repositories.seclo.driver_playwright import SECLOSession
 
 logger = logging.getLogger(__name__)
 
@@ -39,53 +40,53 @@ async def get_claims(db: AsyncSession, params: Optional[claimFilterParams]=None)
     statement = select(Claim)
     if params:
         if params.initStartDate:
-            statement = statement.where(Claim.initDate > params.initStartDate)
+            statement = statement.where(Claim.init_date > params.initStartDate)
         if params.initEndDate:
-            statement = statement.where(Claim.initDate < params.initEndDate)
+            statement = statement.where(Claim.init_date < params.initEndDate)
         if params.isIngressed is not None:
             if not params.isIngressed:
-                statement = statement.where(Claim.calID == null())
+                statement = statement.where(Claim.cal_id == null())
             else:
-                statement = statement.where(Claim.calID != null())
+                statement = statement.where(Claim.cal_id != null())
 
         if params.citationStartDate:
             substatement = (select(Citation)
-                            .where(Citation.recID==Claim.recID)
-                            .where(Citation.citationDate >= params.citationStartDate)
+                            .where(Citation.rec_id==Claim.rec_id)
+                            .where(Citation.date >= params.citationStartDate)
                             .exists())
             statement = statement.where(substatement)
         if params.citationEndDate:
             substatement = (select(Citation)
-                            .where(Citation.recID==Claim.recID)
-                            .where(Citation.citationDate <= params.citationEndDate)
+                            .where(Citation.rec_id==Claim.rec_id)
+                            .where(Citation.date <= params.citationEndDate)
                             .exists())
             statement = statement.where(substatement)
 
         if params.isNonagreement is not None:
             substatement = (select(Nonagreement)
-                            .where(Nonagreement.recID==Claim.recID)
+                            .where(Nonagreement.rec_id==Claim.rec_id)
                             .exists())
             statement= statement.where(substatement if params.isNonagreement else ~substatement)
         if params.isAgreement is not None:
             substatement = (select(Agreement)
-                            .where(Agreement.recID==Claim.recID)
+                            .where(Agreement.rec_id==Claim.rec_id)
                             .exists())
             statement= statement.where(substatement if params.isAgreement else ~substatement)
         if params.isHomologated is not None:
             substatement = (select(Homologation).outerjoin(Homologation.agreement)
-                            .where(Agreement.recID==Claim.recID)
-                            .where(Homologation.signedDate.isNot(None))
+                            .where(Agreement.rec_id==Claim.rec_id)
+                            .where(Homologation.signed_date.isNot(None))
                             .exists())
             statement= statement.where(substatement if params.isHomologated else ~substatement)
         if params.isPaid is not None:
             substatement = (select(Payment).outerjoin(Payment.agreement)
-                            .where(Agreement.recID==Claim.recID)
+                            .where(Agreement.rec_id==Claim.rec_id)
                             .exists())
             statement= statement.where(substatement if params.isPaid else ~substatement)
         if params.isInvoiced is not None:
             substatement = (select(Invoice).outerjoin(Invoice.agreement)
-                            .where(Agreement.recID==Claim.recID)
-                            .where(Invoice.afipID.is_not(None))
+                            .where(Agreement.rec_id==Claim.rec_id)
+                            .where(Invoice.invoice_number.is_not(None))
                             .exists())
             statement= statement.where(substatement if params.isInvoiced else ~substatement)
         if params.hasPendingActions is not None:
@@ -105,7 +106,7 @@ async def get_claim(rec_id: int, db: AsyncSession) -> Claim:
     Returns:
         Claim: The desired claim
     """
-    statement = select(Claim).where(Claim.recID == rec_id)
+    statement = select(Claim).where(Claim.rec_id == rec_id)
     dbclaim = (await db.scalars(statement)).one()
     return dbclaim
 
@@ -133,8 +134,9 @@ async def get_citations(
     if with_update:
         if not creds:
             raise AttributeError("Tried to query SECLO without valid credentials")
-        await update_notifications(rec_id, creds, db=db)
-    statement = select(Citation).where(Citation.recID == rec_id)
+        async with SECLOSession(creds) as session:
+            await update_notifications(rec_id, session=session, db=db)
+    statement = select(Citation).where(Citation.rec_id == rec_id)
     dbcitations = (await db.scalars(statement)).all()
     return dbcitations
 
@@ -149,7 +151,7 @@ async def get_citation(citation_id: int, db: AsyncSession) -> Citation:
     Returns:
         Citation: The desired citation.
     """
-    statement = select(Citation).where(Citation.citationID == citation_id)
+    statement = select(Citation).where(Citation.id == citation_id)
     dbcitation = (await db.scalars(statement)).one()
     return dbcitation
 
@@ -180,16 +182,17 @@ async def get_notifications(
         if creds is None:
             raise AttributeError("Tried to query SECLO without valid credentials")
         citation = (await db.scalars(
-                select(Citation).where(Citation.citationID == citation_id)
+                select(Citation).where(Citation.id == citation_id)
             )).one()
-        await update_notifications(
-            rec_id,
-            creds,
-            citation=citation,
-            db=db
-        )
+        async with SECLOSession(creds) as session:
+            await update_notifications(
+                rec_id,
+                citation=citation,
+                db=db,
+                session=session
+            )
     statement = select(SecloNotification).where(
-        SecloNotification.citationID == citation_id
+        SecloNotification.citation_id == citation_id
     )
     db_notifications = (await db.scalars(statement)).all()
     return db_notifications

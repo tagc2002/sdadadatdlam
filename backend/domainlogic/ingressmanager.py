@@ -174,10 +174,10 @@ async def batch_verify_agenda(
                 continue
             claim = (
                 await db.scalars(
-                    select(Claim).where(Claim.gdeID == citation.result().gdeID)
+                    select(Claim).where(Claim.gde_id == citation.result().gdeID)
                 )
             ).one_or_none()
-            if claim and not claim.isEvilized:
+            if claim and not claim.is_evilized:
                 logger.debug(
                     "PRINTING entry %d of %d at %s (%s)",
                     idx + 1,
@@ -189,7 +189,7 @@ async def batch_verify_agenda(
                     f"{downloadPath}/{citation.result().citationDate}.pdf", "wb"
                 ) as file:
                     file.write(base64.b64decode(citation.result().pdfString or ""))
-                claim.isEvilized = True
+                claim.is_evilized = True
             else:
                 logger.debug(
                     "NOT PRINTING entry %d of %d at %s (%s)",
@@ -228,7 +228,7 @@ async def __verify_agenda_citation(
 
                 # Step 2: Load claim if missing
                 local_claim = (
-                    await db.scalars(select(Claim).where(Claim.gdeID == citation.gdeID))
+                    await db.scalars(select(Claim).where(Claim.gde_id == citation.gdeID))
                 ).one_or_none() or await __ingress_claim(
                     rec_id=recid,
                     init_date=citation.initDate,
@@ -241,14 +241,14 @@ async def __verify_agenda_citation(
 
                 local_citation = next(
                     filter(
-                        lambda x: x.secloAudID == citation.citationID,
+                        lambda x: x.seclo_citation_id == citation.citationID,
                         local_claim.citations,
                     ),
                     None,
                 ) or __ingress_citation(db, citation, local_claim)
 
                 await update_notifications(
-                    rec_id=local_citation.recID,
+                    rec_id=local_citation.rec_id,
                     session=session,
                     progress=notification_progress,
                     citation=local_citation,
@@ -272,41 +272,41 @@ def __ingress_citation(
     db: AsyncSession, citation: SECLOCitation, local_claim: Claim
 ) -> Citation:
     local_citation = Citation(
-        secloAudID=citation.citationID,
-        citationDate=citation.citationDate,
-        recID=local_claim.recID,
-        citationType=CitationType.citation_string_to_enum(citation.citationType),
-        citationStatus=CitationStatus.citation_string_to_enum(citation.citationType),
+        seclo_citation_id=citation.citationID,
+        date=citation.citationDate,
+        rec_id=local_claim.rec_id,
+        type=CitationType.citation_string_to_enum(citation.citationType),
+        status=CitationStatus.citation_string_to_enum(citation.citationType),
     )
     # TODO Fix bad primary citation marking method!!
     # Marks many as primary if loading multiple citations
     # aka the one thing it's trying to fix
     primarize = True
     if (
-        local_citation.citationStatus == CitationStatus.PENDING
-        and local_citation.citationType == CitationType.FIRST
+        local_citation.status == CitationStatus.PENDING
+        and local_citation.type == CitationType.FIRST
     ):
         for saved_citation in local_claim.citations:
             if (
-                saved_citation.isCalendarPrimary
-                and saved_citation.citationStatus == CitationStatus.PENDING
-                and saved_citation.citationType != CitationType.FIRST
+                saved_citation.is_calendar_primary
+                and saved_citation.status == CitationStatus.PENDING
+                and saved_citation.type != CitationType.FIRST
             ):
                 primarize = False
             if (
-                saved_citation.isCalendarPrimary
-                and saved_citation.citationStatus == CitationStatus.PENDING
-                and saved_citation.citationType == CitationType.FIRST
+                saved_citation.is_calendar_primary
+                and saved_citation.status == CitationStatus.PENDING
+                and saved_citation.type == CitationType.FIRST
                 and (
-                    (saved_citation.citationDate or datetime.now())
-                    > (local_citation.citationDate or datetime.now())
+                    (saved_citation.date or datetime.now())
+                    > (local_citation.date or datetime.now())
                 )
             ):
                 primarize = False
         if primarize:
             for saved_citation in local_claim.citations:
-                saved_citation.isCalendarPrimary = False
-    local_citation.isCalendarPrimary = primarize
+                saved_citation.is_calendar_primary = False
+    local_citation.is_calendar_primary = primarize
     local_claim.citations.append(local_citation)
     db.add(local_citation)
     return local_citation
@@ -324,37 +324,37 @@ async def __ingress_employee(
         filter(lambda x: x.cuil == employee.cuil, local_claim.employees), None
     )
     if local_employee:
-        local_employee.employeeName = employee.name
+        local_employee.name = employee.name
         local_employee.dni = employee.dni or 0
         local_employee.cuil = employee.cuil
-        local_employee.isValidated = employee.validated
+        local_employee.is_validated = employee.validated
     else:
         local_employee = Employee(
-            employeeName=employee.name,
+            name=employee.name,
             dni=employee.dni,
             cuil=employee.cuil,
-            isValidated=employee.validated,
-            birthDate=employee.birth_date,
+            is_validated=employee.validated,
+            birth_date=employee.birth_date,
             claim=local_claim,
-            headerName=employee.name.split(" ")[0],
+            header_name=employee.name.split(" ")[0],
         )
         db.add(local_employee)
 
     # rest of data
     if not any(
-        rel.startDate == employee.start_date
-        and rel.endDate == employee.end_date
+        rel.start_date == employee.start_date
+        and rel.end_date == employee.end_date
         and rel.wage == employee.wage
         and rel.cct == employee.cct
-        and rel.claimAmount == employee.claim_amount
+        and rel.claim_amount == employee.claim_amount
         and rel.category == employee.category
-        for rel in local_employee.relationshipData
+        for rel in local_employee.relationship_data
     ):
         rel_data = EmployeeRelationshipData(
-            startDate=employee.start_date,
-            endDate=employee.end_date,
+            start_date=employee.start_date,
+            end_date=employee.end_date,
             wage=employee.wage,
-            claimAmount=employee.claim_amount,
+            claim_amount=employee.claim_amount,
             category=employee.category,
             cct=employee.cct,
             employee=local_employee,
@@ -381,8 +381,8 @@ async def __ingress_employee(
             None,
         ) or Email(
             email=employee.mail,
-            registeredOn=local_claim.initDate,
-            registeredFrom="SECLO",
+            registered_on=local_claim.init_date,
+            registered_from="SECLO",
         )
         if not any(link.email == local_mail for link in local_employee.emails):
             employee_email_link = EmployeeEmailLink(
@@ -403,26 +403,26 @@ async def __ingress_employer(
     local_employer = next(
         filter(
             lambda x: x.cuil == employer.cuil
-            or x.employerName == employer.name.strip(),
+            or x.name == employer.name.strip(),
             local_claim.employers,
         ),
         None,
     )
     if local_employer:
-        local_employer.employerName = employer.name
+        local_employer.name = employer.name
         local_employer.cuil = employer.cuil
-        local_employer.isValidated = employer.validated
+        local_employer.is_validated = employer.validated
     else:
         local_employer = Employer(
             claim=local_claim,
-            employerName=employer.name,
+            name=employer.name,
             cuil=employer.cuil,
-            personType=employer.person_type,
-            requiredAs=RequiredAsType.UNKNOWN,
-            SECLORegisterDate=local_claim.initDate,
-            mustRegisterSECLO=False,
-            isValidated=employer.validated,
-            headerName=__filter_rules(employer.name),
+            person_type=employer.person_type,
+            required_as=RequiredAsType.UNKNOWN,
+            seclo_registered_date=local_claim.init_date,
+            must_register_seclo=False,
+            is_validated=employer.validated,
+            header_name=__filter_rules(employer.name),
         )
         db.add(local_employer)
 
@@ -446,8 +446,8 @@ async def __ingress_employer(
             None,
         ) or Email(
             email=employer.mail,
-            registeredOn=local_claim.initDate,
-            registeredFrom="SECLO",
+            registered_on=local_claim.init_date,
+            registered_from="SECLO",
         )
         if not any(link.email == local_mail for link in local_employer.emails):
             employer_email_link = EmployerEmailLink(
@@ -471,18 +471,18 @@ async def __ingress_lawyer(
     )
     if local_lawyer:
         local_lawyer.cuil = lawyer.cuil
-        local_lawyer.lawyerName = lawyer.name
-        local_lawyer.isValidated = lawyer.validated
+        local_lawyer.name = lawyer.name
+        local_lawyer.is_validated = lawyer.validated
     else:
         local_lawyer = Lawyer(
             claim=local_claim,
-            lawyerName=lawyer.name,
+            name=lawyer.name,
             cuil=lawyer.cuil,
             t=lawyer.t,
             f=lawyer.f,
-            registeredOn=local_claim.initDate,
-            registeredFrom="SECLO",
-            isValidated=lawyer.validated,
+            registered_on=local_claim.init_date,
+            registered_from="SECLO",
+            is_validated=lawyer.validated,
         )
         db.add(local_lawyer)
 
@@ -495,8 +495,8 @@ async def __ingress_lawyer(
             None,
         ) or Email(
             email=lawyer.mail,
-            registeredOn=local_claim.initDate,
-            registeredFrom="SECLO",
+            registered_on=local_claim.init_date,
+            registered_from="SECLO",
         )
         if not any(link.email == local_mail for link in local_lawyer.emails):
             lawyer_email_link = LawyerEmailLink(email=local_mail, lawyer=local_lawyer)
@@ -510,7 +510,7 @@ async def __ingress_lawyer(
             ),
             None,
         ) or LawyerTelephone(
-            telephone=lawyer.phone, obtainedFrom="SECLO", lawyer=local_lawyer
+            telephone=lawyer.phone, registered_from="SECLO", lawyer=local_lawyer
         )
         if local_phone not in local_lawyer.telephones:
             db.add(local_phone)
@@ -526,7 +526,7 @@ async def __ingress_lawyer(
         ) or LawyerTelephone(
             telephone=lawyer.mobile_phone[1],
             prefix=lawyer.mobile_phone[0],
-            obtainedFrom="SECLO",
+            registered_from="SECLO",
             lawyer=local_lawyer,
         )
         if local_phone not in local_lawyer.telephones:
@@ -554,46 +554,46 @@ async def __map_lawyer_to_client(
 ):
     for _, represented in represents:
         for client in local_claim.employees:
-            if __matches_name(client.employeeName, represented):
+            if __matches_name(client.name, represented):
                 lawyer_employee_link = LawyerToEmployee(
                     lawyer=local_lawyer,
                     employee=client,
-                    isActualLawyer=True,
-                    isSelfRepresenting=local_lawyer.cuil == client.cuil,
-                    clientAbsent=False,
+                    is_actual_lawyer=True,
+                    is_self_representing=local_lawyer.cuil == client.cuil,
+                    client_absent=False,
                     citation=citation,
                 )
                 if (
                     local_lawyer.cuil == client.cuil
-                    or local_lawyer.lawyerName == client.employeeName
+                    or local_lawyer.name == client.name
                 ):
-                    lawyer_employee_link.isSelfRepresenting = True
+                    lawyer_employee_link.is_self_representing = True
                 db.add(lawyer_employee_link)
                 break
         else:
             for client in local_claim.employers:
-                if __matches_name(client.employerName, represented):
+                if __matches_name(client.name, represented):
                     lawyer_employer_link = LawyerToEmployer(
                         lawyer=local_lawyer,
                         employer=client,
-                        isActualLawyer=True,
-                        isSelfRepresenting=False,
-                        isEmpowered=False,
-                        clientAbsent=False,
+                        is_actual_lawyer=True,
+                        is_self_representing=False,
+                        is_empowered=False,
+                        clientabsent=False,
                         citation=citation,
                     )
                     if (
                         local_lawyer.cuil == client.cuil
-                        or local_lawyer.lawyerName == client.employerName
+                        or local_lawyer.name == client.name
                     ):
-                        lawyer_employer_link.isSelfRepresenting = True
+                        lawyer_employer_link.is_self_representing = True
                     db.add(lawyer_employer_link)
                     break
             else:
                 logger.warning(
                     "recID %s: Couldn't match lawyer %s to client %s. Execution will proceed",
-                    local_claim.recID,
-                    local_lawyer.lawyerName,
+                    local_claim.rec_id,
+                    local_lawyer.name,
                     represented,
                 )
 
@@ -614,16 +614,16 @@ async def __ingress_beneficiary(
         None,
     )
     if local_beneficiary:
-        local_beneficiary.beneficiaryName = beneficiary.name
+        local_beneficiary.name = beneficiary.name
         local_beneficiary.cuil = beneficiary.cuil
         local_beneficiary.dni = beneficiary.dni  # type: ignore
     else:
         local_beneficiary = Beneficiary(
             claim=local_claim,
-            beneficiaryName=beneficiary.name,
+            name=beneficiary.name,
             cuil=beneficiary.cuil,
             dni=beneficiary.dni,
-            birthDate=beneficiary.birth_date,
+            birth_date=beneficiary.birth_date,
         )
         db.add(local_beneficiary)
 
@@ -647,8 +647,8 @@ async def __ingress_beneficiary(
             None,
         ) or Email(
             email=beneficiary.mail,
-            registeredOn=local_claim.initDate,
-            registeredFrom="SECLO",
+            registered_on=local_claim.init_date,
+            registered_from="SECLO",
         )
         if not any(link.email == local_mail for link in local_beneficiary.emails):
             beneficiary_email_link = BeneficiaryEmailLink(
@@ -675,23 +675,23 @@ async def __ingress_claim(
         claim_data = await rec_data.get_claim_data()
         try:
             local_claim = (
-                await db.scalars(select(Claim).where(Claim.recID == rec_id))
+                await db.scalars(select(Claim).where(Claim.rec_id == rec_id))
             ).one()
             logger.debug("FOUND")
         except NoResultFound:
             local_claim = Claim(
-                recID=claim_data.recid,
-                gdeID=claim_data.gdeid,
-                initDate=init_date,
-                initByEmployee=claim_data.init_by_worker,
+                rec_id=claim_data.recid,
+                gde_id=claim_data.gdeid,
+                init_date=init_date,
+                is_init_by_employee=claim_data.init_by_worker,
                 title="",
-                claimType=ClaimType.enums_to_int(claim_data.claims),
-                legalStuff=claim_data.legal_stuff,
-                isEvilized=False,
+                type=ClaimType.enums_to_int(claim_data.claims),
+                legal_stuff=claim_data.legal_stuff,
+                is_evilized=False,
             )
     # Step 3: Load citation if missing
     local_citation = next(
-        filter(lambda x: x.secloAudID == citation.citationID, local_claim.citations),
+        filter(lambda x: x.seclo_citation_id == citation.citationID, local_claim.citations),
         __ingress_citation(db=db, citation=citation, local_claim=local_claim),
     )
     for person in claim_data.employees:
@@ -783,13 +783,13 @@ def get_cal_header(local_claim: Claim) -> str:
     employee_names = []
     employer_names = []
     for employee in local_claim.employees:
-        if employee.headerName not in employee_names:
-            employee_names.append(employee.headerName)
+        if employee.header_name not in employee_names:
+            employee_names.append(employee.header_name)
     for employer in local_claim.employers:
-        if employer.headerName not in employer_names:
-            employer_names.append(employer.headerName)
+        if employer.header_name not in employer_names:
+            employer_names.append(employer.header_name)
 
-    if local_claim.initByEmployee:
+    if local_claim.is_init_by_employee:
         for index, name in enumerate(employee_names):
             header += (", " if index > 0 else "") + name
         header += " c/ "
@@ -824,29 +824,29 @@ async def __map_notification_to_owner(
         is_employer = isinstance(person, Employer)
         is_employee = isinstance(person, Employee)
         fullname = (
-            person.employerName
+            person.name
             if is_employer
-            else person.employeeName if is_employee else person.beneficiaryName
+            else person.name if is_employee else person.name
         )
         for name in fullname.split():
             if name.strip() not in notification.person:
                 break
         else:
             if is_employer:
-                local_notification.employerLink = SecloNotificationToEmployer(
+                local_notification.employer_link = SecloNotificationToEmployer(
                     employer=person, notification=local_notification
                 )
-                db.add(local_notification.employerLink)
+                db.add(local_notification.employer_link)
             elif is_employee:
-                local_notification.employeeLink = SecloNotificationToEmployee(
+                local_notification.employee_link = SecloNotificationToEmployee(
                     employee=person, notification=local_notification
                 )
-                db.add(local_notification.employeeLink)
+                db.add(local_notification.employee_link)
             else:
-                local_notification.beneficiaryLink = SecloNotificationToBeneficiary(
+                local_notification.beneficiary_link = SecloNotificationToBeneficiary(
                     beneficiary=person, notification=local_notification
                 )
-                db.add(local_notification.beneficiaryLink)
+                db.add(local_notification.beneficiary_link)
             return True
     return False
 
@@ -857,28 +857,28 @@ async def __update_notification(
     db: AsyncSession,
     session: SECLOSession,
 ):
-    local_notification.receptionDate = seclo_notification.notifiedDate
+    local_notification.reception_date = seclo_notification.notifiedDate
 
     try:
-        local_notification.deliveryCode = int(seclo_notification.notificationCode)
+        local_notification.delivery_code = int(seclo_notification.notificationCode)
     except ValueError:
-        local_notification.deliveryCode = None
+        local_notification.delivery_code = None
 
-    local_notification.deliveryDescription = (
+    local_notification.delivery_description = (
         seclo_notification.notificationStatus
         + (" (Leida)" if seclo_notification.afipRead else " (No leida)")
         if seclo_notification.notificationType == SECLONotificationType.AFIP
         else ""
     )
 
-    local_notification.citation.citationStatus = CitationStatus.citation_string_to_enum(
+    local_notification.citation.status = CitationStatus.citation_string_to_enum(
         seclo_notification.citationStatus
     )
 
     if (
-        not local_notification.beneficiaryLink
-        and not local_notification.employerLink
-        and not local_notification.employeeLink
+        not local_notification.beneficiary_link
+        and not local_notification.employer_link
+        and not local_notification.employee_link
     ):
         local_claim = local_notification.citation.claim
         if not await __map_notification_to_owner(
@@ -888,12 +888,12 @@ async def __update_notification(
             db,
         ):
             async with SECLORecData(
-                session, local_notification.citation.recID
+                session, local_notification.citation.rec_id
             ) as seclo:
                 new_data = await seclo.get_notification_data()
                 new_notification = next(
                     filter(
-                        lambda x: x.id == local_notification.secloPostalID, new_data
+                        lambda x: x.id == local_notification.seclo_notification_id, new_data
                     ),
                     None,
                 )
@@ -908,9 +908,9 @@ async def __update_notification(
                     logger.warning(
                         "Couldn't match notification %d to '%s' on %d. (%d)"
                         + "Execution will continue and notification will remain for later mapping",
-                        local_notification.secloPostalID,
+                        local_notification.seclo_notification_id,
                         seclo_notification.person,
-                        local_notification.citation.recID,
+                        local_notification.citation.rec_id,
                         # Can never be None if we have a notification!
                         datetime.strftime(
                             local_notification.citation.citationDate,  # type: ignore
@@ -929,44 +929,44 @@ async def __import_notification(
         local_citations = (
             await db.scalars(
                 select(Citation)
-                .where(Citation.citationDate == seclo_notification.citationDate)
+                .where(Citation.date == seclo_notification.citationDate)
                 .where(
-                    Citation.citationStatus
+                    Citation.status
                     == CitationStatus.citation_string_to_enum(
                         seclo_notification.citationStatus
                     )
                 )
-                .order_by(Citation.secloAudID)
+                .order_by(Citation.seclo_citation_id)
             )
         ).all()
         for local_citation in local_citations:
             count = 0
             for local_notification in local_citation.notifications:
                 if (
-                    local_notification.beneficiaryLink
-                    and local_notification.beneficiaryLink.beneficiary.beneficiaryName
+                    local_notification.beneficiary_link
+                    and local_notification.beneficiary_link.beneficiary.name
                     == seclo_notification.person
                 ):
                     count += 1
                     if count >= len(
-                        local_notification.beneficiaryLink.beneficiary.addresses
+                        local_notification.beneficiary_link.beneficiary.addresses
                     ):
                         break
                 elif (
-                    local_notification.employeeLink
-                    and local_notification.employeeLink.employee.employeeName
+                    local_notification.employee_link
+                    and local_notification.employee_link.employee.name
                     == seclo_notification.person
                 ):
                     count += 1
-                    if count >= len(local_notification.employeeLink.employee.addresses):
+                    if count >= len(local_notification.employee_link.employee.addresses):
                         break
                 elif (
-                    local_notification.employerLink
-                    and local_notification.employerLink.employer.employerName
+                    local_notification.employer_link
+                    and local_notification.employer_link.employer.name
                     == seclo_notification.person
                 ):
                     count += 1
-                    if count >= len(local_notification.employerLink.employer.addresses):
+                    if count >= len(local_notification.employer_link.employer.addresses):
                         break
             else:
                 citation = local_citation
@@ -984,9 +984,9 @@ async def __import_notification(
 
     local_notification = SecloNotification(
         citation=citation,
-        notificationType=seclo_notification.notificationType,
-        secloPostalID=seclo_notification.id,
-        emissionDate=seclo_notification.generatedDate,
+        type=seclo_notification.notificationType,
+        seclo_notification_id=seclo_notification.id,
+        emission_date=seclo_notification.generatedDate,
     )
     await __update_notification(local_notification, seclo_notification, db, session)
     db.add(local_notification)
@@ -1010,7 +1010,7 @@ async def update_notifications(
         local_notification = (
             await db.scalars(
                 select(SecloNotification).where(
-                    SecloNotification.secloPostalID == notification.id
+                    SecloNotification.seclo_notification_id == notification.id
                 )
             )
         ).one_or_none()

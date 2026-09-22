@@ -45,17 +45,17 @@ async def get_cal_summary(local_claim: Claim, db: AsyncSession) -> str:
     summary = ""
     last_citation = (await db.scalars(
         select(Citation).where(
-            Citation.recID == local_claim.recID, Citation.isCalendarPrimary
+            Citation.rec_id == local_claim.rec_id, Citation.is_calendar_primary
         )
     )).one()
-    if last_citation.agreement and last_citation.agreement.secloEmailNotificationDate:
+    if last_citation.agreement and last_citation.agreement.seclo_notified_date:
         summary += "C/A "
-    elif last_citation.nonagreement and last_citation.nonagreement.sentDate:
+    elif last_citation.nonagreement and last_citation.nonagreement.sent_on:
         summary += "S/A "
     else:
         summary += "SECLO "
     gde_display = (
-        local_claim.gdeID.split("-")[2] + "/" + local_claim.gdeID.split("-")[1]
+        local_claim.gde_id.split("-")[2] + "/" + local_claim.gde_id.split("-")[1]
     )
     summary += gde_display + " " + local_claim.title
     return summary
@@ -74,10 +74,10 @@ def citation_member_to_google_attendee(
     """
     attendees = []
     if isinstance(citation_member, LawyerToEmployee):
-        name = citation_member.employee.employeeName
+        name = citation_member.employee.name
         mails = citation_member.employee.emails
     else:
-        name = citation_member.employer.employerName
+        name = citation_member.employer.name
         mails = citation_member.employer.emails
     for email_link in mails:
         email = email_link.email.email
@@ -85,7 +85,7 @@ def citation_member_to_google_attendee(
         if email_link.email.description:
             description += f"({email_link.email.description})"
         attendees.append(GoogleEventAttendee(email=email, displayName=description))
-    name = citation_member.lawyer.lawyerName
+    name = citation_member.lawyer.name
     mails = citation_member.lawyer.emails
     for email_link in mails:
         email = email_link.email.email
@@ -110,9 +110,9 @@ def citation_members_to_google_attendees(
     attendees = []
     logger.info(
         "Total links: %d",
-        len(citation.lawyerToEmployee) + len(citation.lawyerToEmployer),
+        len(citation.lawyer_to_employee) + len(citation.lawyer_to_employer),
     )
-    for person_link in citation.lawyerToEmployee + citation.lawyerToEmployer:
+    for person_link in citation.lawyer_to_employee + citation.lawyer_to_employer:
         attendees.extend(citation_member_to_google_attendee(person_link))
     return attendees
 
@@ -135,13 +135,13 @@ def get_event_color(citation: Citation) -> GoogleColorList:
     is_nonagreement = False
     is_standby = False
 
-    for employee in citation.lawyerToEmployee:
+    for employee in citation.lawyer_to_employee:
         if employee.employee and len(employee.employee.emails):
             has_worker_email = True
         if employee.lawyer and len(employee.lawyer.emails):
             has_worker_lawyer_email = True
 
-    for employer in citation.lawyerToEmployer:
+    for employer in citation.lawyer_to_employer:
         if employer.employer and len(employer.employer.emails):
             has_employer_email = True
         if employer.lawyer and len(employer.lawyer.emails):
@@ -149,12 +149,12 @@ def get_event_color(citation: Citation) -> GoogleColorList:
 
     if citation.agreement:
         is_agreement = True
-        if citation.agreement.isDraft:
+        if citation.agreement.is_draft:
             is_draft = True
     if citation.nonagreement:
         is_nonagreement = True
 
-    if citation.citationType == CitationType.STANDBY:
+    if citation.type == CitationType.STANDBY:
         is_standby = True
 
     if is_standby:
@@ -184,16 +184,16 @@ async def insert_missing_citations(db: AsyncSession):
     """
     citations = await db.scalars(
         select(Citation)
-        .where(Citation.citationType == CitationType.FIRST)
-        .where(Citation.isCalendarPrimary)
+        .where(Citation.type == CitationType.FIRST)
+        .where(Citation.is_calendar_primary)
     )
     # TODO update to use search_events
     cal_citations = list_events(10, 20)
     for citation in citations:
-        if not citation.claim.calID:
+        if not citation.claim.cal_id:
             for event in cal_citations:
-                if citation.claim.gdeID.split("-")[2] in (event.summary or ""):
-                    citation.claim.calID = event.id
+                if citation.claim.gde_id.split("-")[2] in (event.summary or ""):
+                    citation.claim.cal_id = event.id
                     break
             else:
                 await create_event_for_citation(citation, db=db)
@@ -218,16 +218,16 @@ async def create_event_for_citation(citation: Citation, db: AsyncSession) -> Opt
             email=MALIGNA_EMAIL, displayName=MALIGNA_NAME, responseStatus="accepted"
         )
     )
-    if not citation.citationDate:
+    if not citation.date:
         raise ValueError("Citation doesn't have date")
     cal_event = GoogleEvent(
         summary = await get_cal_summary(citation.claim, db=db),
         description=DEFAULT_DESCRIPTION,
         start=GoogleEventDate(
-            dateTime=citation.citationDate.isoformat(), timeZone=DEFAULT_TIMEZONE
+            dateTime=citation.date.isoformat(), timeZone=DEFAULT_TIMEZONE
         ),
         end=GoogleEventDate(
-            dateTime=(citation.citationDate + timedelta(minutes=30)).isoformat(),
+            dateTime=(citation.date + timedelta(minutes=30)).isoformat(),
             timeZone=DEFAULT_TIMEZONE,
         ),
         attendees=attendees,
@@ -243,7 +243,7 @@ async def create_event_for_citation(citation: Citation, db: AsyncSession) -> Opt
     )
     cal_event = create_event(cal_event)
     if cal_event:
-        citation.claim.calID = cal_event.id
+        citation.claim.cal_id = cal_event.id
     return cal_event
 
 
@@ -265,24 +265,23 @@ async def get_calendar_id(rec_id: int, db: AsyncSession, with_update: bool = Fal
     Returns:
         str: _description_
     """
-    claim = (await db.scalars(select(Claim).where(Claim.recID == rec_id))).one()
+    claim = (await db.scalars(select(Claim).where(Claim.rec_id == rec_id))).one()
     citation = (await db.scalars(
         select(Citation)
-        .where(Citation.recID == rec_id)
-        .where(Citation.isCalendarPrimary)
+        .where(Citation.rec_id == rec_id)
+        .where(Citation.is_calendar_primary)
     )).one()
-    claim.calID = None
-    if claim.calID:
-        return claim.calID or ""
-    events = search_events(claim.gdeID.split("-")[2])
+    if claim.cal_id:
+        return claim.cal_id or ""
+    events = search_events(claim.gde_id.split("-")[2])
     for event in events:
-        if claim.gdeID.split("-")[1] in (event.summary or ""):
-            claim.calID = event.id
+        if claim.gde_id.split("-")[1] in (event.summary or ""):
+            claim.cal_id = event.id
             return event.id or ""
     if with_update:
         event = await create_event_for_citation(citation, db=db)
         if event:
-            claim.calID = event.id
+            claim.cal_id = event.id
             return event.id or ""
         raise ValueError(f"Couldn't create calendar citation for {rec_id}")
     raise ValueError(f"Couldn't find calendar citation for {rec_id}")

@@ -29,16 +29,16 @@ class Base(DeclarativeBase, AsyncAttrs):
 
 class Claim(Base):
     __tablename__ = "claim"
-    recID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
-    gdeID: Mapped[str] = mapped_column(String(64), unique=True)
+    rec_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    gde_id: Mapped[str] = mapped_column(String(64), unique=True)
     title: Mapped[str]
-    initDate: Mapped[datetime]
-    initByEmployee: Mapped[bool] = mapped_column(default=True)
-    claimType: Mapped[int]
-    isEvilized: Mapped[bool]
-    legalStuff: Mapped[str]
-    isDomestic: Mapped[bool | None]
-    calID: Mapped[str | None]
+    init_date: Mapped[datetime]
+    is_init_by_employee: Mapped[bool] = mapped_column(default=True)
+    type: Mapped[int]
+    is_evilized: Mapped[bool]
+    legal_stuff: Mapped[str]
+    is_domestic: Mapped[bool | None]
+    cal_id: Mapped[str | None]
 
     citations: Mapped[List["Citation"]] = relationship(lazy="selectin", back_populates="claim")
     employees: Mapped[List["Employee"]] = relationship(lazy="selectin", back_populates="claim")
@@ -48,7 +48,7 @@ class Claim(Base):
     agreements: Mapped[List["Agreement"]] = relationship(lazy="selectin", back_populates="claim")
     complaints: Mapped[List["Complaint"]] = relationship(lazy="selectin", back_populates="claim")
     nonagreements: Mapped[List["Nonagreement"]] = relationship(lazy="selectin", back_populates="claim")
-    documentationLink: Mapped[List["DocumentationClaimLink"]] = relationship(lazy="selectin", 
+    documentation_link: Mapped[List["DocumentationClaimLink"]] = relationship(lazy="selectin", 
         back_populates="claim"
     )
     # def __repr__(self) -> str:
@@ -57,28 +57,28 @@ class Claim(Base):
 
 class Citation(Base):
     __tablename__ = "citation"
-    citationID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    secloAudID: Mapped[int | None] = mapped_column(unique=True)
-    citationDate: Mapped[datetime | None]
-    citationType: Mapped[CitationType]
-    citationStatus: Mapped[CitationStatus]
-    citationSummary: Mapped[str | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    seclo_citation_id: Mapped[int | None] = mapped_column(unique=True)
+    date: Mapped[datetime | None]
+    type: Mapped[CitationType]
+    status: Mapped[CitationStatus]
+    summary: Mapped[str | None]
     notes: Mapped[str | None]
-    isCalendarPrimary: Mapped[bool]
-    meetID: Mapped[str | None]
+    is_calendar_primary: Mapped[bool]
+    meet_id: Mapped[str | None]
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="citations")
     notifications: Mapped[List["SecloNotification"]] = relationship(lazy="selectin", 
         back_populates="citation"
     )
-    lawyerToEmployee: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
+    lawyer_to_employee: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
         back_populates="citation"
     )
-    lawyerToEmployer: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
+    lawyer_to_employer: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
         back_populates="citation"
     )
-    lawyerToBeneficiary: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
+    lawyer_to_beneficiary: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
         back_populates="citation"
     )
     agreement: Mapped["Agreement | None"] = relationship(lazy="selectin", back_populates="citation")
@@ -88,47 +88,44 @@ class Citation(Base):
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Citation):
-            if self.citationID == other.citationID and self.citationID is not None:
+            if self.id == other.id and self.id is not None:
                 return True
-            elif self.secloAudID == other.secloAudID and self.secloAudID is not None:
+            if self.seclo_citation_id == other.seclo_citation_id and self.seclo_citation_id is not None:
                 return True
-            elif (
-                self.recID == other.recID
-                and self.citationDate == other.citationDate
-                and self.citationStatus == other.citationStatus
-                and self.citationType == other.citationType
+            if (
+                self.rec_id == other.rec_id
+                and self.date == other.date
+                and self.status == other.status
+                and self.type == other.type
             ):
                 return True
-            else:
-                return False
-        else:
-            return False
+        return False
 
 
 class Documentation(Base):
     __tablename__ = "documentation"
-    docID: Mapped[int] = mapped_column(primary_key=True)
-    docName: Mapped[str]
-    docType: Mapped[DocType]
-    fileDriveID: Mapped[str | None]
-    importedDate: Mapped[datetime | None]
-    importedFromSeclo: Mapped[bool]
-    mimeType: Mapped[str]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    type: Mapped[DocType]
+    drive_file_id: Mapped[str | None]
+    imported_date: Mapped[datetime | None]
+    is_imported_from_seclo: Mapped[bool]
+    mime_type: Mapped[str]
     file: Mapped[bytes | None]
 
-    employeeLink: Mapped[List["DocumentationEmployeeLink"]] = relationship(lazy="selectin", 
+    employee_link: Mapped[List["DocumentationEmployeeLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
-    employerLink: Mapped[List["DocumentationEmployerLink"]] = relationship(lazy="selectin", 
+    employer_link: Mapped[List["DocumentationEmployerLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
-    lawyerLink: Mapped[List["DocumentationLawyerLink"]] = relationship(lazy="selectin", 
+    lawyer_link: Mapped[List["DocumentationLawyerLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
-    agreementLink: Mapped[List["DocumentationAgreementLink"]] = relationship(lazy="selectin", 
+    agreement_link: Mapped[List["DocumentationAgreementLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
-    nonagreementLink: Mapped[List["DocumentationNonagreementLink"]] = relationship(lazy="selectin", 
+    nonagreement_link: Mapped[List["DocumentationNonagreementLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
     homologation: Mapped["Homologation | None"] = relationship(lazy="selectin", 
@@ -136,77 +133,77 @@ class Documentation(Base):
     )
     invoice: Mapped["Invoice | None"] = relationship(lazy="selectin", back_populates="document")
     payment: Mapped["Payment | None"] = relationship(lazy="selectin", back_populates="document")
-    observationLink: Mapped["DocumentationObservationLink | None"] = relationship(lazy="selectin", 
+    observation_link: Mapped["DocumentationObservationLink | None"] = relationship(lazy="selectin", 
         back_populates="document"
     )
-    claimLink: Mapped[List["DocumentationClaimLink"]] = relationship(lazy="selectin", 
+    claim_link: Mapped[List["DocumentationClaimLink"]] = relationship(lazy="selectin", 
         back_populates="document"
     )
 
 
 class DocumentationClaimLink(Base):
-    __tablename__ = "documentationClaimLink"
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    __tablename__ = "documentation_claim_link"
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"), primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"), primary_key=True)
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="claimLink")
-    claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="documentationLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="claim_link")
+    claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="documentation_link")
 
 
 class SecloNotification(Base):
-    __tablename__ = "secloNotification"
-    notificationID: Mapped[int] = mapped_column(primary_key=True)
-    citationID: Mapped[int] = mapped_column(ForeignKey("citation.citationID"))
-    notificationType: Mapped[SECLONotificationType]
-    secloPostalID: Mapped[int | None]
-    emissionDate: Mapped[datetime]
-    receptionDate: Mapped[datetime | None]
-    deliveryCode: Mapped[int | None]
-    deliveryDescription: Mapped[str | None]
+    __tablename__ = "seclo_notification"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    citation_id: Mapped[int] = mapped_column(ForeignKey("citation.id"))
+    type: Mapped[SECLONotificationType]
+    seclo_notification_id: Mapped[int | None]
+    emission_date: Mapped[datetime]
+    reception_date: Mapped[datetime | None]
+    delivery_code: Mapped[int | None]
+    delivery_description: Mapped[str | None]
 
     citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="notifications")
 
-    employeeLink: Mapped["SecloNotificationToEmployee | None"] = relationship(lazy="selectin", 
+    employee_link: Mapped["SecloNotificationToEmployee | None"] = relationship(lazy="selectin", 
         back_populates="notification"
     )
-    beneficiaryLink: Mapped["SecloNotificationToBeneficiary | None"] = relationship(lazy="selectin", 
+    beneficiary_link: Mapped["SecloNotificationToBeneficiary | None"] = relationship(lazy="selectin", 
         back_populates="notification"
     )
-    employerLink: Mapped["SecloNotificationToEmployer | None"] = relationship(lazy="selectin", 
+    employer_link: Mapped["SecloNotificationToEmployer | None"] = relationship(lazy="selectin", 
         back_populates="notification"
     )
 
 
 class BankAccount(Base):
-    __tablename__ = "bankAccount"
+    __tablename__ = "bank_account"
 
-    accountID: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     cbu: Mapped[str | None]
     bank: Mapped[str]
     alias: Mapped[str | None]
-    accountNumber: Mapped[str | None]
-    accountType: Mapped[str | None]
+    account_number: Mapped[str | None]
+    account_type: Mapped[str | None]
     cuit: Mapped[str | None]
-    isValidated: Mapped[bool]
-    accountOwner: Mapped[str | None]
+    is_validated: Mapped[bool]
+    owner: Mapped[str | None]
 
-    employee: Mapped["Employee | None"] = relationship(lazy="selectin", back_populates="bankAccount")
-    beneficiary: Mapped["Beneficiary | None"] = relationship(lazy="selectin", back_populates="bankAccount")
-    lawyers: Mapped[List["Lawyer"]] = relationship(lazy="selectin", back_populates="bankAccount")
-    lawyerDirectory: Mapped[List["LawyerDirectory"]] = relationship(lazy="selectin", 
-        back_populates="bankAccount"
+    employee: Mapped["Employee | None"] = relationship(lazy="selectin", back_populates="bank_account")
+    beneficiary: Mapped["Beneficiary | None"] = relationship(lazy="selectin", back_populates="bank_account")
+    lawyers: Mapped[List["Lawyer"]] = relationship(lazy="selectin", back_populates="bank_account")
+    lawyer_directory: Mapped[List["LawyerDirectory"]] = relationship(lazy="selectin", 
+        back_populates="bank_account"
     )
-    lawfirmDirectory: Mapped["LawfirmDirectory | None"] = relationship(lazy="selectin", 
-        back_populates="bankAccount"
+    lawfirm_directory: Mapped["LawfirmDirectory | None"] = relationship(lazy="selectin", 
+        back_populates="bank_account"
     )
 
 
 class Address(Base):
     __tablename__ = "address"
 
-    addressID: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     province: Mapped[str]
     district: Mapped[str]
     county: Mapped[str]
@@ -241,12 +238,11 @@ class Address(Base):
                 cpa=data.cpa,
                 extra=data.bonus_data,
             )
-        else:
-            raise TypeError("Null address")
+        raise TypeError("Null address")
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Address):
-            if self.addressID == other.addressID and self.addressID is not None:
+            if self.id == other.id and self.id is not None:
                 return True
             return (
                 self.province == other.province
@@ -265,49 +261,47 @@ class Address(Base):
 class Email(Base):
     __tablename__ = "email"
 
-    emailID: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str]
-    registeredOn: Mapped[datetime | None]
-    registeredFrom: Mapped[str | None]
+    registered_on: Mapped[datetime | None]
+    registered_from: Mapped[str | None]
     description: Mapped[str | None]
 
     employees: Mapped[List["EmployeeEmailLink"]] = relationship(lazy="selectin", back_populates="email")
     employers: Mapped[List["EmployerEmailLink"]] = relationship(lazy="selectin", back_populates="email")
     beneficiaries: Mapped[List["BeneficiaryEmailLink"]] = relationship(lazy="selectin", back_populates="email")
     lawyers: Mapped[List["LawyerEmailLink"]] = relationship(lazy="selectin", back_populates="email")
-    lawyerDirectory: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(lazy="selectin", 
+    lawyer_directory: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(lazy="selectin", 
         back_populates="email"
     )
-    lawfirmDirectory: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(lazy="selectin", 
+    lawfirm_directory: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(lazy="selectin", 
         back_populates="email"
     )
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Email):
-            if self.emailID == other.emailID and self.emailID is not None:
+            if self.id == other.id and self.id is not None:
                 return True
-            else:
-                return self.email == other.email
-        else:
-            return False
+            return self.email == other.email
+        return False
 
 
 class Employee(Base):
     __tablename__ = "employee"
 
-    employeeID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    employeeName: Mapped[str]
-    headerName: Mapped[str]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    name: Mapped[str]
+    header_name: Mapped[str]
     dni: Mapped[int]
     cuil: Mapped[str | None]
-    isValidated: Mapped[bool]
-    birthDate: Mapped[datetime | None]
-    bankAccountID: Mapped[int | None] = mapped_column(
-        ForeignKey("bankAccount.accountID")
+    is_validated: Mapped[bool]
+    birth_date: Mapped[datetime | None]
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account.id")
     )
 
-    bankAccount: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="employee")
+    bank_account: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="employee")
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="employees")
     addresses: Mapped[List["EmployeeAddressLink"]] = relationship(lazy="selectin", 
         back_populates="employee"
@@ -319,64 +313,61 @@ class Employee(Base):
     documentation: Mapped[List["DocumentationEmployeeLink"]] = relationship(lazy="selectin", 
         back_populates="employee"
     )
-    lawyerLink: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
+    lawyer_link: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
         back_populates="employee"
     )
     hemiagreement: Mapped["Hemiagreement | None"] = relationship(lazy="selectin", 
         back_populates="employee"
     )
-    relationshipData: Mapped[List["EmployeeRelationshipData"]] = relationship(lazy="selectin", 
+    relationship_data: Mapped[List["EmployeeRelationshipData"]] = relationship(lazy="selectin", 
         back_populates="employee"
     )
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Employee):
-            if other.employeeID == self.employeeID and self.employeeID is not None:
+            if other.id == self.id and self.id is not None:
                 return True
-            elif other.dni == self.dni:
+            if other.dni == self.dni:
                 return True
-            elif other.cuil == self.cuil:
+            if other.cuil == self.cuil:
                 return True
-            else:
-                return False
-        else:
-            return False
+        return False
 
 
 class EmployeeRelationshipData(Base):
-    __tablename__ = "employeeRelationshipData"
-    employeeDataID: Mapped[int] = mapped_column(primary_key=True)
-    employeeID: Mapped[int] = mapped_column(ForeignKey("employee.employeeID"))
-    startDate: Mapped[datetime | None]
-    endDate: Mapped[datetime | None]
+    __tablename__ = "employee_relationship_data"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employee.id"))
+    start_date: Mapped[datetime | None]
+    end_date: Mapped[datetime | None]
     wage: Mapped[Decimal | None]
-    claimAmount: Mapped[Decimal | None]
+    claim_amount: Mapped[Decimal | None]
     category: Mapped[str]
     cct: Mapped[str]
 
-    employee: Mapped[Employee] = relationship(lazy="selectin", back_populates="relationshipData")
+    employee: Mapped[Employee] = relationship(lazy="selectin", back_populates="relationship_data")
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployeeRelationshipData):
             return (
-                self.employeeID == other.employeeID
-                and self.startDate == other.startDate
-                and self.endDate == other.endDate
+                self.employee_id == other.employee_id
+                and self.start_date == other.start_date
+                and self.end_date == other.end_date
                 and self.wage == other.wage
                 and self.cct == other.cct
-                and self.claimAmount == other.claimAmount
+                and self.claim_amount == other.claim_amount
                 and self.category == other.category
             )
         return False
 
 
 class EmployeeAddressLink(Base):
-    __tablename__ = "employeeAddressLink"
-    employeeID: Mapped[int] = mapped_column(
-        ForeignKey("employee.employeeID"), primary_key=True
+    __tablename__ = "employee_address_link"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id"), primary_key=True
     )
-    addressID: Mapped[int] = mapped_column(
-        ForeignKey("address.addressID"), primary_key=True
+    address_id: Mapped[int] = mapped_column(
+        ForeignKey("address.id"), primary_key=True
     )
     description: Mapped[str | None]
 
@@ -386,17 +377,16 @@ class EmployeeAddressLink(Base):
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployeeAddressLink):
             return self.employee == other.employee and self.address == other.address
-        else:
-            return False
+        return False
 
 
 class EmployeeEmailLink(Base):
-    __tablename__ = "employeeEmailLink"
+    __tablename__ = "employee_email_link"
 
-    employeeID: Mapped[int] = mapped_column(
-        ForeignKey("employee.employeeID"), primary_key=True
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("email.id"), primary_key=True)
     description: Mapped[str | None]
 
     employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="emails")
@@ -405,61 +395,60 @@ class EmployeeEmailLink(Base):
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployeeEmailLink):
             return self.employee == other.employee and self.email == other.email
-        else:
-            return False
+        return False
 
 
 class SecloNotificationToEmployee(Base):
-    __tablename__ = "secloNotificationToEmployee"
+    __tablename__ = "seclo_notification_to_employee"
 
-    employeeID: Mapped[int] = mapped_column(
-        ForeignKey("employee.employeeID"), primary_key=True
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id"), primary_key=True
     )
-    notificationID: Mapped[int] = mapped_column(
-        ForeignKey("secloNotification.notificationID"), primary_key=True
+    notification_id: Mapped[int] = mapped_column(
+        ForeignKey("seclo_notification.id"), primary_key=True
     )
 
     employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(lazy="selectin", 
-        back_populates="employeeLink"
+        back_populates="employee_link"
     )
 
 class Beneficiary(Base):
     __tablename__ = "beneficiary"
-    beneficiaryID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    beneficiaryName: Mapped[str]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    name: Mapped[str]
     dni: Mapped[int]
     cuil: Mapped[str | None]
-    birthDate: Mapped[datetime | None]
-    bankAccountID: Mapped[int | None] = mapped_column(
-        ForeignKey("bankAccount.accountID")
+    birth_date: Mapped[datetime | None]
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account.id")
     )
 
-    bankAccount: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="beneficiary")
+    bank_account: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="beneficiary")
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="beneficiaries")
     addresses: Mapped[List["BeneficiaryAddressLink"]] = relationship(lazy="selectin", 
         back_populates="beneficiary"
     )
     notifications: Mapped[List["SecloNotificationToBeneficiary"]] = relationship(lazy="selectin", back_populates="beneficiary")
     emails: Mapped[List["BeneficiaryEmailLink"]] = relationship(lazy="selectin", back_populates="beneficiary")
-    lawyerLink: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
+    lawyer_link: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
         back_populates="beneficiary"
     )
     
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Beneficiary):
-            return ((self.beneficiaryID == other.beneficiaryID and self.beneficiaryID is not None) or
+            return ((self.id == other.id and self.id is not None) or
             (self.dni == other.dni))
         return False
     
 class BeneficiaryAddressLink(Base):
-    __tablename__ = 'beneficiaryAddressLink'
-    beneficiaryID: Mapped[int] = mapped_column(
-        ForeignKey("beneficiary.beneficiaryID"), primary_key=True
+    __tablename__ = 'beneficiary_address_link'
+    beneficiary_id: Mapped[int] = mapped_column(
+        ForeignKey("beneficiary.id"), primary_key=True
     )
-    addressID: Mapped[int] = mapped_column(
-        ForeignKey("address.addressID"), primary_key=True
+    address_id: Mapped[int] = mapped_column(
+        ForeignKey("address.id"), primary_key=True
     )
     description: Mapped[str | None]
 
@@ -472,12 +461,12 @@ class BeneficiaryAddressLink(Base):
         return False
 
 class BeneficiaryEmailLink(Base):
-    __tablename__ = 'beneficiaryEmailLink'
-    beneficiaryID: Mapped[int] = mapped_column(
-        ForeignKey("beneficiary.beneficiaryID"), primary_key=True
+    __tablename__ = 'beneficiary_email_link'
+    beneficiary_id: Mapped[int] = mapped_column(
+        ForeignKey("beneficiary.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(
-        ForeignKey("email.emailID"), primary_key=True
+    email_id: Mapped[int] = mapped_column(
+        ForeignKey("email.id"), primary_key=True
     )
     description: Mapped[str | None]
 
@@ -490,34 +479,34 @@ class BeneficiaryEmailLink(Base):
         return False
 
 class SecloNotificationToBeneficiary(Base):
-    __tablename__ = "secloNotificationToBeneficiary"
+    __tablename__ = "seclo_notification_to_beneficiary"
 
-    beneficiaryID: Mapped[int] = mapped_column(
-        ForeignKey("beneficiary.beneficiaryID"), primary_key=True
+    beneficiary_id: Mapped[int] = mapped_column(
+        ForeignKey("beneficiary.id"), primary_key=True
     )
-    notificationID: Mapped[int] = mapped_column(
-        ForeignKey("secloNotification.notificationID"), primary_key=True
+    notification_id: Mapped[int] = mapped_column(
+        ForeignKey("seclo_notification.id"), primary_key=True
     )
 
     beneficiary: Mapped["Beneficiary"] = relationship(lazy="selectin", back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(lazy="selectin", 
-        back_populates="beneficiaryLink"
+        back_populates="beneficiary_link"
     )        
 
 class Employer(Base):
     __tablename__ = "employer"
 
-    employerID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    employerName: Mapped[str]
-    headerName: Mapped[str | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    name: Mapped[str]
+    header_name: Mapped[str | None]
     cuil: Mapped[str | None]
-    personType: Mapped[PersonType]
-    requiredAs: Mapped[RequiredAsType]
-    SECLORegisterDate: Mapped[datetime | None]
-    mustRegisterSECLO: Mapped[bool]
-    isValidated: Mapped[bool]
-    isDesisted: Mapped[bool]
+    person_type: Mapped[PersonType]
+    required_as: Mapped[RequiredAsType]
+    seclo_registered_date: Mapped[datetime | None]
+    must_register_seclo: Mapped[bool]
+    is_validated: Mapped[bool]
+    is_desisted: Mapped[bool]
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="employers")
     addresses: Mapped[List["EmployerAddressLink"]] = relationship(lazy="selectin", 
@@ -530,36 +519,33 @@ class Employer(Base):
     documentation: Mapped[List["DocumentationEmployerLink"]] = relationship(lazy="selectin", 
         back_populates="employer"
     )
-    lawyerLink: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
+    lawyer_link: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
         back_populates="employer"
     )
-    agreementExtension: Mapped[List["AgreementExtension"]] = relationship(lazy="selectin", 
+    agreement_extension: Mapped[List["AgreementExtension"]] = relationship(lazy="selectin", 
         back_populates="employer"
     )
-    agreementDesist: Mapped[List["AgreementDesist"]] = relationship(lazy="selectin", 
+    agreement_desist: Mapped[List["AgreementDesist"]] = relationship(lazy="selectin", 
         back_populates="employer"
     )
     invoices: Mapped[List["Invoice"]] = relationship(lazy="selectin", back_populates="employer")
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, Employer):
-            if other.employerID == self.employerID and self.employerID is not None:
+            if other.id == self.id and self.id is not None:
                 return True
-            elif other.cuil == self.cuil:
+            if other.cuil == self.cuil:
                 return True
-            else:
-                return False
-        else:
-            return False
+        return False
 
 
 class EmployerAddressLink(Base):
-    __tablename__ = "employerAddressLink"
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    __tablename__ = "employer_address_link"
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
-    addressID: Mapped[int] = mapped_column(
-        ForeignKey("address.addressID"), primary_key=True
+    address_id: Mapped[int] = mapped_column(
+        ForeignKey("address.id"), primary_key=True
     )
     description: Mapped[str | None]
 
@@ -569,17 +555,16 @@ class EmployerAddressLink(Base):
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployerAddressLink):
             return self.employer == other.employer and self.address == other.address
-        else:
-            return False
+        return False
 
 
 class EmployerEmailLink(Base):
-    __tablename__ = "employerEmailLink"
+    __tablename__ = "employer_email_link"
 
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("email.id"), primary_key=True)
     description: Mapped[str | None]
 
     employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="emails")
@@ -587,70 +572,70 @@ class EmployerEmailLink(Base):
 
     def __eq__(self: Self, other) -> bool:
         if isinstance(other, EmployerEmailLink):
-            if self.employerID is not None and self.emailID is not None:
-                return self.employerID == other.employerID and self.emailID == other.emailID 
+            if self.employer_id is not None and self.email_id is not None:
+                return self.employer_id == other.employer_id and self.email_id == other.email_id 
             return self.employer == other.employer and self.email == other.email
         return False
 
 
 class SecloNotificationToEmployer(Base):
-    __tablename__ = "secloNotificationToEmployer"
+    __tablename__ = "seclo_notification_to_employer"
 
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
-    notificationID: Mapped[int] = mapped_column(
-        ForeignKey("secloNotification.notificationID"), primary_key=True
+    notification_id: Mapped[int] = mapped_column(
+        ForeignKey("seclo_notification.id"), primary_key=True
     )
 
     employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="notifications")
     notification: Mapped["SecloNotification"] = relationship(lazy="selectin", 
-        back_populates="employerLink"
+        back_populates="employer_link"
     )
 
 
 class Lawyer(Base):
     __tablename__ = "lawyer"
 
-    lawyerID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    lawyerName: Mapped[str | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    name: Mapped[str | None]
     t: Mapped[int]
     f: Mapped[int]
-    registeredOn: Mapped[datetime | None]
-    registeredFrom: Mapped[str | None]
+    registered_on: Mapped[datetime | None]
+    registered_from: Mapped[str | None]
     cuil: Mapped[str | None]
-    isValidated: Mapped[bool]
-    hasVAT: Mapped[bool]
-    bankAccountID: Mapped[int | None] = mapped_column(
-        ForeignKey("bankAccount.accountID")
+    is_validated: Mapped[bool]
+    has_vat: Mapped[bool]
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account.id")
     )
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="lawyers")
-    bankAccount: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="lawyers")
+    bank_account: Mapped["BankAccount | None"] = relationship(lazy="selectin", back_populates="lawyers")
     emails: Mapped[List["LawyerEmailLink"]] = relationship(lazy="selectin", back_populates="lawyer")
     documentation: Mapped[List["DocumentationLawyerLink"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
-    employeeLink: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
+    employee_link: Mapped[List["LawyerToEmployee"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
-    beneficiaryLink: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
+    beneficiary_link: Mapped[List["LawyerToBeneficiary"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
-    employerLink: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
+    employer_link: Mapped[List["LawyerToEmployer"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
     telephones: Mapped[List["LawyerTelephone"]] = relationship(lazy="selectin", back_populates="lawyer")
 
 
 class LawyerEmailLink(Base):
-    __tablename__ = "lawyerEmailLink"
+    __tablename__ = "lawyer_email_link"
 
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyer.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("email.id"), primary_key=True)
     description: Mapped[str | None]
 
     lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="emails")
@@ -658,171 +643,169 @@ class LawyerEmailLink(Base):
 
 
 class LawyerToEmployee(Base):
-    __tablename__ = "lawyerToEmployee"
+    __tablename__ = "lawyer_to_employee"
 
-    employeeID: Mapped[int] = mapped_column(
-        ForeignKey("employee.employeeID"), primary_key=True
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id"), primary_key=True
     )
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyer.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer.id"), primary_key=True
     )
-    citationID: Mapped[int] = mapped_column(
-        ForeignKey("citation.citationID"), primary_key=True
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citation.id"), primary_key=True
     )
-    isActualLawyer: Mapped[bool]
-    isSelfRepresenting: Mapped[bool]
-    clientAbsent: Mapped[bool]
+    is_actual_lawyer: Mapped[bool]
+    is_self_representing: Mapped[bool]
+    client_absent: Mapped[bool]
     description: Mapped[str]
 
-    employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="lawyerLink")
-    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="employeeLink")
-    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyerToEmployee")
+    employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="lawyer_link")
+    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="employee_link")
+    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyer_to_employee")
 
 class LawyerToBeneficiary(Base):
-    __tablename__ = "lawyerToBeneficiary"
+    __tablename__ = "lawyer_to_beneficiary"
 
-    beneficiaryID: Mapped[int] = mapped_column(
-        ForeignKey("beneficiary.beneficiaryID"), primary_key=True
+    beneficiary_id: Mapped[int] = mapped_column(
+        ForeignKey("beneficiary.id"), primary_key=True
     )
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyer.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer.id"), primary_key=True
     )
-    citationID: Mapped[int] = mapped_column(
-        ForeignKey("citation.citationID"), primary_key=True
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citation.id"), primary_key=True
     )
-    isActualLawyer: Mapped[bool]
-    isSelfRepresenting: Mapped[bool]
-    clientAbsent: Mapped[bool]
+    is_actual_lawyer: Mapped[bool]
+    is_self_representing: Mapped[bool]
+    client_absent: Mapped[bool]
     description: Mapped[str]
 
-    beneficiary: Mapped["Beneficiary"] = relationship(lazy="selectin", back_populates="lawyerLink")
-    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="beneficiaryLink")
-    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyerToBeneficiary")
+    beneficiary: Mapped["Beneficiary"] = relationship(lazy="selectin", back_populates="lawyer_link")
+    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="beneficiary_link")
+    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyer_to_beneficiary")
 
 
 class LawyerToEmployer(Base):
-    __tablename__ = "lawyerToEmployer"
+    __tablename__ = "lawyer_to_employer"
 
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyer.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer.id"), primary_key=True
     )
-    citationID: Mapped[int] = mapped_column(
-        ForeignKey("citation.citationID"), primary_key=True
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citation.id"), primary_key=True
     )
-    isActualLawyer: Mapped[bool]
-    isEmpowered: Mapped[bool]
-    isSelfRepresenting: Mapped[bool]
-    clientAbsent: Mapped[bool]
+    is_actual_lawyer: Mapped[bool]
+    is_empowered: Mapped[bool]
+    is_self_representing: Mapped[bool]
+    client_absent: Mapped[bool]
     description: Mapped[str]
 
-    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="lawyerLink")
-    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="employerLink")
-    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyerToEmployer")
+    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="lawyer_link")
+    lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="employer_link")
+    citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="lawyer_to_employer")
 
 
 class DocumentationEmployeeLink(Base):
-    __tablename__ = "documentationEmployeeLink"
+    __tablename__ = "documentation_employee_link"
 
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    employeeID: Mapped[int] = mapped_column(
-        ForeignKey("employee.employeeID"), primary_key=True
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employee.id"), primary_key=True
     )
     description: Mapped[str | None]
-    isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime | None]
+    is_required: Mapped[bool]
+    seclo_uploaded_on: Mapped[datetime | None]
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="employeeLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="employee_link")
     employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="documentation")
 
 
 class DocumentationEmployerLink(Base):
-    __tablename__ = "documentationEmployerLink"
+    __tablename__ = "documentation_employer_link"
 
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
     description: Mapped[str | None]
-    isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime | None]
+    is_required: Mapped[bool]
+    seclo_uploaded_on: Mapped[datetime | None]
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="employerLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="employer_link")
     employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="documentation")
 
 
 class DocumentationLawyerLink(Base):
-    __tablename__ = "documentationLawyerLink"
+    __tablename__ = "documentation_lawyer_link"
 
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyer.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer.id"), primary_key=True
     )
     description: Mapped[str | None]
-    isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime | None]
+    is_required: Mapped[bool]
+    seclo_uploaded_on: Mapped[datetime | None]
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="lawyerLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="lawyer_link")
     lawyer: Mapped["Lawyer"] = relationship(lazy="selectin", back_populates="documentation")
 
 
 class LawyerTelephone(Base):
-    __tablename__ = "lawyerTelephone"
+    __tablename__ = "lawyer_telephone"
 
-    telID: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    lawyerID: Mapped[int] = mapped_column(ForeignKey("lawyer.lawyerID"))
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    lawyer_id: Mapped[int] = mapped_column(ForeignKey("lawyer.id"))
     telephone: Mapped[int] = mapped_column(BigInteger)
     prefix: Mapped[int]
     description: Mapped[str | None]
-    obtainedFrom: Mapped[str | None]
+    registered_from: Mapped[str | None]
 
     lawyer: Mapped["Lawyer | None"] = relationship(lazy="selectin", back_populates="telephones")
-    lawyerDirectory: Mapped[List["LawyerDirectoryPhoneLink"]] = relationship(lazy="selectin", 
+    lawyer_directory: Mapped[List["LawyerDirectoryPhoneLink"]] = relationship(lazy="selectin", 
         back_populates="telephone"
     )
-    lawfirmDirectory: Mapped[List["LawfirmDirectoryPhoneLink"]] = relationship(lazy="selectin", 
+    lawfirm_directory: Mapped[List["LawfirmDirectoryPhoneLink"]] = relationship(lazy="selectin", 
         back_populates="telephone"
     )
 
     def __eq__(self: Self, other: object) -> bool:
         return isinstance(other, LawyerTelephone) and (
-            (self.telID == other.telID and self.telID is not None) or
+            (self.id == other.id and self.id is not None) or
             (self.telephone == other.telephone and self.prefix == other.prefix and self.lawyer == other.lawyer)
         )
-
-
 
 class Agreement(Base):
     __tablename__ = "agreement"
 
-    agreementID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
-    citationID: Mapped[int | None] = mapped_column(ForeignKey("citation.citationID"))
-    malignaHonorary: Mapped[Decimal]
-    malignaHonoraryExpirationRelative: Mapped[timedelta]
-    isUncashable: Mapped[bool]
-    initReason: Mapped[str]
-    claimedObjects: Mapped[str]
-    isDomestic: Mapped[bool]
-    hasCertificateDelivery: Mapped[bool]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
+    citation_id: Mapped[int | None] = mapped_column(ForeignKey("citation.id"))
+    maligna_honorary: Mapped[Decimal]
+    maligna_honorary_expiration_relative: Mapped[timedelta]
+    is_uncashable: Mapped[bool]
+    init_reason: Mapped[str]
+    claimed_objects: Mapped[str]
+    is_domestic: Mapped[bool]
+    has_certificate_delivery: Mapped[bool]
     notes: Mapped[str | None]
-    initialSendDate: Mapped[datetime | None]
-    lastSendDate: Mapped[datetime | None]
-    isDraft: Mapped[bool]
-    secloEmailNotificationDate: Mapped[datetime | None]
-    signedSendDate: Mapped[datetime | None]
+    initial_send_date: Mapped[datetime | None]
+    last_send_date: Mapped[datetime | None]
+    is_draft: Mapped[bool]
+    seclo_notified_date: Mapped[datetime | None]
+    signed_send_date: Mapped[datetime | None]
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="agreements")
     citation: Mapped["Citation | None"] = relationship(lazy="selectin", back_populates="agreement")
-    documentationLink: Mapped[List["DocumentationAgreementLink"]] = relationship(lazy="selectin", 
+    documentation_link: Mapped[List["DocumentationAgreementLink"]] = relationship(lazy="selectin", 
         back_populates="agreement"
     )
     extension: Mapped[List["AgreementExtension"]] = relationship(lazy="selectin", 
@@ -838,68 +821,68 @@ class Agreement(Base):
     invoices: Mapped[List["Invoice"]] = relationship(lazy="selectin", back_populates="agreement")
     payments: Mapped[List["Payment"]] = relationship(lazy="selectin", back_populates="agreement")
     observations: Mapped[List["Observation"]] = relationship(lazy="selectin", back_populates="agreement")
-    complaintLink: Mapped[List["ComplaintAgreementLink"]] = relationship(lazy="selectin", 
+    complaint_link: Mapped[List["ComplaintAgreementLink"]] = relationship(lazy="selectin", 
         back_populates="agreement"
     )
-    bratInvoice: Mapped["BratAgreement | None"] = relationship(lazy="selectin", 
-        back_populates="agreementLink"
+    brat_invoice: Mapped["BratAgreement | None"] = relationship(lazy="selectin", 
+        back_populates="agreement_link"
     )
 
 
 class DocumentationAgreementLink(Base):
-    __tablename__ = "documentationAgreementLink"
+    __tablename__ = "documentation_agreement_link"
 
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    agreementID: Mapped[int] = mapped_column(
-        ForeignKey("agreement.agreementID"), primary_key=True
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("agreement.id"), primary_key=True
     )
-    isRequired: Mapped[bool]
-    SECLOUploadedOn: Mapped[datetime | None]
+    is_required: Mapped[bool]
+    seclo_uploaded_on: Mapped[datetime | None]
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="agreementLink")
-    agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="documentationLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="agreement_link")
+    agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="documentation_link")
 
 
 class AgreementExtension(Base):
-    __tablename__ = "agreementExtension"
+    __tablename__ = "agreement_extension"
 
-    agreementID: Mapped[int] = mapped_column(
-        ForeignKey("agreement.agreementID"), primary_key=True
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("agreement.id"), primary_key=True
     )
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="extension")
-    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="agreementExtension")
+    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="agreement_extension")
 
 
 class AgreementDesist(Base):
-    __tablename__ = "agreementDesist"
+    __tablename__ = "agreement_desist"
 
-    agreementID: Mapped[int] = mapped_column(
-        ForeignKey("agreement.agreementID"), primary_key=True
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("agreement.id"), primary_key=True
     )
-    employerID: Mapped[int] = mapped_column(
-        ForeignKey("employer.employerID"), primary_key=True
+    employer_id: Mapped[int] = mapped_column(
+        ForeignKey("employer.id"), primary_key=True
     )
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="desist")
-    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="agreementDesist")
+    employer: Mapped["Employer"] = relationship(lazy="selectin", back_populates="agreement_desist")
 
 
 class Hemiagreement(Base):
     __tablename__ = "hemiagreement"
 
-    hemiID: Mapped[int] = mapped_column(primary_key=True)
-    agreementID: Mapped[int] = mapped_column(ForeignKey("agreement.agreementID"))
-    amountARS: Mapped[Decimal]
-    amountUSD: Mapped[Decimal | None]
-    employeeID: Mapped[int] = mapped_column(ForeignKey("employee.employeeID"))
-    honoraryRelative: Mapped[int | None]
-    honoraryAbsolute: Mapped[Decimal | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreement.id"))
+    amount_ars: Mapped[Decimal]
+    amount_usd: Mapped[Decimal | None]
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employee.id"))
+    honorary_relative: Mapped[int | None]
+    honorary_absolute: Mapped[Decimal | None]
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="hemiagreements")
     employee: Mapped["Employee"] = relationship(lazy="selectin", back_populates="hemiagreement")
@@ -909,16 +892,16 @@ class Hemiagreement(Base):
 
 
 class PaymentInstallment(Base):
-    __tablename__ = "paymentInstallment"
+    __tablename__ = "payment_installment"
 
-    installmentID: Mapped[int] = mapped_column(primary_key=True)
-    hemiID: Mapped[int] = mapped_column(ForeignKey("hemiagreement.hemiID"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hemi_id: Mapped[int] = mapped_column(ForeignKey("hemiagreement.id"))
     amount: Mapped[Decimal]
-    expirationRelativeHomo: Mapped[timedelta | None]
-    expirationRelativeSign: Mapped[timedelta | None]
-    expirationAbsolute: Mapped[datetime | None]
-    wasPaidBefore: Mapped[bool]
-    customPaymentMethod: Mapped[str | None]
+    expiration_relative_homo: Mapped[timedelta | None]
+    expiration_relative_sign: Mapped[timedelta | None]
+    expiration_absolute: Mapped[datetime | None]
+    was_paid_before: Mapped[bool]
+    custom_payment_method: Mapped[str | None]
 
     hemiagreement: Mapped["Hemiagreement"] = relationship(lazy="selectin", back_populates="installments")
 
@@ -926,21 +909,21 @@ class PaymentInstallment(Base):
 class Homologation(Base):
     __tablename__ = "homologation"
 
-    homoID: Mapped[int] = mapped_column(primary_key=True)
-    gdeID: Mapped[str | None]
-    agreementID: Mapped[int] = mapped_column(ForeignKey("agreement.agreementID"))
-    signedDate: Mapped[datetime | None]
-    isApproved: Mapped[bool]
-    registeredDate: Mapped[datetime]
-    notificationDate: Mapped[datetime | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gde_id: Mapped[str | None]
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreement.id"))
+    signed_date: Mapped[datetime | None]
+    is_approved: Mapped[bool]
+    registered_date: Mapped[datetime]
+    notification_date: Mapped[datetime | None]
     description: Mapped[str | None]
-    docID: Mapped[int | None] = mapped_column(ForeignKey("documentation.docID"))
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documentation.id"))
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="homologations")
     document: Mapped["Documentation | None"] = relationship(lazy="selectin", 
         back_populates="homologation"
     )
-    complaintLink: Mapped[List["ComplaintHomologationLink"]] = relationship(lazy="selectin", 
+    complaint_link: Mapped[List["ComplaintHomologationLink"]] = relationship(lazy="selectin", 
         back_populates="homologation"
     )
 
@@ -948,36 +931,36 @@ class Homologation(Base):
 class Invoice(Base):
     __tablename__ = "invoice"
 
-    invoiceID: Mapped[int] = mapped_column(primary_key=True)
-    agreementID: Mapped[int] = mapped_column(ForeignKey("agreement.agreementID"))
-    afipID: Mapped[str | None]
-    emissionDate: Mapped[datetime | None]
-    employerID: Mapped[int | None] = mapped_column(ForeignKey("employer.employerID"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreement.id"))
+    invoice_number: Mapped[str | None]
+    emission_date: Mapped[datetime | None]
+    employer_id: Mapped[int | None] = mapped_column(ForeignKey("employer.id"))
     amount: Mapped[Decimal]
     description: Mapped[str | None]
-    isCredit: Mapped[bool]
-    relatedTo: Mapped[int | None] = mapped_column(ForeignKey("invoice.invoiceID"))
-    docID: Mapped[int | None] = mapped_column(ForeignKey("documentation.docID"))
+    is_credit: Mapped[bool]
+    parent_invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoice.id"))
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documentation.id"))
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="invoices")
     document: Mapped["Documentation | None"] = relationship(lazy="selectin", back_populates="invoice")
     employer: Mapped["Employer | None"] = relationship(lazy="selectin", back_populates="invoices")
-    parentInvoice: Mapped["Invoice | None"] = relationship(lazy="selectin")
+    parent_invoice: Mapped["Invoice | None"] = relationship(lazy="selectin")
 
 
 class Payment(Base):
     __tablename__ = "payment"
 
-    paymentID: Mapped[int] = mapped_column(primary_key=True)
-    agreementID: Mapped[int] = mapped_column(ForeignKey("agreement.agreementID"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreement.id"))
     amount: Mapped[Decimal]
-    paymentDate: Mapped[datetime | None]
-    notifiedDate: Mapped[datetime | None]
-    notifiedBy: Mapped[str | None]
-    bankReference: Mapped[str | None]
+    date: Mapped[datetime | None]
+    notified_date: Mapped[datetime | None]
+    notified_by: Mapped[str | None]
+    bank_reference: Mapped[str | None]
     description: Mapped[str | None]
-    isEvilified: Mapped[bool]
-    docID: Mapped[int | None] = mapped_column(ForeignKey("documentation.docID"))
+    is_evilified: Mapped[bool]
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documentation.id"))
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="payments")
     document: Mapped["Documentation | None"] = relationship(lazy="selectin", back_populates="payment")
@@ -986,419 +969,419 @@ class Payment(Base):
 class Observation(Base):
     __tablename__ = "observation"
 
-    obsID: Mapped[int] = mapped_column(primary_key=True)
-    agreementID: Mapped[int] = mapped_column(ForeignKey("agreement.agreementID"))
-    obsDate: Mapped[datetime]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(ForeignKey("agreement.id"))
+    date: Mapped[datetime]
     reason: Mapped[str]
     description: Mapped[str | None]
-    notifyParts: Mapped[bool | None]
-    partsNotifiedDate: Mapped[datetime | None]
-    replySentToSignDate: Mapped[datetime | None]
-    replyDate: Mapped[datetime | None]
-    secloEmailNotificationDate: Mapped[datetime | None]
+    must_notify_parts: Mapped[bool | None]
+    parts_notified_on: Mapped[datetime | None]
+    reply_sent_on: Mapped[datetime | None]
+    reply_date: Mapped[datetime | None]
+    reply_presented_on: Mapped[datetime | None]
 
     agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="observations")
-    documentationLink: Mapped[List["DocumentationObservationLink"]] = relationship(lazy="selectin", 
+    documentation_link: Mapped[List["DocumentationObservationLink"]] = relationship(lazy="selectin", 
         back_populates="observation"
     )
-    complaintLink: Mapped[List["ComplaintObservationLink"]] = relationship(lazy="selectin", 
+    complaint_link: Mapped[List["ComplaintObservationLink"]] = relationship(lazy="selectin", 
         back_populates="observation"
     )
 
 
 class DocumentationObservationLink(Base):
-    __tablename__ = "documentationObservationLink"
+    __tablename__ = "documentation_observation_link"
 
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID"), primary_key=True
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id"), primary_key=True
     )
-    obsID: Mapped[int] = mapped_column(
-        ForeignKey("observation.obsID"), primary_key=True
+    observation_id: Mapped[int] = mapped_column(
+        ForeignKey("observation.id"), primary_key=True
     )
     description: Mapped[str | None]
 
-    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="observationLink")
+    document: Mapped["Documentation"] = relationship(lazy="selectin", back_populates="observation_link")
     observation: Mapped["Observation"] = relationship(lazy="selectin", 
-        back_populates="documentationLink"
+        back_populates="documentation_link"
     )
 
 
 class Complaint(Base):
     __tablename__ = "complaint"
 
-    complaintID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"))
     description: Mapped[str | None]
-    complaintDate: Mapped[datetime]
+    date: Mapped[datetime]
     recipient: Mapped[str]
     reason: Mapped[str]
     channel: Mapped[str | None]
-    ackDate: Mapped[datetime | None]
+    reply_date: Mapped[datetime | None]
     reply: Mapped[str | None]
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="complaints")
-    agreementLink: Mapped["ComplaintAgreementLink | None"] = relationship(lazy="selectin", 
+    agreement_link: Mapped["ComplaintAgreementLink | None"] = relationship(lazy="selectin", 
         back_populates="complaint"
     )
-    homologationLink: Mapped["ComplaintHomologationLink | None"] = relationship(lazy="selectin", 
+    homologation_link: Mapped["ComplaintHomologationLink | None"] = relationship(lazy="selectin", 
         back_populates="complaint"
     )
-    observationLink: Mapped["ComplaintObservationLink | None"] = relationship(lazy="selectin", 
+    observation_link: Mapped["ComplaintObservationLink | None"] = relationship(lazy="selectin", 
         back_populates="complaint"
     )
 
 
 class ComplaintAgreementLink(Base):
-    __tablename__ = "complaintAgreementLink"
+    __tablename__ = "complaint_agreement_link"
 
-    complaintID: Mapped[int] = mapped_column(
-        ForeignKey("complaint.complaintID"), primary_key=True
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("complaint.id"), primary_key=True
     )
-    agreementID: Mapped[int] = mapped_column(
-        ForeignKey("agreement.agreementID"), primary_key=True
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("agreement.id"), primary_key=True
     )
 
-    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="agreementLink")
-    agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="complaintLink")
+    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="agreement_link")
+    agreement: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="complaint_link")
 
 
 class ComplaintHomologationLink(Base):
-    __tablename__ = "complaintHomologationLink"
+    __tablename__ = "complaint_homologation_link"
 
-    complaintID: Mapped[int] = mapped_column(
-        ForeignKey("complaint.complaintID"), primary_key=True
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("complaint.id"), primary_key=True
     )
-    homoID: Mapped[int] = mapped_column(
-        ForeignKey("homologation.homoID"), primary_key=True
+    homologation_id: Mapped[int] = mapped_column(
+        ForeignKey("homologation.id"), primary_key=True
     )
 
-    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="homologationLink")
-    homologation: Mapped["Homologation"] = relationship(lazy="selectin", back_populates="complaintLink")
+    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="homologation_link")
+    homologation: Mapped["Homologation"] = relationship(lazy="selectin", back_populates="complaint_link")
 
 
 class ComplaintObservationLink(Base):
-    __tablename__ = "complaintObservationLink"
+    __tablename__ = "complaint_observation_link"
 
     complaintID: Mapped[int] = mapped_column(
-        ForeignKey("complaint.complaintID"), primary_key=True
+        ForeignKey("complaint.id"), primary_key=True
     )
-    observationID: Mapped[int] = mapped_column(
-        ForeignKey("observation.obsID"), primary_key=True
+    observation_id: Mapped[int] = mapped_column(
+        ForeignKey("observation.id"), primary_key=True
     )
 
-    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="observationLink")
-    observation: Mapped["Observation"] = relationship(lazy="selectin", back_populates="complaintLink")
+    complaint: Mapped["Complaint"] = relationship(lazy="selectin", back_populates="observation_link")
+    observation: Mapped["Observation"] = relationship(lazy="selectin", back_populates="complaint_link")
 
 
 class Nonagreement(Base):
     __tablename__ = "nonagreement"
 
-    nonID: Mapped[int] = mapped_column(primary_key=True)
-    recID: Mapped[int] = mapped_column(ForeignKey("claim.recID"), primary_key=True)
-    citationID: Mapped[int] = mapped_column(
-        ForeignKey("citation.citationID"), primary_key=True
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rec_id: Mapped[int] = mapped_column(ForeignKey("claim.rec_id"), primary_key=True)
+    citation_id: Mapped[int] = mapped_column(
+        ForeignKey("citation.id"), primary_key=True
     )
     claims: Mapped[str]
-    bonusData: Mapped[str | None]
-    sentDate: Mapped[datetime | None]
+    bonus_data: Mapped[str | None]
+    sent_on: Mapped[datetime | None]
     notes: Mapped[str | None]
-    waitToSend: Mapped[bool]
+    must_wait_to_send: Mapped[bool]
 
     claim: Mapped["Claim"] = relationship(lazy="selectin", back_populates="nonagreements")
     citation: Mapped["Citation"] = relationship(lazy="selectin", back_populates="nonagreement")
     invoices: Mapped[List["NonagreementInvoiceLink"]] = relationship(lazy="selectin", 
         back_populates="nonagreement"
     )
-    documentationLink: Mapped[List["DocumentationNonagreementLink"]] = relationship(lazy="selectin", 
+    documentation_link: Mapped[List["DocumentationNonagreementLink"]] = relationship(lazy="selectin", 
         back_populates="nonagreement"
     )
 
 
 class DocumentationNonagreementLink(Base):
-    __tablename__ = "documentationNonagreementLink"
+    __tablename__ = "documentation_nonagreement_link"
 
-    nonID: Mapped[int] = mapped_column(
-        ForeignKey("nonagreement.nonID", ondelete="CASCADE", onupdate="CASCADE"),
+    nonagreement_id: Mapped[int] = mapped_column(
+        ForeignKey("nonagreement.id", ondelete="CASCADE", onupdate="CASCADE"),
         primary_key=True,
         nullable=False,
     )
-    docID: Mapped[int] = mapped_column(
-        ForeignKey("documentation.docID", ondelete="CASCADE", onupdate="CASCADE"),
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documentation.id", ondelete="CASCADE", onupdate="CASCADE"),
         primary_key=True,
         nullable=False,
     )
 
     nonagreement: Mapped[Nonagreement] = relationship(lazy="selectin", 
-        back_populates="documentationLink"
+        back_populates="documentation_link"
     )
-    document: Mapped[Documentation] = relationship(lazy="selectin", back_populates="nonagreementLink")
+    document: Mapped[Documentation] = relationship(lazy="selectin", back_populates="nonagreement_link")
 
 
 class NonagreementSECLOInvoice(Base):
-    __tablename__ = "nonagreementSECLOInvoice"
+    __tablename__ = "nonagreement_seclo_invoice"
 
-    invID: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
-    secloInvoiceID: Mapped[int]
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    invoice_number: Mapped[int]
     amount: Mapped[Decimal]
-    periodDate: Mapped[datetime]
-    paymentDate: Mapped[datetime | None]
+    date: Mapped[datetime]
+    paid_on: Mapped[datetime | None]
 
-    nonagreementLink: Mapped[List["NonagreementInvoiceLink"]] = relationship(lazy="selectin", 
+    nonagreement_link: Mapped[List["NonagreementInvoiceLink"]] = relationship(lazy="selectin", 
         back_populates="invoice"
     )
-    bratInvoice: Mapped["BratNonAgreement"] = relationship(lazy="selectin", 
-        back_populates="secloInvoice"
+    brat_invoice: Mapped["BratNonAgreement"] = relationship(lazy="selectin", 
+        back_populates="seclo_invoice"
     )
 
 
 class NonagreementInvoiceLink(Base):
-    __tablename__ = "nonagreementInvoiceLink"
+    __tablename__ = "nonagreement_invoice_link"
 
-    secloInvoiceID: Mapped[int] = mapped_column(
-        ForeignKey("nonagreementSECLOInvoice.secloInvoiceID"),
+    seclo_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("nonagreement_seclo_invoice.id"),
         primary_key=True,
         autoincrement=False,
     )
-    nonID: Mapped[int] = mapped_column(
-        ForeignKey("nonagreement.nonID"), primary_key=True, autoincrement=False
+    nonagreement_id: Mapped[int] = mapped_column(
+        ForeignKey("nonagreement.id"), primary_key=True, autoincrement=False
     )
     reopening: Mapped[bool] = mapped_column(primary_key=True, autoincrement=False)
     amount: Mapped[Decimal]
-    dateRegistered: Mapped[datetime] = mapped_column(
+    registered_on: Mapped[datetime] = mapped_column(
         primary_key=True, autoincrement=False
     )
 
     invoice: Mapped["NonagreementSECLOInvoice"] = relationship(lazy="selectin", 
-        back_populates="nonagreementLink"
+        back_populates="nonagreement_link"
     )
     nonagreement: Mapped["Nonagreement"] = relationship(lazy="selectin", back_populates="invoices")
 
 
 class BratInvoice(Base):
-    __tablename__ = "bratInvoice"
+    __tablename__ = "brat_invoice"
 
-    bratID: Mapped[int] = mapped_column(primary_key=True)
-    paymentDate: Mapped[datetime | None]
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[datetime | None]
     percentage: Mapped[int]
 
-    agreementLink: Mapped[List["BratAgreement"]] = relationship(lazy="selectin", 
-        back_populates="bratInvoice"
+    agreement_link: Mapped[List["BratAgreement"]] = relationship(lazy="selectin", 
+        back_populates="brat_invoice"
     )
-    nonagreementLink: Mapped[List["BratNonAgreement"]] = relationship(lazy="selectin", 
-        back_populates="bratInvoice"
+    nonagreement_link: Mapped[List["BratNonAgreement"]] = relationship(lazy="selectin", 
+        back_populates="brat_invoice"
     )
-    bonuses: Mapped[List["BratBonus"]] = relationship(lazy="selectin", back_populates="bratInvoice")
+    bonuses: Mapped[List["BratBonus"]] = relationship(lazy="selectin", back_populates="brat_invoice")
 
 
 class BratAgreement(Base):
-    __tablename__ = "bratAgreement"
+    __tablename__ = "brat_agreement"
 
-    bratID: Mapped[int] = mapped_column(
-        ForeignKey("bratInvoice.bratID"), primary_key=True
+    brat_id: Mapped[int] = mapped_column(
+        ForeignKey("brat_invoice.id"), primary_key=True
     )
-    agreementID: Mapped[int] = mapped_column(
-        ForeignKey("agreement.agreementID"), primary_key=True
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("agreement.id"), primary_key=True
     )
 
-    bratInvoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="agreementLink")
-    agreementLink: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="bratInvoice")
+    brat_invoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="agreement_link")
+    agreement_link: Mapped["Agreement"] = relationship(lazy="selectin", back_populates="brat_invoice")
 
 
 class BratNonAgreement(Base):
-    __tablename__ = "bratNonAgreement"
+    __tablename__ = "brat_non_agreement"
 
-    bratID: Mapped[int] = mapped_column(
-        ForeignKey("bratInvoice.bratID"), primary_key=True
+    brat_id: Mapped[int] = mapped_column(
+        ForeignKey("brat_invoice.id"), primary_key=True
     )
-    secloInvoiceID: Mapped[int] = mapped_column(
-        ForeignKey("nonagreementSECLOInvoice.secloInvoiceID"), primary_key=True
+    seclo_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("nonagreement_seclo_invoice.id"), primary_key=True
     )
 
-    bratInvoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="nonagreementLink")
-    secloInvoice: Mapped["NonagreementSECLOInvoice"] = relationship(lazy="selectin", 
-        back_populates="bratInvoice"
+    brat_invoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="nonagreement_link")
+    seclo_invoice: Mapped["NonagreementSECLOInvoice"] = relationship(lazy="selectin", 
+        back_populates="brat_invoice"
     )
 
 
 class BratBonus(Base):
-    __tablename__ = "bratBonus"
+    __tablename__ = "brat_bonus"
 
-    bratID: Mapped[int] = mapped_column(
-        ForeignKey("bratInvoice.bratID"), primary_key=True
+    brat_id: Mapped[int] = mapped_column(
+        ForeignKey("brat_invoice.id"), primary_key=True
     )
     amount: Mapped[Decimal] = mapped_column(primary_key=True)
     percentage: Mapped[int]
     description: Mapped[Decimal] = mapped_column(primary_key=True)
 
-    bratInvoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="bonuses")
+    brat_invoice: Mapped["BratInvoice"] = relationship(lazy="selectin", back_populates="bonuses")
 
 
 class MonthlyHonorary(Base):
-    __tablename__ = "monthlyHonorary"
+    __tablename__ = "monthly_honorary"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     amount: Mapped[Decimal]
-    validSince: Mapped[datetime]
-    importedOn: Mapped[datetime]
-    signedDisposition: Mapped[bool]
+    valid_since: Mapped[datetime]
+    imported_on: Mapped[datetime]
+    disposition_date: Mapped[bool]
 
 
 class LawyerDirectory(Base):
-    __tablename__ = "lawyerDirectory"
+    __tablename__ = "lawyer_directory"
 
     # TODO Add doc links
     # TODO Add other relevant people
-    lawyerID: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     t: Mapped[int]
     f: Mapped[int]
     cuit: Mapped[str]
-    bankAccountID: Mapped[int | None] = mapped_column(
-        ForeignKey("bankAccount.accountID")
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account.id")
     )
 
-    bankAccount: Mapped["BankAccount | None"] = relationship(lazy="selectin", 
-        back_populates="lawyerDirectory"
+    bank_account: Mapped["BankAccount | None"] = relationship(lazy="selectin", 
+        back_populates="lawyer_directory"
     )
     lawfirms: Mapped[List["LawfirmLawyerLink"]] = relationship(lazy="selectin", back_populates="lawyer")
-    phoneLink: Mapped[List["LawyerDirectoryPhoneLink"]] = relationship(lazy="selectin", 
+    phone_link: Mapped[List["LawyerDirectoryPhoneLink"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
-    emailLink: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(lazy="selectin", 
+    email_link: Mapped[List["LawyerDirectoryEmailLink"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
-    companyLink: Mapped[List["LawyerCompanyDirectoryLink"]] = relationship(lazy="selectin", 
+    company_link: Mapped[List["LawyerCompanyDirectoryLink"]] = relationship(lazy="selectin", 
         back_populates="lawyer"
     )
 
 
 class CompanyDirectory(Base):
-    __tablename__ = "companyDirectory"
-    companyCUIT: Mapped[str] = mapped_column(primary_key=True)
+    __tablename__ = "company_directory"
+    cuit: Mapped[str] = mapped_column(primary_key=True)
     name: Mapped[str]
 
 
 class LawyerCompanyDirectoryLink(Base):
-    __tablename__ = "lawyerCompanyDirectoryLink"
+    __tablename__ = "lawyer_company_directory_link"
 
-    companyCUIT: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerDirectory.lawyerID"), primary_key=True
+    cuit: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_directory.id"), primary_key=True
     )
-    autoNotify: Mapped[bool]
+    can_auto_notify: Mapped[bool]
 
-    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="companyLink")
+    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="company_link")
 
 
 class LawfirmDirectory(Base):
-    __tablename__ = "lawfirmDirectory"
+    __tablename__ = "lawfirm_directory"
 
-    lawfirmID: Mapped[int] = mapped_column(primary_key=True)
-    lawfirmName: Mapped[str]
-    bankAccountID: Mapped[int] = mapped_column(
-        ForeignKey("bankAccount.accountID"), primary_key=True
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    bank_account_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_account.id"), primary_key=True
     )
 
-    bankAccount: Mapped["BankAccount | None"] = relationship(lazy="selectin", 
-        back_populates="lawfirmDirectory"
+    bank_account: Mapped["BankAccount | None"] = relationship(lazy="selectin", 
+        back_populates="lawfirm_directory"
     )
     lawyers: Mapped[List["LawfirmLawyerLink"]] = relationship(lazy="selectin", back_populates="lawfirm")
-    companyLink: Mapped[List["LawfirmCompanyDirectoryLink"]] = relationship(lazy="selectin", 
+    company_link: Mapped[List["LawfirmCompanyDirectoryLink"]] = relationship(lazy="selectin", 
         back_populates="lawfirm"
     )
-    phoneLink: Mapped[List["LawfirmDirectoryPhoneLink"]] = relationship(lazy="selectin", 
+    phone_link: Mapped[List["LawfirmDirectoryPhoneLink"]] = relationship(lazy="selectin", 
         back_populates="lawfirm"
     )
-    emailLink: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(lazy="selectin", 
+    email_link: Mapped[List["LawfirmDirectoryEmailLink"]] = relationship(lazy="selectin", 
         back_populates="lawfirm"
     )
 
 
 class LawfirmLawyerLink(Base):
-    __tablename__ = "lawfirmLawyerLink"
+    __tablename__ = "lawfirm_lawyer_link"
 
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerDirectory.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_directory.id"), primary_key=True
     )
-    lawfirmID: Mapped[int] = mapped_column(
-        ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True
+    lawfirm_id: Mapped[int] = mapped_column(
+        ForeignKey("lawfirm_directory.id"), primary_key=True
     )
-    isStillValid: Mapped[bool]
+    is_still_valid: Mapped[bool]
 
     lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="lawfirms")
     lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="lawyers")
 
 
 class LawfirmCompanyDirectoryLink(Base):
-    __tablename__ = "lawfirmCompanyDirectoryLink"
+    __tablename__ = "lawfirm_company_directory_link"
 
-    companyCUIT: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
-    lawfirmID: Mapped[int] = mapped_column(
-        ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True
+    cuit: Mapped[str] = mapped_column(primary_key=True, autoincrement=False)
+    lawfirm_id: Mapped[int] = mapped_column(
+        ForeignKey("lawfirm_directory.id"), primary_key=True
     )
-    autoNotify: Mapped[bool]
+    can_auto_notify: Mapped[bool]
 
-    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="companyLink")
+    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="company_link")
 
 
 class LawyerDirectoryPhoneLink(Base):
-    __tablename__ = "lawyerDirectoryPhoneLink"
+    __tablename__ = "lawyer_directory_phone_link"
 
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerDirectory.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_directory.id"), primary_key=True
     )
-    telID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerTelephone.telID"), primary_key=True
+    telephone_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_telephone.id"), primary_key=True
     )
     description: Mapped[str | None]
 
-    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="phoneLink")
+    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="phone_link")
     telephone: Mapped["LawyerTelephone"] = relationship(lazy="selectin", 
-        back_populates="lawyerDirectory"
+        back_populates="lawyer_directory"
     )
 
 
 class LawfirmDirectoryPhoneLink(Base):
-    __tablename__ = "lawfirmDirectoryPhoneLink"
+    __tablename__ = "lawfirm_directory_phone_link"
 
-    lawfirmID: Mapped[int] = mapped_column(
-        ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True
+    lawfirm_id: Mapped[int] = mapped_column(
+        ForeignKey("lawfirm_directory.id"), primary_key=True
     )
-    telID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerTelephone.telID"), primary_key=True
+    telephone_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_telephone.id"), primary_key=True
     )
     description: Mapped[str | None]
 
-    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="phoneLink")
+    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="phone_link")
     telephone: Mapped["LawyerTelephone"] = relationship(lazy="selectin", 
-        back_populates="lawfirmDirectory"
+        back_populates="lawfirm_directory"
     )
 
 
 class LawyerDirectoryEmailLink(Base):
-    __tablename__ = "lawyerDirectoryEmailLink"
+    __tablename__ = "lawyer_directory_email_link"
 
-    lawyerID: Mapped[int] = mapped_column(
-        ForeignKey("lawyerDirectory.lawyerID"), primary_key=True
+    lawyer_id: Mapped[int] = mapped_column(
+        ForeignKey("lawyer_directory.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("email.id"), primary_key=True)
     description: Mapped[str | None]
 
-    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="emailLink")
-    email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawyerDirectory")
+    lawyer: Mapped["LawyerDirectory"] = relationship(lazy="selectin", back_populates="email_link")
+    email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawyer_directory")
 
 
 class LawfirmDirectoryEmailLink(Base):
-    __tablename__ = "lawfirmDirectoryEmailLink"
+    __tablename__ = "lawfirm_directory_email_link"
 
-    lawfirmID: Mapped[int] = mapped_column(
-        ForeignKey("lawfirmDirectory.lawfirmID"), primary_key=True
+    lawfirm_id: Mapped[int] = mapped_column(
+        ForeignKey("lawfirm_directory.id"), primary_key=True
     )
-    emailID: Mapped[int] = mapped_column(ForeignKey("email.emailID"), primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("email.id"), primary_key=True)
     description: Mapped[str | None]
 
-    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="emailLink")
-    email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawfirmDirectory")
+    lawfirm: Mapped["LawfirmDirectory"] = relationship(lazy="selectin", back_populates="email_link")
+    email: Mapped["Email"] = relationship(lazy="selectin", back_populates="lawfirm_directory")
 
 
 # DeclarativeBase.metadata.create_all()

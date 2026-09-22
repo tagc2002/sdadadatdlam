@@ -76,15 +76,15 @@ class MyBaseModel(BaseModel):
 class ClaimDTO(MyBaseModel):
     "Principal object for a case file."
 
-    recID: Optional[int]
-    gdeID: str
+    rec_id: Optional[int]
+    gde_id: str
     title: str
-    initDate: datetime
-    initByEmployee: bool
-    claimType: int
-    isEvilized: bool
-    legalStuff: str
-    isDomestic: Optional[bool] = None
+    init_date: datetime
+    is_init_by_employee: bool
+    type: int
+    is_evilized: bool
+    legal_stuff: str
+    is_domestic: Optional[bool] = None
 
     # agreements: SkipValidation[Optional[List[HttpUrl]]] = None
     # citations: SkipValidation[Optional[List[HttpUrl]]] = None
@@ -132,17 +132,17 @@ class ClaimDTO(MyBaseModel):
 class CitationDTO(MyBaseModel):
     "Citations registered for a given claim"
 
-    secloAudID: Optional[int] = None
-    citationDate: Optional[datetime] = None
-    citationType: Optional[CitationType] = None
-    citationStatus: Optional[CitationStatus] = None
-    citationSummary: Optional[str] = None
+    seclo_citation_id: Optional[int] = None
+    date: Optional[datetime] = None
+    type: Optional[CitationType] = None
+    status: Optional[CitationStatus] = None
+    summary: Optional[str] = None
     notes: Optional[str] = None
-    isCalendarPrimary: Optional[bool] = None
-    meetID: Optional[str] = None
+    is_calendar_primary: Optional[bool] = None
+    meet_id: Optional[str] = None
 
-    lawyerToEmployee: SkipValidation[List["LawyerToEmployeeDTO"]]
-    lawyerToEmployer: SkipValidation[List["LawyerToEmployerDTO"]]
+    lawyer_to_employee: SkipValidation[List["LawyerToEmployeeDTO"]]
+    lawyer_to_employer: SkipValidation[List["LawyerToEmployerDTO"]]
     agreement: SkipValidation[Optional[HttpUrl]] = None
     claim: SkipValidation[Optional[HttpUrl]] = None
     nonagreement: SkipValidation[Optional[HttpUrl]] = None
@@ -153,26 +153,26 @@ class CitationDTO(MyBaseModel):
         model = cls.model_validate(sql)
         if sql.agreement:
             model.agreement = get_url(
-                req, "get_agreement", agreement_id=sql.agreement.agreementID
+                req, "get_agreement", agreement_id=sql.agreement.id
             )
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
         model.nonagreement = (
             get_url(
                 req,
                 "get_nonagreement",
-                nonagreement_id=sql.nonagreement.nonID,
+                nonagreement_id=sql.nonagreement.id,
             )
             if sql.nonagreement
             else None
         )
         model.notifications = get_url(
-            req, "get_notifications", query_params={"citation_id": sql.citationID}
+            req, "get_notifications", query_params={"citation_id": sql.id}
         )
-        model.lawyerToEmployee = LawyerToEmployeeDTO.from_list(
-            sql.lawyerToEmployee, req
+        model.lawyer_to_employee = LawyerToEmployeeDTO.from_list(
+            sql.lawyer_to_employee, req
         )
-        model.lawyerToEmployer = LawyerToEmployerDTO.from_list(
-            sql.lawyerToEmployer, req
+        model.lawyer_to_employer = LawyerToEmployerDTO.from_list(
+            sql.lawyer_to_employer, req
         )
         return model
 
@@ -180,27 +180,27 @@ class CitationDTO(MyBaseModel):
 class NotificationDTO(MyBaseModel):
     "Notifications associated to a given citation."
 
-    notificationType: Optional[SECLONotificationType] = None
-    secloPostalID: Optional[int] = None
-    emissionDate: Optional[datetime] = None
-    receptionDate: Optional[datetime] = None
-    deliveryCode: Optional[int] = None
-    deliveryDescription: Optional[str] = None
+    type: Optional[SECLONotificationType] = None
+    seclo_notification_id: Optional[int] = None
+    emission_date: Optional[datetime] = None
+    reception_date: Optional[datetime] = None
+    delivery_code: Optional[int] = None
+    delivery_description: Optional[str] = None
 
     citation: SkipValidation[Optional[HttpUrl]] = None
-    belongsTo: Optional[HttpUrl] = None
+    belongs_to: Optional[HttpUrl] = None
 
     @classmethod
     def from_sql(cls, sql: SecloNotification, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.citation = get_url(req, "get_citation", citation_id=sql.citationID)
-        if sql.employeeLink:
-            model.belongsTo = get_url(
-                req, "get_employee", employee_id=sql.employeeLink.employeeID
+        model.citation = get_url(req, "get_citation", citation_id=sql.citation_id)
+        if sql.employee_link:
+            model.belongs_to = get_url(
+                req, "get_employee", employee_id=sql.employee_link.employee_id
             )
-        if sql.employerLink:
-            model.belongsTo = get_url(
-                req, "get_employer", employer_id=sql.employerLink.employerID
+        if sql.employer_link:
+            model.belongs_to = get_url(
+                req, "get_employer", employer_id=sql.employer_link.employer_id
             )
         return model
 
@@ -208,9 +208,9 @@ class NotificationDTO(MyBaseModel):
 class LawyerToEmployeeDTO(MyBaseModel):
     "Relation between lawyer and employee (for a given citation)"
 
-    isActualLawyer: bool
-    isSelfRepresenting: bool
-    clientAbsent: bool
+    is_actual_lawyer: bool
+    is_self_representing: bool
+    client_absent: bool
     description: Optional[str] = None
 
     employee: SkipValidation[Optional[HttpUrl]] = None
@@ -220,19 +220,19 @@ class LawyerToEmployeeDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: LawyerToEmployee, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.employee = get_url(req, "get_employee", employee_id=sql.employeeID)
-        model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyerID)
-        model.citation = get_url(req, "get_citation", citation_id=sql.citationID)
+        model.employee = get_url(req, "get_employee", employee_id=sql.employee_id)
+        model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyer_id)
+        model.citation = get_url(req, "get_citation", citation_id=sql.citation_id)
         return model
 
 
 class LawyerToEmployerDTO(MyBaseModel):
     "Relation between lawyer and employer (for a given citation)"
 
-    isActualLawyer: bool
-    isEmpowered: bool
-    isSelfRepresenting: bool
-    clientAbsent: bool
+    is_actual_lawyer: bool
+    is_empowered: bool
+    is_self_representing: bool
+    client_absent: bool
     description: Optional[str] = None
 
     employer: SkipValidation[Optional[HttpUrl]] = None
@@ -242,9 +242,9 @@ class LawyerToEmployerDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: LawyerToEmployer, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.employer = get_url(req, "get_employer", employer_id=sql.employerID)
-        model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyerID)
-        model.citation = get_url(req, "get_citation", citation_id=sql.citationID)
+        model.employer = get_url(req, "get_employer", employer_id=sql.employer_id)
+        model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyer_id)
+        model.citation = get_url(req, "get_citation", citation_id=sql.citation_id)
         return model
 
 
@@ -252,10 +252,10 @@ class DocumentationLinkDTO(MyBaseModel):
     "Generic class that links documents to their respective owners."
 
     description: Optional[str] = None
-    isRequired: Optional[bool] = None
-    SECLOUploadedOn: Optional[datetime] = None
+    is_required: Optional[bool] = None
+    seclo_uploaded_on: Optional[datetime] = None
 
-    belongsTo: Optional[HttpUrl] = None
+    belongs_to: Optional[HttpUrl] = None
     document: SkipValidation[Optional[HttpUrl]] = None
 
     @classmethod
@@ -276,59 +276,59 @@ class DocumentationLinkDTO(MyBaseModel):
         req: Request,
     ) -> Self:
         model = cls.model_validate(sql)
-        model.document = get_url(req, "get_document", doc_id=sql.docID)
+        model.document = get_url(req, "get_document", doc_id=sql.document_id)
         if isinstance(sql, DocumentationEmployeeLink):
-            model.belongsTo = get_url(req, "get_employee", employee_id=sql.employeeID)
+            model.belongs_to = get_url(req, "get_employee", employee_id=sql.employee_id)
         if isinstance(sql, DocumentationEmployerLink):
-            model.belongsTo = get_url(req, "get_employer", employer_id=sql.employerID)
+            model.belongs_to = get_url(req, "get_employer", employer_id=sql.employer_id)
         if isinstance(sql, DocumentationLawyerLink):
-            model.belongsTo = get_url(req, "get_lawyer", lawyer_id=sql.lawyerID)
+            model.belongs_to = get_url(req, "get_lawyer", lawyer_id=sql.lawyer_id)
         if isinstance(sql, DocumentationAgreementLink):
-            model.belongsTo = get_url(
-                req, "get_agreement", agreement_id=sql.agreementID
+            model.belongs_to = get_url(
+                req, "get_agreement", agreement_id=sql.agreement_id
             )
         if isinstance(sql, DocumentationNonagreementLink):
-            model.SECLOUploadedOn = sql.nonagreement.sentDate
-            model.belongsTo = get_url(req, "get_nonagreement", non_id=sql.nonID)
+            model.seclo_uploaded_on = sql.nonagreement.sent_on
+            model.belongs_to = get_url(req, "get_nonagreement", non_id=sql.nonagreement_id)
         if isinstance(sql, Homologation):
-            model.SECLOUploadedOn = sql.signedDate
-            model.belongsTo = get_url(req, "get_homologation", homo_id=sql.homoID)
+            model.seclo_uploaded_on = sql.signed_date
+            model.belongs_to = get_url(req, "get_homologation", homo_id=sql.id)
         if isinstance(sql, Invoice):
-            model.belongsTo = get_url(req, "get_invoice", invoice_id=sql.invoiceID)
+            model.belongs_to = get_url(req, "get_invoice", invoice_id=sql.id)
         if isinstance(sql, Payment):
-            model.belongsTo = get_url(req, "get_payment", payment_id=sql.paymentID)
+            model.belongs_to = get_url(req, "get_payment", payment_id=sql.id)
         if isinstance(sql, DocumentationObservationLink):
-            model.SECLOUploadedOn = sql.observation.replyDate
-            model.belongsTo = get_url(req, "get_observation", obs_id=sql.obsID)
+            model.seclo_uploaded_on = sql.observation.reply_date
+            model.belongs_to = get_url(req, "get_observation", obs_id=sql.observation_id)
         if isinstance(sql, DocumentationClaimLink):
-            model.belongsTo = get_url(req, "get_claim", rec_id=sql.recID)
+            model.belongs_to = get_url(req, "get_claim", rec_id=sql.rec_id)
         return model
 
 
 class DocumentationDTO(MyBaseModel):
     "Represents a document stored in system."
 
-    docName: str
-    docType: DocType
-    fileDriveID: Optional[str] = None
-    importedDate: Optional[datetime] = None
-    importedFromSECLO: bool = False
+    name: str
+    type: DocType
+    drive_file_id: Optional[str] = None
+    imported_date: Optional[datetime] = None
+    is_imported_from_seclo: bool = False
 
-    belongsTo: Optional[List[DocumentationLinkDTO]] = None
+    belongs_to: Optional[List[DocumentationLinkDTO]] = None
 
     @classmethod
     def from_sql(cls, sql: Documentation, req: Request) -> Self:
-        doc_links = [sql.homologation, sql.invoice, sql.payment, sql.observationLink]
+        doc_links = [sql.homologation, sql.invoice, sql.payment, sql.observation_link]
         doc_links.extend(
-            sql.employeeLink
-            + sql.employerLink
-            + sql.lawyerLink
-            + sql.agreementLink
-            + sql.nonagreementLink
-            + sql.claimLink
+            sql.employee_link
+            + sql.employer_link
+            + sql.lawyer_link
+            + sql.agreement_link
+            + sql.nonagreement_link
+            + sql.claim_link
         )
         model = cls.model_validate(sql)
-        model.belongsTo = DocumentationLinkDTO.from_list(doc_links, req)
+        model.belongs_to = DocumentationLinkDTO.from_list(doc_links, req)
         return model
 
 
@@ -338,24 +338,24 @@ class BankAccountDTO(MyBaseModel):
     cbu: Optional[str] = None
     bank: str
     alias: Optional[str] = None
-    accountNumber: Optional[str] = None
-    accountType: Optional[str] = None
+    account_number: Optional[str] = None
+    account_type: Optional[str] = None
     cuit: Optional[str] = None
-    isValidated: bool = False
-    accountOwner: Optional[str] = None
+    is_validated: bool = False
+    owner: Optional[str] = None
 
-    belongsTo: Optional[List[HttpUrl]] = None
+    belongs_to: Optional[List[HttpUrl]] = None
 
     @classmethod
     def from_sql(cls, sql: BankAccount, req: Request) -> Self:
         model = cls.model_validate(sql)
         if sql.employee:
-            model.belongsTo = [
-                get_url(req, "get_employee", employee_id=sql.employee.employeeID)
+            model.belongs_to = [
+                get_url(req, "get_employee", employee_id=sql.employee.id)
             ]
         else:
-            model.belongsTo = [
-                get_url(req, "get_lawyer", lawyer_id=entry.lawyerID)
+            model.belongs_to = [
+                get_url(req, "get_lawyer", lawyer_id=entry.id)
                 for entry in sql.lawyers
             ]
         return model
@@ -374,16 +374,16 @@ class AddressDTO(MyBaseModel):
     cpa: str
     extra: str
 
-    belongsTo: Optional[List[HttpUrl]] = None
+    belongs_to: Optional[List[HttpUrl]] = None
 
     @classmethod
     def from_sql(cls, sql: Address, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.belongsTo = [
-            get_url(req, "get_employee", employee_id=employee.employeeID)
+        model.belongs_to = [
+            get_url(req, "get_employee", employee_id=employee.employee_id)
             for employee in sql.employees
         ] + [
-            get_url(req, "get_employer", employer_id=employer.employerID)
+            get_url(req, "get_employer", employer_id=employer.employer_id)
             for employer in sql.employers
         ]
         return model
@@ -414,16 +414,16 @@ class BelongsDTO(MyBaseModel):
         req: Request,
     ) -> Self:
         model = cls.model_validate(sql)
-        if isinstance(sql, EmployeeEmailLink) or isinstance(sql, EmployeeAddressLink):
+        if isinstance(sql, (EmployeeEmailLink, EmployeeAddressLink)):
             model.owner = get_url(
-                req, "get_employee", employee_id=sql.employee.employeeID
+                req, "get_employee", employee_id=sql.employee.id
             )
-        if isinstance(sql, EmployerEmailLink) or isinstance(sql, EmployerAddressLink):
+        if isinstance(sql, (EmployerEmailLink, EmployerAddressLink)):
             model.owner = get_url(
-                req, "get_employer", employer_id=sql.employer.employerID
+                req, "get_employer", employer_id=sql.employer.id
             )
         if isinstance(sql, LawyerEmailLink):
-            model.owner = get_url(req, "get_lawyer", lawyer_id=sql.lawyer.lawyerID)
+            model.owner = get_url(req, "get_lawyer", lawyer_id=sql.lawyer.id)
         # TODO beneficiary, lawyer directory, lawfirm directory
         return model
 
@@ -432,16 +432,16 @@ class EmailDTO(MyBaseModel):
     "Represents an email and associated metadata."
 
     email: str
-    registeredOn: Optional[datetime] = None
-    registeredFrom: Optional[str] = None
+    registered_on: Optional[datetime] = None
+    registered_from: Optional[str] = None
     description: Optional[str] = None
 
-    belongsTo: Optional[List[BelongsDTO]] = None
+    belongs_to: Optional[List[BelongsDTO]] = None
 
     @classmethod
     def from_sql(cls, sql: Email, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.belongsTo = [
+        model.belongs_to = [
             BelongsDTO.from_sql(x, req)
             for x in sql.employees + sql.employers + sql.lawyers
         ]
@@ -451,10 +451,10 @@ class EmailDTO(MyBaseModel):
 class EmployeeRelationshipDataDTO(MyBaseModel):
     "Working relationship data associated to an employee"
 
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     wage: Optional[Decimal] = None
-    claimAmount: Optional[Decimal] = None
+    claim_amount: Optional[Decimal] = None
     category: Optional[str] = None
     cct: Optional[str] = None
 
@@ -463,21 +463,21 @@ class EmployeeRelationshipDataDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: EmployeeRelationshipData, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.employee = get_url(req, "get_employee", employee_id=sql.employeeID)
+        model.employee = get_url(req, "get_employee", employee_id=sql.employee_id)
         return model
 
 
 class EmployeeDTO(MyBaseModel):
     "Employee linked to a claim."
 
-    employeeName: str
-    headerName: str
+    name: str
+    header_name: str
     dni: int
     cuil: Optional[str] = None
-    isValidated: bool
-    birthDate: Optional[datetime] = None
+    is_validated: bool
+    birth_date: Optional[datetime] = None
 
-    bankAccount: SkipValidation[Optional[HttpUrl]] = None
+    bank_account: SkipValidation[Optional[HttpUrl]] = None
     claim: SkipValidation[Optional[HttpUrl]] = None
     addresses: SkipValidation[Optional[List[HttpUrl]]] = None
     emails: SkipValidation[Optional[List[HttpUrl]]] = None
@@ -485,22 +485,22 @@ class EmployeeDTO(MyBaseModel):
     documentation: SkipValidation[Optional[List[DocumentationLinkDTO]]] = None
     lawyers: SkipValidation[Optional[List[LawyerToEmployeeDTO]]] = None
     hemiagreement: SkipValidation[Optional[HttpUrl]] = None
-    relationshipData: SkipValidation[Optional[List[HttpUrl]]] = None
+    relationship_data: SkipValidation[Optional[List[HttpUrl]]] = None
 
     @classmethod
     def from_sql(cls, sql: Employee, req: Request) -> Self:
         model = cls.model_validate(sql)
-        if sql.bankAccount:
-            model.bankAccount = get_url(
-                req, "get_employee_bank_account", employee_id=sql.employeeID
+        if sql.bank_account:
+            model.bank_account = get_url(
+                req, "get_employee_bank_account", employee_id=sql.id
             )
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
         model.addresses = [
             get_url(
                 req,
                 "get_employee_address",
-                employee_id=sql.employeeID,
-                address_id=address.addressID,
+                employee_id=sql.id,
+                address_id=address.address_id,
             )
             for address in sql.addresses
         ]
@@ -508,27 +508,27 @@ class EmployeeDTO(MyBaseModel):
             get_url(
                 req,
                 "get_employee_emails",
-                employee_id=sql.employeeID,
-                email_id=email.emailID,
+                employee_id=sql.id,
+                email_id=email.email_id,
             )
             for email in sql.emails
         ]
         model.notifications = get_url(
             req,
             "get_notifications",
-            query_params={"employee_id": sql.employeeID, "rec_id": sql.recID},
+            query_params={"employee_id": sql.id, "rec_id": sql.rec_id},
         )
         model.documentation = DocumentationLinkDTO.from_list(sql.documentation, req)
-        model.lawyers = LawyerToEmployeeDTO.from_list(sql.lawyerLink, req)
+        model.lawyers = LawyerToEmployeeDTO.from_list(sql.lawyer_link, req)
         if sql.hemiagreement:
             model.hemiagreement = get_url(
-                req, "get_hemiagreement", hemi_id=sql.hemiagreement.hemiID
+                req, "get_hemiagreement", hemi_id=sql.hemiagreement.id
             )
-        model.relationshipData = [
+        model.relationship_data = [
             get_url(
-                req, "get_employee_relationship", relationship_id=entry.employeeDataID
+                req, "get_employee_relationship", relationship_id=entry.id
             )
-            for entry in sql.relationshipData
+            for entry in sql.relationship_data
         ]
         return model
 
@@ -536,15 +536,15 @@ class EmployeeDTO(MyBaseModel):
 class EmployerDTO(MyBaseModel):
     "Employer linked to a claim."
 
-    employerName: str
-    headerName: Optional[str] = None
+    name: str
+    header_name: Optional[str] = None
     cuil: Optional[str] = None
-    personType: PersonType
-    requiredAs: RequiredAsType
-    SECLORegisterDate: Optional[datetime] = None
-    mustRegisterSECLO: bool
-    isValidated: bool
-    isDesisted: bool
+    person_type: PersonType
+    required_as: RequiredAsType
+    seclo_registered_date: Optional[datetime] = None
+    must_register_seclo: bool
+    is_validated: bool
+    is_desisted: bool
 
     claim: SkipValidation[Optional[HttpUrl]] = None
     addresses: SkipValidation[Optional[List[HttpUrl]]] = None
@@ -556,22 +556,22 @@ class EmployerDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Employer, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
         model.addresses = [
-            get_url(req, "get_employer_address", address_id=address.addressID)
+            get_url(req, "get_employer_address", address_id=address.address_id)
             for address in sql.addresses
         ]
         model.emails = [
-            get_url(req, "get_employer_emails", email_id=email.emailID)
+            get_url(req, "get_employer_emails", email_id=email.email_id)
             for email in sql.emails
         ]
         model.notifications = get_url(
             req,
             "get_notifications",
-            query_params={"employer_id": sql.employerID, "rec_id": sql.recID},
+            query_params={"employer_id": sql.id, "rec_id": sql.rec_id},
         )
         model.documentation = DocumentationLinkDTO.from_list(sql.documentation, req)
-        model.lawyers = LawyerToEmployeeDTO.from_list(sql.lawyerLink, req)
+        model.lawyers = LawyerToEmployeeDTO.from_list(sql.lawyer_link, req)
         return model
 
 
@@ -581,7 +581,7 @@ class TelephoneDTO(MyBaseModel):
     telephone: int
     prefix: int
     description: Optional[str]
-    obtainedFrom: Optional[str]
+    registered_from: Optional[str]
 
     lawyer: SkipValidation[Optional[HttpUrl]] = None
 
@@ -589,23 +589,23 @@ class TelephoneDTO(MyBaseModel):
     def from_sql(cls, sql: LawyerTelephone, req: Request) -> Self:
         model = cls.model_validate(sql)
         if sql.lawyer:
-            model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyerID)
+            model.lawyer = get_url(req, "get_lawyer", lawyer_id=sql.lawyer_id)
         return model
 
 
 class LawyerDTO(MyBaseModel):
     "Lawyer linked to a claim"
 
-    lawyerName: Optional[str] = None
+    name: Optional[str] = None
     t: int
     f: int
-    registeredOn: Optional[datetime] = None
-    registeredFrom: Optional[str] = None
+    registered_on: Optional[datetime] = None
+    registered_from: Optional[str] = None
     cuil: Optional[str] = None
-    isValidated: bool
-    hasVAT: Optional[bool] = None
+    is_validated: bool
+    has_vat: Optional[bool] = None
 
-    bankAccount: SkipValidation[Optional[HttpUrl]] = None
+    bank_account: SkipValidation[Optional[HttpUrl]] = None
     claim: SkipValidation[Optional[HttpUrl]] = None
     emails: SkipValidation[Optional[List[HttpUrl]]] = None
     documentation: SkipValidation[Optional[List[DocumentationLinkDTO]]] = None
@@ -617,18 +617,18 @@ class LawyerDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Lawyer, req: Request) -> Self:
         model = cls.model_validate(sql)
-        if sql.bankAccountID:
-            model.bankAccount = get_url(
-                req, "get_bank_account", account_id=sql.bankAccountID
+        if sql.bank_account_id:
+            model.bank_account = get_url(
+                req, "get_bank_account", account_id=sql.bank_account_id
             )
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
         model.emails = [
-            get_url(req, "get_email", email_id=email.emailID) for email in sql.emails
+            get_url(req, "get_email", email_id=email.email_id) for email in sql.emails
         ]
         model.documentation = DocumentationLinkDTO.from_list(sql.documentation, req)
         model.telephones = TelephoneDTO.from_list(sql.telephones, req)
-        model.employees = LawyerToEmployeeDTO.from_list(sql.employeeLink, req)
-        model.employers = LawyerToEmployerDTO.from_list(sql.employerLink, req)
+        model.employees = LawyerToEmployeeDTO.from_list(sql.employee_link, req)
+        model.employers = LawyerToEmployerDTO.from_list(sql.employer_link, req)
         return model
 
 
@@ -636,28 +636,28 @@ class PaymentInstallmentDTO(MyBaseModel):
     "Payment installment associated to a hemiagreement."
 
     amount: Decimal
-    expirationRelativeHomo: Optional[timedelta] = None
-    expirationRelativeSign: Optional[timedelta] = None
-    expirationAbsolute: Optional[datetime] = None
-    wasPaidBefore: bool
-    customPaymentMethod: Optional[str] = None
+    expiration_relative_homo: Optional[timedelta] = None
+    expiration_relative_sign: Optional[timedelta] = None
+    expiration_absolute: Optional[datetime] = None
+    was_paid_before: bool
+    custom_payment_method: Optional[str] = None
 
     hemiagreement: SkipValidation[Optional[HttpUrl]] = None
 
     @classmethod
     def from_sql(cls, sql: PaymentInstallment, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.hemiagreement = get_url(req, "get_hemiagreement", hemi_id=sql.hemiID)
+        model.hemiagreement = get_url(req, "get_hemiagreement", hemi_id=sql.hemi_id)
         return model
 
 
 class HemiagreementDTO(MyBaseModel):
     "Partial agreement for an employee. An agreement can have multiple."
 
-    amountARS: Decimal
-    amountUSD: Optional[Decimal] = None
-    honoraryRelative: Optional[int] = None
-    honoraryAbsolute: Optional[Decimal] = None
+    amount_ars: Decimal
+    amount_usd: Optional[Decimal] = None
+    honorary_relative: Optional[int] = None
+    honorary_absolute: Optional[Decimal] = None
 
     installments: SkipValidation[
         Optional[List[HttpUrl] | List[PaymentInstallmentDTO]]
@@ -669,30 +669,30 @@ class HemiagreementDTO(MyBaseModel):
     def from_sql(cls, sql: Hemiagreement, req: Request) -> Self:
         model = cls.model_validate(sql)
         model.installments = [
-            get_url(req, "get_installments", installment_id=entry.installmentID)
+            get_url(req, "get_installments", installment_id=entry.id)
             for entry in sql.installments
         ]
-        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreementID)
-        model.employee = get_url(req, "get_employee", employee_id=sql.employeeID)
+        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreement_id)
+        model.employee = get_url(req, "get_employee", employee_id=sql.employee_id)
         return model
 
 
 class AgreementDTO(MyBaseModel):
     "Agreement info for a given case."
 
-    malignaHonorary: Decimal
-    malignaHonoraryExpirationRelative: timedelta
-    isUncashable: bool = False
-    initReason: str
-    claimedObjects: str
-    isDomestic: bool = False
-    hasCertificateDelivery: bool = False
+    maligna_honorary: Decimal
+    maligna_honorary_expiration_relative: timedelta
+    is_uncashable: bool = False
+    init_reason: str
+    claimed_objects: str
+    is_domestic: bool = False
+    has_certificate_delivery: bool = False
     notes: Optional[str] = None
-    initialSendDate: Optional[datetime] = None
-    lastSendDate: Optional[datetime] = None
-    isDraft: bool = True
-    secloEmailNotificationDate: Optional[datetime] = None
-    signedSendDate: Optional[datetime] = None
+    initial_send_date: Optional[datetime] = None
+    last_send_date: Optional[datetime] = None
+    is_draft: bool = True
+    seclo_email_notification_date: Optional[datetime] = None
+    signed_send_date: Optional[datetime] = None
 
     hemiagreements: SkipValidation[Optional[List[HemiagreementDTO] | List[HttpUrl]]] = (
         None
@@ -712,55 +712,55 @@ class AgreementDTO(MyBaseModel):
     def from_sql(cls, sql: Agreement, req: Request) -> Self:
         model = cls.model_validate(sql)
         model.hemiagreements = [
-            get_url(req, "get_hemiagreement", hemi_id=hemi.hemiID)
+            get_url(req, "get_hemiagreement", hemi_id=hemi.id)
             for hemi in sql.hemiagreements
         ]
         model.homologations = [
-            get_url(req, "get_homologation", homo_id=homo.homoID)
+            get_url(req, "get_homologation", homo_id=homo.id)
             for homo in sql.homologations
         ]
         model.invoices = [
-            get_url(req, "get_invoice", invoice_id=invoice.invoiceID)
+            get_url(req, "get_invoice", invoice_id=invoice.id)
             for invoice in sql.invoices
         ]
         model.payments = [
-            get_url(req, "get_payment", payment_id=payment.paymentID)
+            get_url(req, "get_payment", payment_id=payment.id)
             for payment in sql.payments
         ]
         model.observations = [
-            get_url(req, "get_observation", obs_id=obs.obsID)
+            get_url(req, "get_observation", obs_id=obs.id)
             for obs in sql.observations
         ]
         model.complaints = [
-            get_url(req, "get_complaints", complaint_id=complaint.complaintID)
-            for complaint in sql.complaintLink
+            get_url(req, "get_complaints", complaint_id=complaint.complaint_id)
+            for complaint in sql.complaint_link
         ]
         model.documentation = [
-            get_url(req, "get_document", doc_id=doc.docID)
-            for doc in sql.documentationLink
+            get_url(req, "get_document", doc_id=doc.document_id)
+            for doc in sql.documentation_link
         ]
         model.extension = [
-            get_url(req, "get_employer", employer_id=ext.employerID)
+            get_url(req, "get_employer", employer_id=ext.employer_id)
             for ext in sql.extension
         ]
         model.desist = [
-            get_url(req, "get_employer", employer_id=ext.employerID)
+            get_url(req, "get_employer", employer_id=ext.employer_id)
             for ext in sql.desist
         ]
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
-        if sql.citationID:
-            model.citation = get_url(req, "get_citation", citation_id=sql.citationID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
+        if sql.citation_id:
+            model.citation = get_url(req, "get_citation", citation_id=sql.citation_id)
         return model
 
 
 class HomologationDTO(MyBaseModel):
     "Homologation register for a particular agreement."
 
-    gdeID: Optional[str] = None
-    signedDate: Optional[datetime] = None
-    isApproved: bool
-    registeredDate: datetime
-    notificationDate: Optional[datetime] = None
+    gde_id: Optional[str] = None
+    signed_date: Optional[datetime] = None
+    is_approved: bool
+    registered_date: datetime
+    notification_date: Optional[datetime] = None
     description: Optional[str] = None
 
     agreement: SkipValidation[Optional[HttpUrl]] = None
@@ -770,13 +770,13 @@ class HomologationDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Homologation, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreementID)
-        if sql.docID:
-            model.document = get_url(req, "get_document", doc_id=sql.docID)
-        if sql.complaintLink:
+        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreement_id)
+        if sql.document_id:
+            model.document = get_url(req, "get_document", doc_id=sql.document_id)
+        if sql.complaint_link:
             model.complaints = [
-                get_url(req, "get_complaint", complaint_id=item.complaintID)
-                for item in sql.complaintLink
+                get_url(req, "get_complaint", complaint_id=item.complaint_id)
+                for item in sql.complaint_link
             ]
         return model
 
@@ -784,24 +784,24 @@ class HomologationDTO(MyBaseModel):
 class InvoiceDTO(MyBaseModel):
     "Invoice info for a given agreement"
 
-    afipID: Optional[str] = None
-    emissionDate: Optional[datetime] = None
+    invoice_number: Optional[str] = None
+    emission_date: Optional[datetime] = None
     amount: Decimal
     description: Optional[str] = None
-    isCredit: bool
+    is_credit: bool
 
     agreement: SkipValidation[Optional[HttpUrl]] = None
     document: SkipValidation[Optional[HttpUrl]] = None
-    parentInvoice: SkipValidation[Optional[HttpUrl]] = None
+    parent_invoice: SkipValidation[Optional[HttpUrl]] = None
 
     @classmethod
     def from_sql(cls, sql: Invoice, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreementID)
-        if sql.docID:
-            model.document = get_url(req, "get_document", docID=sql.docID)
-        if sql.relatedTo:
-            model.parentInvoice = get_url(req, "get_invoice", invoice_id=sql.relatedTo)
+        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreement_id)
+        if sql.document_id:
+            model.document = get_url(req, "get_document", docID=sql.document_id)
+        if sql.parent_invoice_id:
+            model.parent_invoice = get_url(req, "get_invoice", invoice_id=sql.parent_invoice_id)
         return model
 
 
@@ -809,12 +809,12 @@ class PaymentDTO(MyBaseModel):
     "Payment info for a given agreement"
 
     amount: Decimal
-    paymentDate: Optional[datetime] = None
-    notifiedDate: Optional[datetime] = None
-    notifiedBy: Optional[str] = None
-    bankReference: Optional[str] = None
+    payment_date: Optional[datetime] = None
+    notified_date: Optional[datetime] = None
+    notified_by: Optional[str] = None
+    bank_reference: Optional[str] = None
     description: Optional[str] = None
-    isEvilified: bool
+    is_evilified: bool
 
     agreement: SkipValidation[Optional[HttpUrl]] = None
     document: SkipValidation[Optional[HttpUrl]] = None
@@ -822,23 +822,23 @@ class PaymentDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Payment, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreementID)
-        if sql.docID:
-            model.document = get_url(req, "get_document", doc_id=sql.docID)
+        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreement_id)
+        if sql.document_id:
+            model.document = get_url(req, "get_document", doc_id=sql.document_id)
         return model
 
 
 class ObservationDTO(MyBaseModel):
     "Observation info for a given agreement"
 
-    obsDate: datetime
+    date: datetime
     reason: str
     description: Optional[str] = None
-    notifyParts: Optional[bool] = None
-    partsNotifiedDate: Optional[datetime] = None
-    replySentToSignDate: Optional[datetime] = None
-    replyDate: Optional[datetime] = None
-    secloEmailNotificationDate: Optional[datetime] = None
+    must_notify_parts: Optional[bool] = None
+    parts_notified_on: Optional[datetime] = None
+    reply_sent_on: Optional[datetime] = None
+    reply_date: Optional[datetime] = None
+    reply_presented_on: Optional[datetime] = None
 
     agreement: SkipValidation[Optional[HttpUrl]] = None
     documentation: SkipValidation[Optional[List[DocumentationLinkDTO]]] = None
@@ -847,15 +847,15 @@ class ObservationDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Observation, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreementID)
-        if sql.documentationLink:
+        model.agreement = get_url(req, "get_agreement", agreement_id=sql.agreement_id)
+        if sql.documentation_link:
             model.documentation = DocumentationLinkDTO.from_list(
-                sql.documentationLink, req
+                sql.documentation_link, req
             )
-        if sql.complaintLink:
+        if sql.complaint_link:
             model.complaints = [
                 get_url(req, "get_complaint", complaint_id=complaint.complaintID)
-                for complaint in sql.complaintLink
+                for complaint in sql.complaint_link
             ]
         return model
 
@@ -864,11 +864,11 @@ class ComplaintDTO(MyBaseModel):
     "Complaint info for a given case."
 
     description: Optional[str] = None
-    complaintDate: datetime
+    date: datetime
     recipient: str
     reason: str
     channel: Optional[str] = None
-    ackDate: Optional[datetime] = None
+    reply_date: Optional[datetime] = None
     reply: Optional[str] = None
 
     claim: SkipValidation[Optional[HttpUrl]] = None
@@ -879,18 +879,18 @@ class ComplaintDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Complaint, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
-        if sql.homologationLink:
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
+        if sql.homologation_link:
             model.homologation = get_url(
-                req, "get_homologation", homo_id=sql.homologationLink.homoID
+                req, "get_homologation", homo_id=sql.homologation_link.homologation_id
             )
-        if sql.agreementLink:
+        if sql.agreement_link:
             model.agreement = get_url(
-                req, "get_agreement", homo_id=sql.agreementLink.agreementID
+                req, "get_agreement", homo_id=sql.agreement_link.agreement_id
             )
-        if sql.observationLink:
+        if sql.observation_link:
             model.observation = get_url(
-                req, "get_observation", obs_id=sql.observationLink.observationID
+                req, "get_observation", obs_id=sql.observation_link.observation_id
             )
         return model
 
@@ -900,7 +900,7 @@ class NonagreementInvoiceLinkDTO(MyBaseModel):
 
     reopening: bool
     amount: Decimal
-    dateRegistered: datetime
+    registered_on: datetime
 
     nonagreement: SkipValidation[Optional[HttpUrl]] = None
     invoice: SkipValidation[Optional[HttpUrl]] = None
@@ -908,9 +908,9 @@ class NonagreementInvoiceLinkDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: NonagreementInvoiceLink, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.nonagreement = get_url(req, "get_nonagreement", non_id=sql.nonID)
+        model.nonagreement = get_url(req, "get_nonagreement", non_id=sql.nonagreement_id)
         model.invoice = get_url(
-            req, "get_seclo_invoice", seclo_invoice_id=sql.secloInvoiceID
+            req, "get_seclo_invoice", seclo_invoice_id=sql.seclo_invoice_id
         )
         return model
 
@@ -918,10 +918,10 @@ class NonagreementInvoiceLinkDTO(MyBaseModel):
 class NonagreementSECLOInvoiceDTO(MyBaseModel):
     "Monthly invoice issued by SECLO."
 
-    secloInvoiceID: int
+    invoice_number: int
     amount: Decimal
-    periodDate: datetime
-    paymentDate: Optional[datetime] = None
+    date: datetime
+    paid_on: Optional[datetime] = None
 
     nonagreements: SkipValidation[Optional[List[NonagreementInvoiceLinkDTO]]] = None
 
@@ -929,7 +929,7 @@ class NonagreementSECLOInvoiceDTO(MyBaseModel):
     def from_sql(cls, sql: NonagreementSECLOInvoice, req: Request) -> Self:
         model = cls.model_validate(sql)
         model.nonagreements = NonagreementInvoiceLinkDTO.from_list(
-            sql.nonagreementLink, req
+            sql.nonagreement_link, req
         )
         return model
 
@@ -938,10 +938,10 @@ class NonagreementDTO(MyBaseModel):
     "Nonagreement info for a given case."
 
     claims: str
-    bonusData: Optional[str] = None
-    sentDate: Optional[datetime] = None
+    bonus_data: Optional[str] = None
+    sent_on: Optional[datetime] = None
     notes: Optional[str] = None
-    waitToSend: bool
+    must_wait_to_send: bool
 
     claim: SkipValidation[Optional[HttpUrl]] = None
     citation: SkipValidation[Optional[HttpUrl | int]] = None
@@ -951,10 +951,10 @@ class NonagreementDTO(MyBaseModel):
     @classmethod
     def from_sql(cls, sql: Nonagreement, req: Request) -> Self:
         model = cls.model_validate(sql)
-        model.claim = get_url(req, "get_claim", rec_id=sql.recID)
-        model.citation = get_url(req, "get_citation", citation_id=sql.citationID)
+        model.claim = get_url(req, "get_claim", rec_id=sql.rec_id)
+        model.citation = get_url(req, "get_citation", citation_id=sql.citation_id)
         model.invoices = NonagreementInvoiceLinkDTO.from_list(sql.invoices, req)
-        model.documentation = DocumentationLinkDTO.from_list(sql.documentationLink, req)
+        model.documentation = DocumentationLinkDTO.from_list(sql.documentation_link, req)
         return model
 
 
@@ -962,9 +962,9 @@ class MonthlyHonoraryDTO(MyBaseModel):
     "Fixed honorary amounts for a given month."
 
     amount: Decimal
-    validSince: datetime
-    importedOn: datetime = datetime.now()
-    signedDisposition: bool
+    valid_since: datetime
+    imported_on: datetime = datetime.now()
+    signed_disposition: bool
 
     @classmethod
     def from_sql(cls, sql: MonthlyHonorary, req: Request) -> Self:

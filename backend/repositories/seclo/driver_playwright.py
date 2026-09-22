@@ -2202,9 +2202,9 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        gdeid = 83737442
+        gdeid = 81999070
         agreement = False
-        amount = None
+        amount = None #Decimal("2000000.00")
         reopen = False
         files = [
             # (f"J:\\My Drive\\{gdeid} Credencial requirente.pdf", SECLOFileType.CREDENTIAL, None),
