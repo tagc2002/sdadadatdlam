@@ -183,6 +183,8 @@ class SECLOSession:
                 ),
                 user_agent=USER_AGENT,
                 base_url="https://conciliadores.trabajo.gob.ar",
+                screen={'width':1920, 'height': 1080},
+                no_viewport=True
             )
             # await self.context.route("**/*", lambda req: req.fallback())
             await self.context.route("**/*", self.__proxy_req)
@@ -526,7 +528,10 @@ class SECLOCitationManager(SECLOAccessor):
         logger.debug("Reopen found")
 
         error_locator = self.page.locator("#ctl00_Center_lblmensaje")
-        if await error_locator.is_visible():
+        if (
+            await error_locator.is_visible()
+            and len(await error_locator.inner_text()) > 0
+        ):
             raise InvalidCaseStateException(await error_locator.inner_text())
 
         if not DEBUGMODE:
@@ -803,15 +808,21 @@ class SECLOCitationManager(SECLOAccessor):
         """
         self.items = list(items)
         has_comb = len(self.comb_objects) > 0
-        self.progress.set_steps(2 * (len(self.comb_objects) if has_comb else 1))
+        self.progress.set_steps(
+            self.progress.total_steps + (len(self.comb_objects) if has_comb else 1)
+        )
         while True:
             await self.__set_items(self.comb_objects.pop(0) if has_comb else None)
-            await self.progress.increase_progress("Closing partial claim")
+            await self.progress.increase_progress(
+                f"Closing {'partial ' if has_comb else ''}claim"
+            )
             if not DEBUGMODE:
                 await self._save_standard(
                     self.page.locator(
                         "#ctl00_Center_btnGrabar"
-                        if has_comb
+                        if await self.page.locator(
+                            "#ctl00_Center_btnGrabar"
+                        ).is_visible()
                         else "#ctl00_Center_btnGrabarTotal"
                     )
                 )
@@ -1212,17 +1223,19 @@ class SECLORecData(SECLOAccessor):
         if await cuil.input_value() and seclo_db_ok and await cuil.is_enabled():
             await cuil.click()
             await cuil.press("Tab")
-            await expect(
-                self.page.locator("#ctl00_Center_ctl00_cuit_txtRS")
-            ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
-            validated_name = await self.page.locator(
-                "#ctl00_Center_ctl00_cuit_txtRS"
-            ).input_value()
-            if "null null" in validated_name:
+            try:
+                await expect(
+                    self.page.locator("#ctl00_Center_ctl00_cuit_txtRS")
+                ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=60000)
+                validated_name = await self.page.locator(
+                    "#ctl00_Center_ctl00_cuit_txtRS"
+                ).input_value()
+                if "null null" in validated_name:
+                    seclo_db_ok = False
+                else:
+                    name = validated_name
+            except AssertionError:
                 seclo_db_ok = False
-            else:
-                name = validated_name
-
         internal_id = await self.page.locator(
             "#ctl00_Center_ctl00_hdnId"
         ).get_attribute("value")
@@ -1273,7 +1286,7 @@ class SECLORecData(SECLOAccessor):
 
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
-            await self.page.wait_for_load_state('load')
+            await self.page.wait_for_load_state("load")
         return employee, seclo_db_ok
 
     async def __get_employer_data(
@@ -1318,7 +1331,7 @@ class SECLORecData(SECLOAccessor):
         employer.add_phone(await self.__get_phone(1))
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
-            await self.page.wait_for_load_state('load')
+            await self.page.wait_for_load_state("load")
         return employer, seclo_db_ok
 
     async def __get_lawyer_data(self: Self, seclo_db_ok: bool) -> SECLOLawyerData:
@@ -1369,14 +1382,18 @@ class SECLORecData(SECLOAccessor):
             "#ctl00_Center_ctl02_txtNroDocumento_lbl"
         ).inner_text()
         async with SECLOClaimValidationData(session=self.session) as data:
-            lawyer_person_data = await data.validate_dni(dni)
+            try:
+                lawyer_person_data = await data.validate_dni(dni)
+            except AttributeError, PlaywrightTimeoutError:
+                lawyer_person_data = None
+                seclo_db_ok = False
         internal_id = await self.page.locator(
             "#ctl00_Center_ctl02_hdnId"
         ).get_attribute("value")
         lawyer = SECLOLawyerData(
             name=name,
             dni=dni,
-            cuil=lawyer_person_data.cuit,
+            cuil=lawyer_person_data.cuit if lawyer_person_data else None,
             validated=seclo_db_ok and self_validated,
             internal_id=internal_id,
         )
@@ -1411,7 +1428,11 @@ class SECLORecData(SECLOAccessor):
             "#ctl00_Center_ctl03_txtNroDocumento_txt"
         ).input_value()
         async with SECLOClaimValidationData(self.session) as data:
-            person_data = await data.validate_dni(dni)
+            try:
+                person_data = await data.validate_dni(dni)
+            except AttributeError, PlaywrightTimeoutError:
+                person_data = None
+                seclo_db_ok = False
         name = " ".join(
             [
                 await self.page.locator(
@@ -1441,7 +1462,7 @@ class SECLORecData(SECLOAccessor):
         other = SECLOBeneficiaryData(
             name=name,
             dni=dni,
-            cuil=person_data.cuit,
+            cuil=person_data.cuit if person_data else None,
             internal_id=internal_id,
             validated=seclo_db_ok,
         )
@@ -1451,7 +1472,7 @@ class SECLORecData(SECLOAccessor):
         other.add_mobile_phone(*await self.__get_mobile_phone(3))
         if seclo_db_ok:
             await self.page.locator("#ctl00_Center_ctl03_btnAgregar").click()
-            await self.page.wait_for_load_state('load')
+            await self.page.wait_for_load_state("load")
         return other, seclo_db_ok
 
     @retry
@@ -1472,7 +1493,9 @@ class SECLORecData(SECLOAccessor):
         await self._load_rec()
         seclo_db_ok = True
         await self.page.wait_for_load_state(timeout=60000)
-        await expect(self.page.locator("#ctl00_Center_lstTrabajadores")).to_be_visible(timeout=30000)
+        await expect(self.page.locator("#ctl00_Center_lstTrabajadores")).to_be_visible(
+            timeout=30000
+        )
         total_items = (
             await self.page.locator("#ctl00_Center_lstTrabajadores")
             .locator("li")
@@ -1528,8 +1551,6 @@ class SECLORecData(SECLOAccessor):
                 f"Employee {employee.name} ({i+1} of {await people_list.count()})"
             )
             claim_data.add_employee(employee)
-            if seclo_db_ok:
-                await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
 
         # EMPLOYERS
         await self.page.wait_for_load_state()
@@ -1542,8 +1563,6 @@ class SECLORecData(SECLOAccessor):
                 f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
             )
             claim_data.add_employer(employer)
-            if seclo_db_ok:
-                await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
 
         # LAWYERS
         await self.page.wait_for_load_state()
@@ -2202,32 +2221,43 @@ async def test():
             os.getenv("SECLO_USERNAME", ""), os.getenv("SECLO_PASSWORD", "")
         )
     ) as session:
-        gdeid = 81999070
-        agreement = False
-        amount = None #Decimal("2000000.00")
+        gdeid = 75463806
+        agreement = True
+        amount = Decimal("4000000.00")
         reopen = False
         files = [
-            # (f"J:\\My Drive\\{gdeid} Credencial requirente.pdf", SECLOFileType.CREDENTIAL, None),
-            # (f"J:\\My Drive\\{gdeid} Credencial requerida.pdf", SECLOFileType.CREDENTIAL, None),
-            # (f"J:\\My Drive\\{gdeid} DNI Traba.pdf", SECLOFileType.DNI, None),
             # (f"J:\\My Drive\\{gdeid} Poder.pdf", SECLOFileType.PODER, None),
+            # (f"J:\\My Drive\\{gdeid} Poder 2.pdf", SECLOFileType.PODER, None),
+            # (f"J:\\My Drive\\{gdeid} DNI Apoderada.pdf", SECLOFileType.DNI, None),
+            (f"J:\\My Drive\\{gdeid} DNI Requerida.pdf", SECLOFileType.DNI, None),
+            # (f"J:\\My Drive\\{gdeid} Credencial requirente.pdf", SECLOFileType.CREDENTIAL, None),
+            (f"J:\\My Drive\\{gdeid} Credencial requerida.pdf",SECLOFileType.CREDENTIAL,None,),
+            # (f"J:\\My Drive\\{gdeid} Estatuto.pdf", SECLOFileType.OTHER, "Estatuto"),
+            (f"J:\\My Drive\\{gdeid} Designacion gerente.pdf", SECLOFileType.OTHER, "Designacion gerente"),
         ]
         async with SECLOCitationManager(session) as seclo:
-            await seclo.set_rec_id_from_gde_id(f"EX-2026-{gdeid}")
-            recid = seclo.recid
-            if reopen:
-                await seclo.reopen_case()
-            items = await seclo.get_agreement_items()
-            for item in items:
-                item.set_result(agreement=agreement, amount=amount)
-            await seclo.close_case(items)
+            try:
+                await seclo.set_rec_id_from_gde_id(f"EX-2026-{gdeid}")
+                recid = seclo.recid
+                if reopen:
+                    await seclo.reopen_case()
+                items = await seclo.get_agreement_items()
+                for item in items:
+                    item.set_result(agreement=agreement, amount=amount)
+                await seclo.close_case(items)
+            except Exception as e:
+                print(e)
+                input("OOPS")
+                raise e
         async with SECLOFileManager(session, recid=recid) as seclo:
             try:
                 for file, filetype, description in files:
                     await seclo.upload_file(Path(file), filetype, description)
                 print(
                     await seclo.upload_record(
-                        Path(f"J:\\My Drive\\{"Acta Sin Acuerdo " if not agreement else ""}{gdeid}{" Acuerdo firmado" if agreement else ""}.pdf"),
+                        Path(
+                            f"J:\\My Drive\\{"Acta Sin Acuerdo " if not agreement else ""}{gdeid}{" Acuerdo firmado" if agreement else ""}.pdf"
+                        ),
                         agreement=agreement,
                     )
                 )
