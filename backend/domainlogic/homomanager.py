@@ -5,7 +5,7 @@ Module for managing agreement homologations loaded from SECLO.
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from attr import dataclass
+from dataclasses import dataclass
 from pypdf import PdfReader
 from sqlalchemy import and_, not_, null, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.definitions import Agreement, Homologation
 from dataobjects.enums import DocType
 from domainlogic.documentationmanager import store_file
-from repositories.seclo.driver import SECLOFileManager, SECLOLoginCredentials
+from repositories.seclo.driver import (
+    SECLOSession,
+    SECLOFileManager,
+    SECLOLoginCredentials,
+)
 from repositories.seclo.progress import ProgressReport
 
 
@@ -100,11 +104,13 @@ async def check_homologation(
     Returns:
         Optional[Homologation]: This agreement's homologation record, if homologated.
     """
-    with SECLOFileManager(credentials=creds, recid=agreement.rec_id) as seclo:
-        files = seclo.set_rec_id(agreement.rec_id).get_files()
+    async with SECLOSession(credentials=creds) as session, SECLOFileManager(
+        session=session, recid=agreement.rec_id
+    ) as seclo:
+        files = await seclo.set_rec_id(agreement.rec_id).get_files()
         for file_index, file_entry in enumerate(files):
             if "Disposici" in file_entry[0]:  # regular homologation
-                file = seclo.get_file(file_index)
+                file = await seclo.get_file(file_index)
                 homo_info = parse_homologation_pdf(file)
                 if homo_info.gde_id:  # is valid (aka not a draft)
                     for homologation in agreement.homologations:
@@ -135,7 +141,7 @@ async def check_homologation(
                 and agreement.signed_send_date
                 and file_entry[2] > agreement.signed_send_date
             ):
-                file = seclo.get_file(file_index)
+                file = await seclo.get_file(file_index)
                 homo_info = parse_homologation_pdf(file)
                 if homo_info.gde_id:  # is valid
                     saved_homo = await save_homologation(file, homo_info, agreement, db)
@@ -154,19 +160,24 @@ async def batch_check_homologations(
         creds (SECLOLoginCredentials): SECLO credentials for querying.
         progress (ProgressReport): Progress instance to report status to user.
     """
-    missing = (await db.scalars(
-        select(Agreement)
-        .distinct(Agreement.id)
-        .join(Homologation, isouter=True)
-        .where(Agreement.signed_send_date != null())
-        .where(
-            or_(
-                Homologation.signed_date == null(),
-                ~Agreement.homologations.any(),
-                and_(not_(Homologation.is_approved), Homologation.complaint_link.any()),
+    missing = (
+        await db.scalars(
+            select(Agreement)
+            .distinct(Agreement.id)
+            .join(Homologation, isouter=True)
+            .where(Agreement.signed_send_date != null())
+            .where(
+                or_(
+                    Homologation.signed_date == null(),
+                    ~Agreement.homologations.any(),
+                    and_(
+                        not_(Homologation.is_approved),
+                        Homologation.complaint_link.any(),
+                    ),
+                )
             )
         )
-    )).all()
+    ).all()
     progress.set_steps(len(missing))
     found = 0
 

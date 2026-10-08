@@ -6,7 +6,7 @@ from decimal import Decimal
 import logging
 from datetime import datetime
 from typing import Any, List, Optional, Self, Tuple
-from attr import dataclass
+from dataclasses import dataclass
 from dataobjects.enums import ClaimType, PersonType, SECLONotificationType
 from repositories.seclo.exceptions import InvalidParameterException
 
@@ -84,6 +84,8 @@ class AgreementResult:
 
     def __str__(self: Self) -> str:
         return f'{self.person}: {self.__agreement} ({self.__amount}) {self.__enabled}'
+
+
 class CitationResult:
     """
     A class designed to hold a citation result to be passed to and from the function caller.
@@ -138,7 +140,6 @@ class CitationResult:
         """
         self.absent = absent
         self.notification = method
-
 
 class SECLOAddressData:
     "Generic class for storing address data."
@@ -454,7 +455,7 @@ class SECLOClaimData:
         return base
 
 
-@dataclass
+@dataclass(frozen=True)
 class SECLONotificationData:
     "Dataclass for notification data retrieved from SECLO."
 
@@ -473,7 +474,7 @@ class SECLONotificationData:
     citationStatus: str
 
 
-@dataclass
+@dataclass()
 class SECLOCitation:
     "Dataclass for citation data retrieved from SECLO."
 
@@ -489,7 +490,7 @@ class SECLOCitation:
         return f"{self.citationID} ({self.gdeID} {self.initDate}) {self.citationDate} {self.citationType}"
 
 
-@dataclass
+@dataclass(frozen=True)
 class SECLOPersonData:
     "Dataclass for validating person data"
 
