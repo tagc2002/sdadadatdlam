@@ -21,7 +21,7 @@ from domainlogic.ingressmanager import update_notifications
 from repositories.seclo.driver import (
     SECLOLoginCredentials,
 )
-from repositories.seclo.driver_playwright import SECLOSession
+from repositories.seclo.driver import SECLOSession
 
 logger = logging.getLogger(__name__)
 

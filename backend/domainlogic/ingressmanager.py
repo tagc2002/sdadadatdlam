@@ -50,7 +50,7 @@ from dataobjects.enums import (
     RequiredAsType,
     SECLONotificationType,
 )
-from repositories.seclo.driver_playwright import (
+from repositories.seclo.driver import (
     SECLOCalendarParser,
     SECLOLoginCredentials,
     SECLORecData,
@@ -579,7 +579,7 @@ async def __map_lawyer_to_client(
                         is_actual_lawyer=True,
                         is_self_representing=False,
                         is_empowered=False,
-                        clientabsent=False,
+                        client_absent=False,
                         citation=citation,
                     )
                     if (

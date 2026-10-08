@@ -1,76 +1,80 @@
 """
 Module for interfacing with SECLO through their awful website.
+Reimplemented in playwright for simplicity and async functionality.
 
 This wretched thing basically frankensteins a chrome instance
 and controls the website, manually loading and scraping data.
 Manifest away those pesky Teams sharks.
 """
 
+import asyncio
+import base64
+from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
+import logging
+import os
 from pathlib import Path
 import re
-from time import sleep
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Self, Set, Tuple
-import os
 import uuid
-import logging
-import requests
-from selenium import webdriver
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    InvalidElementStateException,
-    TimeoutException,
-    StaleElementReferenceException,
+
+from dataobjects.enums import (
+    ClaimType,
+    PersonType,
+    SECLOFileType,
+    SECLONotificationType,
 )
-from selenium.webdriver.remote.webelement import WebElement
-from selenium.webdriver.common.print_page_options import PrintOptions
-from webdriver_manager.chrome import ChromeDriverManager
-from repositories.seclo.exceptions import (
-    AttemptsExceededException,
-    UnauthorizedAccessException,
-    UnknownReportedException,
-    RecNotAccessibleException,
-    ValidationException,
-    InvalidCaseStateException,
-    InvalidParameterException,
-    FileDownloadTimeoutException,
-)
-from repositories.seclo.progress import ProgressReport
-from dataobjects.enums import ClaimType, PersonType, SECLOFileType
 from dataobjects.seclo import (
+    AgreementResult,
+    CitationResult,
     SECLOAddressData,
     SECLOCitation,
     SECLOClaimData,
     SECLOEmployeeData,
     SECLOEmployerData,
     SECLOLawyerData,
-    SECLONotificationType,
     SECLONotificationData,
     SECLOBeneficiaryData,
-    CitationResult,
+    SECLOPersonData,
+)
+from repositories.seclo.progress import ProgressReport
+from repositories.seclo.exceptions import (
+    AttemptsExceededException,
+    InvalidCaseStateException,
+    InvalidParameterException,
+    RecNotAccessibleException,
+    UnauthorizedAccessException,
+    UnknownReportedException,
+    ValidationException,
+)
+
+from playwright.async_api import (
+    APIResponse,
+    Browser,
+    Error as PlaywrightError,
+    HttpCredentials,
+    BrowserContext,
+    Locator,
+    Page,
+    Playwright,
+    Route,
+    async_playwright,
+    TimeoutError as PlaywrightTimeoutError,
+    expect,
 )
 
 logger = logging.getLogger(__name__)
 
-logging.getLogger("selenium").setLevel(logging.CRITICAL)
-logging.getLogger("urllib3.connectionpool").setLevel(logging.CRITICAL)
-logging.getLogger("WDM").setLevel(logging.CRITICAL)
-PORTAL_VERSION_SUPPORTED = "8.5.4.0"
-
-DEBUGMODE = not os.getenv("DEBUGMODE", "False") == "False"
-DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
+PORTAL_VERSION_SUPPORTED = "8.5.6.0"
+DEBUGMODE = os.getenv("DEBUGMODE", "TRUE") == "TRUE"
+HEADLESS = os.getenv("HEADLESS", "TRUE") == "TRUE"
+DOWNLOADROOT = os.getenv("TEMP_DOWNLOAD_PATH", "./temp")
 MAX_ATTEMPTS = 3
-PRINT_OPTIONS = PrintOptions()
-PRINT_OPTIONS.set_page_size(PrintOptions.A4)
-
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    + "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
 
 class SECLOLoginCredentials:
     """
@@ -81,152 +85,231 @@ class SECLOLoginCredentials:
         self.user = user
         self.password = password
 
+def retry(func):
+    "Decorator for auto retrying if errors occur"
 
-class SECLOAccessor:
+    def myinner(*args, **kwargs):
+        last_exception: PlaywrightError
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                return func(*args, **kwargs)
+            except PlaywrightError as e:
+                last_exception = e
+                logger.debug(str(e))
+        raise AttemptsExceededException() from last_exception  # type: ignore
+
+    return myinner
+
+
+class SECLOSession:
     """
-    Handles the creation of the webdriver instance and auth token generation
-    Other classes are meant to inherit from this.
-    Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
+    Handles creating a new browser instance for accessing the webportal.
+    Done separate from the rest to be able to recycle instances with less overhead.
 
     Parameters:
-        credentials (SECLOLoginCredentials): Wrapper object containing login info.
-        recid (Optional(int)): claim ID to bind accessor to. 
-            Optional, but if none, must later be populated.
-        progressReport (Optional(ProgressReport)): 
-            an instance of ProgressReport to display progress for long calls.
-    Returns:
-        SECLOAccessor: Instance of chrome webdriver already logged in and ready for operations
+        credentials (SECLOLoginCredentials): Credentials to use.
     """
 
     def __init__(
-        self,
+        self: Self,
         credentials: SECLOLoginCredentials,
-        recid: Optional[int] = None,
-        progress_report: Optional[ProgressReport] = ProgressReport(),
     ):
+        # Defining driver properties to avoid linting errors
+        self.playwright: Playwright
+        self.browser: Browser
+        self.context: BrowserContext
+        self.loginpage: Page
+        # Actually setting properties
+        self.credentials = credentials
         self.downloadpath = Path(f"{DOWNLOADROOT}/{uuid.uuid4()}")
         self.downloadpath = self.downloadpath.resolve()
+        self.cache = {}
         os.mkdir(self.downloadpath)
         logger.debug("Download path set to %s", self.downloadpath)
         if DEBUGMODE:
             logger.warning(
                 "WARNING! DEBUG mode enabled. Changes will not be submitted."
             )
-        self.credentials = credentials
-        self.recid: int | None = recid
-        self.progress = progress_report if (progress_report) else ProgressReport()
-        self.gde_id: str | None = None
-        self._driver: WebDriver | None = None
 
-    @property
-    def driver(self: Self) -> WebDriver:
-        """
-        Returns running driver or raises exception.
-        """
-        if self._driver is not None:
-            return self._driver
-        raise ValueError("Driver not initialized!")
-
-    def __enter__(self: Self) -> Self:
-        chrome_options = Options()
-        chrome_options.add_experimental_option(
-            "excludeSwitches", ["enable-logging"]
-        )
-        if os.getenv("HEADLESS", "TRUE") == "TRUE":
-            logger.debug("Headless flag set true")
-            chrome_options.add_argument("headless=new")
-        else:
-            logger.debug("Headless flag set false")
-
-        if os.getenv("DETATCH", "FALSE") == "TRUE":
-            chrome_options.add_experimental_option("detach", True)
-            logger.debug("Detatch flag set true")
-        else:
-            logger.debug("Detatch flag set false")
-
-        chrome_options.add_experimental_option(
-            "prefs", {"download.default_directory": str(self.downloadpath)}
-        )
-
-        if os.getenv("CONTAINER", "FALSE") == "TRUE":
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-gpu")
-        for _ in range(0, MAX_ATTEMPTS):
-            if os.getenv("CONTAINER", "FALSE") == "TRUE":
-                selenium_remote = os.getenv(
-                    "SELENIUM_REMOTE_URL", "http://localhost:4444/wd/hub"
-                )
-                self._driver = webdriver.Remote(
-                    command_executor=selenium_remote, options=chrome_options
-                )
+    async def __proxy_req(self: Self, req: Route):
+        if "trabajo" not in req.request.url:
+            return await req.abort()
+        if re.match(
+            r".*(\.axd|\.js|\.css|\.gif|\.jpg|\.png)", req.request.url, re.IGNORECASE
+        ):
+            if req.request.url in self.cache:
+                await req.fulfill(response=self.cache[req.request.url])
+                return
+            headers = req.request.headers
+            headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
+            headers["Accept-Language"] = "es-419,es-US;q=0.9,es;q=0.8"
+            headers["Cache-Control"] = "no-cache"
+            headers["Connection"] = "keep-alive"
+            headers["Dnt"] = "1"
+            headers["Host"] = "conciliadores.trabajo.gob.ar"
+            headers["Pragma"] = "no-cache"
+            headers["sec-ch-ua-platform"] = "Windows"
+            headers["sec-fetch-mode"] = "no-cors"
+            headers["sec-fetch-site"] = "same-origin"
+            headers["sec-Gpc"] = "1"
+            ans: APIResponse
+            last_exception: PlaywrightError
+            for _ in range(MAX_ATTEMPTS):
+                try:
+                    ans = await req.fetch(timeout=10000, headers=headers)
+                    break
+                except PlaywrightError as ex:
+                    last_exception = ex
+                    logger.debug(ex)
+                    continue
             else:
-                logger.debug("Creating chrome webdriver service manager instance")
-                chrome_service = ChromeService(
-                    executable_path=ChromeDriverManager().install()
-                )
+                raise last_exception  # type: ignore
+            if ans.status == 200:
+                self.cache[ans.url] = ans
+            await req.fulfill(response=ans)
+            return
+        return await req.fallback()
 
-                logger.debug("instantiating chrome driver")
-                self._driver = webdriver.Chrome(
-                    service=chrome_service, options=chrome_options
-                )
-                logger.debug("Chrome loaded successfully")
-
-            logger.debug("Getting login page...")
-            self.driver.get(
-                f"https://{self.credentials.user}:{self.credentials.password}"
-                + "@login-int.trabajo.gob.ar/adfs/ls/wia"
-                + "?wa=wsignin1.0"
-                + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
-                + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
-                + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust"
+    async def __aenter__(self: Self):
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=HEADLESS, downloads_path=DOWNLOADROOT, timeout=60000
             )
+            self.context = await self.browser.new_context(
+                http_credentials=HttpCredentials(
+                    username=self.credentials.user,
+                    password=self.credentials.password,
+                    send="unauthorized",
+                ),
+                user_agent=USER_AGENT,
+                base_url="https://conciliadores.trabajo.gob.ar",
+                screen={'width':1920, 'height': 1080},
+                no_viewport=True
+            )
+            # await self.context.route("**/*", lambda req: req.fallback())
+            await self.context.route("**/*", self.__proxy_req)
+            await self.login()
+            return self
+        except PlaywrightError as e:
+            await self.__aexit__(e.name, e, e.stack)
+            raise e
+
+    async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
+        if hasattr(self, "loginpage") and self.loginpage:
+            await self.loginpage.close()
+        if hasattr(self, "context") and self.context:
+            await self.context.close()
+        if hasattr(self, "browser") and self.browser:
+            await self.browser.close()
+        if hasattr(self, "playwright") and self.playwright:
+            await self.playwright.stop()
+        os.rmdir(self.downloadpath)
+        return False
+
+    @retry
+    async def login(self: Self):
+        """Performs the auth procedure and logs into the web portal.
+        Raises:
+            UnauthorizedAccessException: If access was not granted.
+
+        Returns:
+            self
+        """
+        if hasattr(self, "loginpage") and self.loginpage:
+            await self.loginpage.close()
+        self.loginpage = await self.context.new_page()
+        last_exc: Exception
+        for _ in range(MAX_ATTEMPTS):
             logger.debug("Loading adfs")
             try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_Center_btnAceptar"))
-                ).click()
-                logger.debug("Clicked accept")
-            except (TimeoutException, NoSuchElementException) as e:
-                logger.debug("Logging error")
-                if "adfs" in self.driver.current_url:
-                    raise UnauthorizedAccessException(
-                        "Password is wrong or server entered inactive hours"
-                    ) from e
-            logger.debug("Logged in.")
-            try:
-                WebDriverWait(self.driver, 1).until(
-                    EC.element_to_be_clickable((By.CLASS_NAME, "ColCerrar"))
-                ).click()
-                logger.debug("Closed notification panel.")
-            except TimeoutException:
-                logger.debug("Notification popup not found")
-
-            logger.info(
-                "Logged in as %s",
-                self.driver.find_element(By.ID, "ctl00_lblConciliador").text,
-            )
-            portal_version = self.driver.find_element(
-                By.ID, "ctl00_LblAppVersion"
-            ).text.split()[1]
-
-            if portal_version != PORTAL_VERSION_SUPPORTED:
-                logger.warning(
-                    "Current portal version is %s, but driver supports up to %s. "
-                    + "Some features might be unexpectedly broken.",
-                    portal_version,
-                    PORTAL_VERSION_SUPPORTED,
+                await self.loginpage.goto(
+                    "https://login-int.trabajo.gob.ar/adfs/ls/wia"
+                    + "?wa=wsignin1.0"
+                    + "&wtrealm=https%3a%2f%2fconciliadores.trabajo.gob.ar%2f"
+                    + "&wctx=rm%3d0%26id%3dpassive%26ru%3d%252f"
+                    + "&whr=https%3a%2f%2flogin-int.trabajo.gob.ar%2fadfs%2fservices%2ftrust",
+                    wait_until="commit",
                 )
-            else:
-                logger.debug("Current portal version: %s", portal_version)
-            return self
-        raise AttemptsExceededException("Couldn't initialize SECLO driver")
+                break
+            except PlaywrightError as e:
+                last_exc = e
+                logger.warning(e.message)
+        else:
+            if (
+                await self.loginpage.locator(".error-code").is_visible()
+                and "401" in await self.loginpage.locator(".error-code").inner_text()
+            ):
+                raise UnauthorizedAccessException(
+                    "Password is wrong or server entered inactive hours"
+                )
+            raise AttemptsExceededException() from last_exc  # type: ignore
 
-    def __exit__(self: Self, exception_type, exception_value, traceback):
-        self.driver.quit()
-        os.rmdir(self.downloadpath)
-        # TODO delete dir contents before rmdir
+        await self.loginpage.locator("#ctl00_Center_btnAceptar").click()
+        logger.debug("Logged in.")
+        try:
+            await self.loginpage.locator(".ColCerrar").click(timeout=100)
+            logger.debug("Closed notification panel.")
+        except PlaywrightTimeoutError:
+            logger.debug("Notification popup not found")
 
-    def _error_handling(self):
+        logger.info(
+            "Logged in as %s",
+            await self.loginpage.locator("#ctl00_lblConciliador").inner_text(),
+        )
+        portal_version = await self.loginpage.locator(
+            "#ctl00_LblAppVersion"
+        ).inner_text()
+        portal_version = portal_version.split()[1]
+
+        if portal_version != PORTAL_VERSION_SUPPORTED:
+            logger.warning(
+                "Current portal version is %s, but driver supports up to %s. "
+                + "Some features might be unexpectedly broken.",
+                portal_version,
+                PORTAL_VERSION_SUPPORTED,
+            )
+        else:
+            logger.debug("Current portal version: %s", portal_version)
+        return self
+
+
+class SECLOAccessor:
+    """
+    Handles the access process to the webportal, including login and stuff.
+    Other classes are meant to inherit from this.
+    Provides some bullshit error handling as well, for when you get redirected to /Error.aspx.
+
+    Parameters:
+        session (SECLOSession): Playwright browser wrapper, to execute on.
+        recid (Optional(int)): claim ID to bind accessor to.
+            Optional, but if none, must later be populated.
+        progress_report (Optional(ProgressReport)):
+            an instance of ProgressReport to display progress for long calls.
+    Returns:
+        SECLOAccessor: Instance of SECLO webportal already logged in and ready for operations
+    """
+
+    def __init__(
+        self: Self,
+        session: SECLOSession,
+        recid: Optional[int] = None,
+        progress_report: Optional[ProgressReport] = None,
+    ):
+        self.session = session
+        self.recid = recid
+        self.progress = progress_report or ProgressReport()
+        self.page: Page
+        self.gde_id: str = ""
+
+    async def __aenter__(self: Self):
+        self.page = await self.session.context.new_page()
+        return self
+
+    async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
+        await self.page.close()
+
+    async def _error_handling(self):
         """
         Function to handle redirects to /Error.aspx page.
         There's not much to be done other than display some boilerplate error message.
@@ -234,22 +317,23 @@ class SECLOAccessor:
         so we inform this using an exception.
         """
         try:
-            if "Error.aspx" in self.driver.current_url:
-                error = self.driver.find_element(By.ID, "lblError").text
+            if "Error.aspx" in self.page.url:
+                error = await self.page.locator("#lblError").inner_text(timeout=100)
                 if "No tiene permisos para acceder" in error:
                     raise UnauthorizedAccessException(
                         "SECLO Authorization error. "
                         + "Try initiating the request again, the token probably expired."
                     )
-                raise UnknownReportedException(
-                    "Unknown SECLO server error. Try initiating the request again."
-                )
-        except NoSuchElementException as e:
-            raise InvalidElementStateException(
-                "Unknown error, most likely local. idk, man."
-            ) from e
+                if "ha caducado" in error:
+                    raise UnauthorizedAccessException("Session expired, log in again")
+        except PlaywrightTimeoutError:
+            pass
+        raise UnknownReportedException(
+            "Unknown SECLO server error. Try initiating the request again."
+        )
 
-    def _load_rec(self: Self):
+    @retry
+    async def _load_rec(self: Self):
         """
         Receives an instance of a case searchbox and populates
         the hiddenRecID field to access the case.
@@ -263,106 +347,71 @@ class SECLOAccessor:
 
         logger.debug("Loading recID %d", self.recid)
         try:
-            WebDriverWait(self.driver, 2).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Busqueda_btnBuscar"))
+            await self.page.wait_for_load_state(timeout=60000)
+            await self.page.evaluate(
+                'document.getElementById("ctl00_Top_hdnReclamoId")'
+                + f'.setAttribute("value", "{self.recid}")'
             )
-            self.driver.execute_script(
-                "arguments[0].value = " + str(self.recid) + ";",
-                self.driver.find_element(By.NAME, "ctl00$Top$hdnReclamoId"),
-            )
-            WebDriverWait(self.driver, 2).until(
-                EC.element_to_be_clickable((By.NAME, "ctl00$Busqueda$txtNro"))
-            ).send_keys(Keys.ENTER)
-        except NoSuchElementException as e:
-            logger.error("Couldn't find case searchbox element")
-            raise e
 
-    def set_rec_id_from_gde_id(self: Self, gde_id: str) -> Self:
+            # await self.page.locator("#ctl00_Top_hdnReclamoId").fill(
+            #     str(self.recid), force=True
+            # )
+            await self.page.locator("#ctl00_Busqueda_btnBuscar").click(timeout=60000)
+        except PlaywrightTimeoutError as e:
+            logger.error(e)
+            raise RecNotAccessibleException(
+                "Couldn't find case searchbox element"
+            ) from e
+
+    @retry
+    async def set_rec_id_from_gde_id(self: Self, gde_id: str) -> Self:
         """
         Sets the current RecID to the corresponding key for the given gdeID.
 
         Parameters:
-            gdeID: The given gdeID to find a case. eg: "EX-2020-00000000-bullshit"
+            gde_id (str): The given gde ID to find a case. eg: "EX-2020-00000000-bullshit"
         """
 
         self.progress.set_steps(1)
-        self.progress.set_progress(0, "Setting recID")
+        await self.progress.set_progress(0, "Setting recID")
         logger.debug("Setting recID from gdeID %s", gde_id)
-        self.driver.get(
-            "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
-        )
+        await self.page.goto("/O_ConsultaNotificaciones.aspx", timeout=60000)
 
         gde_year = gde_id.split("-")[1]
         gde_file = gde_id.split("-")[2]
-        logger.debug("gde year: %s", gde_year)
-        logger.debug("gde file: %s", gde_file)
-        last_exception = None
-        for _ in range(0, MAX_ATTEMPTS):
-            try:
-                find_button = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_Busqueda_btnBuscar"))
-                )
-                self.driver.find_element(By.ID, "ctl00_Busqueda_txtNro").send_keys(
-                    gde_file
-                )
-                self.driver.find_element(By.ID, "ctl00_Busqueda_txtAnio").send_keys(
-                    Keys.ARROW_RIGHT
-                    + Keys.ARROW_RIGHT
-                    + Keys.ARROW_RIGHT
-                    + Keys.ARROW_RIGHT
-                    + Keys.BACKSPACE
-                    + Keys.BACKSPACE
-                    + Keys.BACKSPACE
-                    + Keys.BACKSPACE
-                    + gde_year
-                )
-                find_button.click()
-            except (NoSuchElementException, TimeoutException) as e:
-                logger.error("Couldn't load notifications page")
-                logger.error(e)
-                last_exception = e
-            try:
-                WebDriverWait(self.driver, 10).until(
-                    EC.visibility_of_element_located(
-                        (By.ID, "ctl00_Center_grdNotificaciones")
-                    )
-                )
-            except (NoSuchElementException, TimeoutException) as e:
-                logger.error("Case with GDE ID '%s' not found", gde_id)
-                logger.error(e)
-                last_exception = RecNotAccessibleException("Case not found")
-            rec_id = self.driver.find_element(
-                By.ID, "ctl00_Top_hdnReclamoId"
-            ).get_attribute("value")
-            if rec_id:
-                self.recid = int(rec_id)
-            else:
-                raise RecNotAccessibleException("Can't load recID. bummers")
-            self.progress.set_completion("Done")
-            logger.info("recID found, set to %s", self.recid)
-            return self
-        if isinstance(last_exception, RecNotAccessibleException):
-            raise last_exception
-        raise AttemptsExceededException(last_exception)
+        await self.page.locator("#ctl00_Busqueda_txtNro").fill("")
+        await self.page.locator("#ctl00_Busqueda_txtNro").fill(gde_file)
+        await self.page.locator("#ctl00_Busqueda_txtAnio").fill("")
+        await self.page.locator("#ctl00_Busqueda_txtAnio").fill(gde_year)
+        await self.page.locator("#ctl00_Busqueda_btnBuscar").click()
+        await self.page.wait_for_load_state("load", timeout=60000)
+        if await self.page.locator(".grdEmptyStyle").is_visible():
+            raise RecNotAccessibleException(f"Case with GDE ID '{gde_id}' not found")
+        rec_id = await self.page.locator("#ctl00_Top_hdnReclamoId").get_attribute(
+            "value"
+        )
+        if not rec_id:
+            raise RecNotAccessibleException(f"Can't load recID for {gde_id}. bummers")
+        self.recid = int(rec_id)
+        await self.progress.set_completion("Done")
+        logger.info("recID found, set to %s", self.recid)
+        return self
 
-    def set_gde_id_from_rec_id(self: Self, rec_id: int) -> Self:
+    @retry
+    async def set_gde_id_from_rec_id(self: Self, rec_id: int) -> Self:
         """
         Sets the corresponding GDE ID for a given case.
         Parameters:
             rec_id (int): The recID to set a GDEID from
         Returns:
-            Self:
+            Self: self
         """
-        self.driver.get(
-            f"https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={rec_id}"
-        )
+        await self.page.goto(f"/Conciliador_Reclamo.aspx?RecId={rec_id}")
         try:
-            self.gde_id = (
-                WebDriverWait(self.driver, 10)
-                .until(EC.visibility_of_element_located((By.ID, "rcNroExpediente")))
-                .text
+            self.gde_id = await self.page.locator("#rcNroExpediente").inner_text(
+                timeout=100
             )
-        except NoSuchElementException as e:
+        except PlaywrightTimeoutError as e:
             logger.error("Case not found")
             raise RecNotAccessibleException() from e
         return self
@@ -373,7 +422,7 @@ class SECLOAccessor:
         Parameters:
             progress (ProgressReport): The progressReport object to override current.
         Returns:
-            Self:
+            Self: self
         """
         self.progress = progress
         return self
@@ -384,10 +433,14 @@ class SECLOAccessor:
         Parameters:
             rec_id (int): The recID to use.
         Returns:
-            Self:
+            Self: self
         """
         self.recid = rec_id
         return self
+
+    async def _save_standard(self: Self, save_button: Locator):
+        await save_button.click()
+        await self.page.wait_for_load_state("load")
 
 
 class SECLOCitationManager(SECLOAccessor):
@@ -400,68 +453,63 @@ class SECLOCitationManager(SECLOAccessor):
         citation.createNewCitation()
 
     Parameters:
-        credentials(SECLOLoginCredentials): The credential instance to authorize the requests.
-        recid (int | None): The recID to set for this instance. Can't be none when actually loading.
+        session (SECLOLoginCredentials): The session to use for the requests.
+        rec_id (Optional(int)): The recID to set for this instance.
         date (datetime): The presentation date to set for the result form. Current date by default.
         progress: Instance of ProgressReport to report progress on blocking functions.
     """
 
     def __init__(
         self,
-        credentials: SECLOLoginCredentials,
+        session: SECLOSession,
         recid: Optional[int] = None,
-        date: datetime = datetime.now(),
+        date: Optional[datetime] = None,
         progress: Optional[ProgressReport] = None,
     ):
-        super().__init__(credentials, recid, progress_report=progress)
-        self.date = date
+        super().__init__(session, recid, progress_report=progress)
+        self.date = date or datetime.now()
         self.error = None
-        self.multiple = False
-        self.comb_selector_length = 0
-        self.comb_selector_index = 0
-        self.items: List[CitationResult] = []
+        self.comb_objects: List[str] = []
+        self.items: List[AgreementResult] = []
 
-    def __load_citation_result_screen(self: Self) -> None:
+    @retry
+    async def __load_citation_result_screen(self: Self, initial: bool = False) -> None:
         """
         Loads the first screen of the result form (aka selecting agreement/non-agreement)
         """
         logger.debug("Accessing citation result window")
-        WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_btnAudiencia"))
-        ).click()
-        self._load_rec()
+        await self.page.goto("/O_Audiencia.aspx?paramEnc=XNxZmSrDl/0vB4gXlCNe3A==")
+        await self._load_rec()
+        await self.page.wait_for_load_state("load")
         try:
             if (
-                "Registrar Resultado Audiencia"
-                in WebDriverWait(self.driver, 5)
-                .until(EC.visibility_of_element_located((By.ID, "ctl00_Center_tb")))
-                .find_elements(By.CLASS_NAME, "appBoxMenuTitle")[1]
-                .text
+                "Registrar Resultado"
+                in await self.page.locator("#ctl00_Center_tb").inner_text()
             ):
-                if self.driver.find_element(
-                    By.ID, "ctl00_Center_cmbObjetos"
-                ).get_attribute("disabled"):
+                if not await self.page.locator("#ctl00_Center_cmbObjetos").is_enabled():
                     logger.debug(
                         "Claim object comb selector is disabled. This is good."
                     )
-                    self.multiple = False
                 else:
                     logger.debug(
                         "Claim object comb selector is enabled. This will be a bummer"
                     )
-                    self.multiple = True
-                    self.comb_selector_length = len(
-                        Select(
-                            self.driver.find_element(By.ID, "ctl00_Center_cmbObjetos")
-                        ).options
-                    )
-                    self.comb_selector_index = 0
+                    if initial:
+                        for option in (
+                            await self.page.locator("#ctl00_Center_cmbObjetos")
+                            .locator("option")
+                            .all()
+                        ):
+                            value = await option.get_attribute("value")
+                            if value is not None:
+                                self.comb_objects.append(value)
         except Exception as e:
             raise RecNotAccessibleException(
                 f"Could not access result form for rec {self.recid}. Maybe its closed."
             ) from e
 
-    def reopen_case(self: Self) -> Self:
+    @retry
+    async def reopen_case(self: Self) -> Self:
         """
         Reopens a given case. Does not verify if its closed, thats the responsibility of the caller.
         Returns:
@@ -469,73 +517,49 @@ class SECLOCitationManager(SECLOAccessor):
         """
         logger.debug("Attempting to reopen case %s", str(self.recid))
         self.progress.set_steps(2)
-        self.progress.set_progress(0, "Loading case for reopening")
+        await self.progress.set_progress(0, "Loading case for reopening")
 
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_lnkReabrir"))
-        ).click()
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Busqueda_btnBuscar"))
-        )
-        self._load_rec()
-        self.progress.increase_progress("Reopening case")
-        try:
-            # if present, case was not found
-            self.driver.find_element(By.ID, "ctl00_Busqueda_grdReclamos")
-        except NoSuchElementException:
-            pass
-        else:
+        await self.page.goto(f"/O_Reabrir_Reclamo.aspx?RecId={self.recid}")
+        await self.progress.increase_progress("Reopening case")
+        # if present, case was not found
+        await self.page.wait_for_load_state("load")
+        if await self.page.locator("#ctl00_Busqueda_grdReclamos").is_visible():
             raise InvalidCaseStateException("Case not found, probably its still open")
 
-        reopen_button = WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_btnReabrir"))
-        )
-        logger.debug("Reopen button found")
-        try:
-            # if present, an error was raised
-            error = self.driver.find_element(By.ID, "ctl00_Center_lblmensaje").text
-        except NoSuchElementException:
-            pass
-        else:
-            if error:
-                raise InvalidCaseStateException(error)
+        logger.debug("Reopen found")
+
+        error_locator = self.page.locator("#ctl00_Center_lblmensaje")
+        if (
+            await error_locator.is_visible()
+            and len(await error_locator.inner_text()) > 0
+        ):
+            raise InvalidCaseStateException(await error_locator.inner_text())
+
         if not DEBUGMODE:
-            reopen_button.click()
-            WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-            self.driver.switch_to.alert.accept()
+            await self.page.locator("#ctl00_Center_btnReabrir").click()
         else:
             logger.warning("DEBUG MODE WON'T SUBMIT REOPENING REQUEST")
-        self.progress.set_completion("Done reopening")
+        await self.progress.set_completion("Done reopening")
         return self
 
-    def __row_to_result(self: Self, row: WebElement, is_employee: bool = True) -> CitationResult:
-        if is_employee:
-            try:
-                enabled = (row.find_elements(By.TAG_NAME, "td")[2]
-                    .find_elements(By.TAG_NAME, "td")[0]
-                    .get_attribute("disabled")
-                    is None)
-            except NoSuchElementException:
-                logger.warning(
-                    "Could not access properties for agreement selector switch."
-                )
-                enabled = True
-            amount = (
-                row.find_elements(By.XPATH, "./*")[4]
-                .find_element(By.TAG_NAME, "input")
-                .text.lstrip()
-            )
-            logger.debug('Amount string "%s"', amount)
-            if len(amount) == 0 or amount == 0:
-                amount = None
-            person = row.find_elements(By.TAG_NAME, "td")[0].text
-        else:
+    async def __row_to_result(self: Self, row: Locator) -> AgreementResult:
+        enabled = await row.locator("input[type=radio]").first.is_enabled()
+        is_agreement = None
+        if await row.locator("input[type=radio]").nth(0).is_checked():
+            is_agreement = True
+        elif await row.locator("input[type=radio]").nth(1).is_checked():
+            is_agreement = False
+        amount = (await row.locator("input[type=text]").input_value()).lstrip()
+        logger.debug('Amount string "%s"', amount)
+        if len(amount) == 0 or amount == "0":
             amount = None
-            enabled = False
-            person = row.find_elements(By.TAG_NAME, "td")[1].text
-        return CitationResult(person=person, amount=amount, enabled=enabled,is_employee=is_employee)
+        person = await row.locator("td").first.inner_text()
+        return AgreementResult(
+            person=person, amount=amount, enabled=enabled, agreement=is_agreement
+        )
 
-    def get_items(self: Self) -> List[CitationResult]:
+    @retry
+    async def get_agreement_items(self: Self) -> Set[AgreementResult]:
         """
         Gets the current list of employees and employers registered in this claim.
         Modify this list with the results and new notification if needed and send it to setItems.
@@ -546,242 +570,178 @@ class SECLOCitationManager(SECLOAccessor):
                 information and fed to closeCase() or createNewCitation().
         """
         self.progress.set_steps(2)
-        logger.info("Performing Citation getItems")
-        self.progress.set_progress(0, "Loading case")
-        self.__load_citation_result_screen()
-        fields = []
+        logger.info("Performing agreement getItems")
+        await self.progress.set_progress(0, "Loading case")
+        await self.__load_citation_result_screen(initial=True)
+        fields: List[AgreementResult] = []
         fields_len = 0
         logger.debug("Case attained")
 
-        self.progress.increase_progress("Loading items")
+        await self.progress.increase_progress("Loading items")
         try:
-            table = WebDriverWait(self.driver, 5).until(
-                EC.visibility_of_element_located(
-                    (By.ID, "ctl00_Center_grdAcuerdos_grdAcuerdos")
-                )
-            )
-            for row in table.find_elements(By.CLASS_NAME, "grdRowStyle"):
-                fields.append(self.__row_to_result(row, True))
-                fields.append(self.__row_to_result(row, False))
+            table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
+            for row in await table.locator(".grdRowStyle").all():
+                fields.append(await self.__row_to_result(row))
                 fields_len += 1
-            fields = set(fields)
-            logger.debug("Found the following people in this citation:")
-            for field in fields:
-                logger.debug(field)
-            self.progress.set_completion("Done getting items.")
-            items = []
-            for item in fields:
-                items.append(item)
-            return items
+            fields_set = set(fields)
+            await self.progress.set_completion("Done getting items.")
+            return fields_set
         except Exception as e:
             raise InvalidCaseStateException(
-                "Something bad happenned loading the result fields."
+                "Something bad happenned loading the results."
             ) from e
 
-    def __row_populated_check(self: Self, row: WebElement) -> bool:
+    async def __row_populated_check(self: Self, row: Locator) -> bool:
         """
         Checks whether a row from citation result screen is populated already.
 
         Parameters:
-            row(WebElement): A table row selected from the result screen
+            row (Locator): A table row selected from the result screen
         Returns:
             bool: Whether the row is populated or not
         """
-        return not row.find_elements(By.TAG_NAME, "td")[2].find_elements(
-            By.TAG_NAME, "td"
-        )[1].find_element(By.TAG_NAME, "input").get_attribute(
-            "checked"
-        ) and not row.find_elements(
-            By.TAG_NAME, "td"
-        )[2].find_elements(
-            By.TAG_NAME, "td"
-        )[0].find_element(
-            By.TAG_NAME, "input"
-        ).get_attribute(
-            "checked"
+        return any(
+            [
+                await x.is_checked()
+                for x in await row.locator("td").nth(2).locator("input").all()
+            ]
         )
 
-    def __get_matching_rows(self, entry: CitationResult) -> List[Tuple[int, WebElement]]:
-        '''
+    async def __get_matching_rows(
+        self, entry: AgreementResult
+    ) -> List[Tuple[int, Locator]]:
+        """
         For a given entry, finds all matching rows.
         Parameters:
             entry (CitationResult): Entry to search for. Can only be employee.
         Returns:
-            list: A list containing a (idx, WebEntry) tuple for every row matched
-        '''
+            list: A list containing a (idx, Locator) tuple for every row matched
+        """
         rows = []
         logger.info("Getting table contents")
-        table = WebDriverWait(self.driver, 5).until(
-            EC.visibility_of_element_located(
-                (By.ID, "ctl00_Center_grdAcuerdos_grdAcuerdos")
-            )
-        )
-        for i, row in enumerate(table.find_elements(By.CLASS_NAME, "grdRowStyle")):
+        table = self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
+        await expect(table.locator(".grdRowStyle").first).to_be_visible(timeout=30000)
+        for i, row in enumerate(await table.locator(".grdRowStyle").all()):
+            result = await self.__row_to_result(row)
             # check if matches
-            result = self.__row_to_result(row, True)
+            logger.debug("Comparing row %s to entry %s", result, entry)
             if (
                 result == entry
-                and self.__row_populated_check(row)
+                and result.result != entry.result
                 and entry.enabled
                 and result.enabled
             ):
                 rows.append((i, row))
         return rows
 
-    def __set_item(self: Self, entry: CitationResult):
-        loop = True
-        while loop:
-            loop = False
-            rows = self.__get_matching_rows(entry)
-            self.progress.increase_progress("Setting results...")
-            for i, row in rows:
-                logger.debug("Row %d matches %s and is unselected, applying", i, entry)
-                if entry.amount:
-                    # Set agreement
-                    logger.info("Agreement for %s", entry)
-                    (
-                        row.find_elements(By.TAG_NAME, "td")[2]
-                        .find_elements(By.TAG_NAME, "td")[0]
-                        .find_element(By.TAG_NAME, "label")
-                        .click()
-                    )
-                    # Wait until refreshed
-                    WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.ID, "ctl00_Center_btnSeguir4"))
-                    )
-                    # Flag so we iterate again, there may be another row for employee
-                    # Yes, this site sucks, i'm well aware of that, even moreso by now
-                    loop = True
-
-                    # We refreshed so we must search rows again
-                    WebDriverWait(self.driver, 5).until(EC.staleness_of(row))
-                    for row2 in self.driver.find_element(
-                        By.ID, "ctl00_Center_grdAcuerdos_grdAcuerdos"
-                    ).find_elements(By.CLASS_NAME, "grdRowStyle"):
-                        if (
-                            row2.find_elements(By.TAG_NAME, "td")[2]
-                            .find_elements(By.TAG_NAME, "td")[0]
-                            .find_element(By.TAG_NAME, "input")
-                            .get_attribute("checked")
-                            and len(
-                                row2.find_elements(By.TAG_NAME, "td")[4]
-                                .find_element(By.TAG_NAME, "input")
-                                .text
-                            )
-                            == 0
-                        ):
-                            # Matches, so populate amount
-                            (
-                                row2.find_elements(By.XPATH, "./*")[4]
-                                .find_element(By.TAG_NAME, "input")
-                                .send_keys(entry.amount.replace(".", ","))
-                            )
-                            break
-                    else:
-                        raise InvalidCaseStateException(
-                            "Couldn't find amount input for case result"
-                        )
-                else:
-                    # set non-agreement
-                    logger.info("Non-agreement for %s", entry)
-                    (
-                        row.find_elements(By.TAG_NAME, "td")[2]
-                        .find_elements(By.TAG_NAME, "td")[1]
-                        .find_element(By.TAG_NAME, "input")
-                        .click()
-                    )
-                    loop = True
-                    break
-
-    def __set_items(self: Self, ignore_multiple_comb: bool = False) -> Self:
-        logger.info("Performing Citation getItems")
-        self.__load_citation_result_screen()
-
-        if self.multiple:
-            if self.comb_selector_index == self.comb_selector_length:
-                logger.debug("Done setting items.")
-                return self.__advance_result_form()
+    async def __set_item(self: Self, entry: AgreementResult):
+        await self.progress.increase_progress("Setting results...")
+        logger.debug("Setting item %s", entry)
+        for idx, row in await self.__get_matching_rows(entry):
+            logger.debug("Row %d matches %s and is unselected, applying", idx, entry)
+            agreement, amount = entry.result
+            if agreement and amount:
+                # Set agreement
+                logger.info("Agreement for %s", entry)
+                # Rad 0 is agreement
+                rad = row.locator("input[type=radio]").nth(0)
+                await rad.evaluate("element => element.removeAttribute('onclick')")
+                await rad.set_checked(True)
+                # Matches, so populate amount
+                textbox = row.locator("input[type=text]")
+                await textbox.evaluate("element => element.removeAttribute('disabled')")
+                await textbox.fill("")
+                await textbox.fill(amount.replace(".", ","))
             else:
-                Select(
-                    WebDriverWait(self.driver, 2).until(
-                        EC.element_to_be_clickable((By.ID, "ctl00_Center_cmbObjetos"))
-                    )
-                ).select_by_index(self.comb_selector_index)
-                logger.debug(
-                    "Selected comb level entry %d of %d",
-                    self.comb_selector_index + 1,
-                    self.comb_selector_length,
-                )
-                self.comb_selector_index += 1
-        self.progress.set_steps(
-            1
-            + (
-                (
-                    1
-                    if ignore_multiple_comb or not self.multiple
-                    else self.comb_selector_length
-                )
-                * (len(self.items) + 1)
+                # set non-agreement (Rad 1 is nonagreement)
+                logger.info("Non-agreement for %s", entry)
+                rad = row.locator("input[type=radio]").nth(1)
+                await rad.evaluate("element => element.removeAttribute('onclick')")
+                await rad.set_checked(True)
+
+    async def __set_items(self: Self, comb_option: Optional[str] = None) -> Self:
+        logger.info("Performing Citation getItems")
+        await self.__load_citation_result_screen()
+
+        if comb_option:
+            await self.page.locator("#ctl00_Center_cmbObjetos").select_option(
+                value=comb_option
             )
-        )
+            logger.debug("Selected comb level entry %s", comb_option)
+            await self.page.wait_for_load_state("load")
         try:
-            for entry in set(self.items):
-                if entry.is_employee:
-                    self.__set_item(entry)
-        except (NoSuchElementException, TimeoutException):
-            self._error_handling()
-        for row in (
-            WebDriverWait(self.driver, 5)
-            .until(
-                EC.visibility_of_element_located(
-                    (By.ID, "ctl00_Center_grdAcuerdos_grdAcuerdos")
-                )
-            )
-            .find_elements(By.CLASS_NAME, "grdRowStyle")
+            for entry in self.items:
+                await self.__set_item(entry)
+        except PlaywrightTimeoutError:
+            await self._error_handling()
+        await self.page.wait_for_load_state("load")
+        for row in await (
+            self.page.locator("#ctl00_Center_grdAcuerdos_grdAcuerdos")
+            .locator(".grdRowStyle")
+            .all()
         ):
-            if self.__row_populated_check(row):
-                raise InvalidElementStateException("Incomplete selection")
-        return self.__advance_result_form()
+            if not await self.__row_populated_check(row):
+                raise InvalidCaseStateException("Incomplete selection")
+        return await self.__advance_result_form()
 
-    def __fill_date_input(self: Self, input_id: str, date: datetime):
+    async def __fill_date_input(self: Self, input_id: str, date: datetime):
         logger.info(self.date.strftime("%d%m%Y"))
-        datefield = self.driver.find_element(By.ID, input_id)
-        for _ in range(0, 10):
-            datefield.send_keys(Keys.ARROW_LEFT)
-        datefield.send_keys(date.strftime("%d%m%Y"))
+        await self.page.locator(f"#{input_id}").fill("")
+        await self.page.locator(f"#{input_id}").press_sequentially(
+            date.strftime("%d%m%Y"), delay=1
+        )
 
-    def __advance_result_form(self: Self):
+    async def __advance_result_form(self: Self):
         try:
-            self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", self.date)
-            self.driver.find_element(By.ID, "ctl00_Center_btnSeguir4").click()
-        except NoSuchElementException as e:
-            logger.error("error submitting form")
-            raise e
-        self.__validation_error_checker()
+            await self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", self.date)
+            await self.page.locator("#ctl00_Center_btnSeguir4").click(timeout=1000)
+        except PlaywrightTimeoutError as e:
+            raise InvalidCaseStateException("Error submitting form") from e
+        await self.__validation_error_checker()
         return self
 
-    def __validation_error_checker(self: Self):
-        try:
-            self.error = self.driver.find_element(
-                By.CLASS_NAME, "ctl00_Center_lblError"
-            ).text
-        except NoSuchElementException:
-            # Expected, means no errors
-            pass
-        else:
-            raise ValidationException(self.error)
+    async def __validation_error_checker(self: Self):
+        error_labels = [
+            self.page.locator("#ctl00_Center_lblError"),
+            self.page.locator("#ctl00_Center_ValidationSummary5"),
+        ]
+        for label in error_labels:
+            if await label.is_visible():
+                raise ValidationException(await label.inner_text())
 
-        try:
-            self.error = self.driver.find_element(
-                By.CLASS_NAME, "ctl00_Center_ValidationSummary5"
-            ).text
-        except NoSuchElementException:
-            # Expected, means no errors
-            pass
-        else:
-            raise ValidationException(self.error)
+    @retry
+    async def get_citation_items(self: Self) -> Set[CitationResult]:
+        """Returns the citation items for loading notification config
+        for each person for the next citation. Basically, a list of people
+        where you can set if they're absent and how to notify them.
 
-    def create_new_citation(self: Self, items: Set[CitationResult], date: datetime):
+        Returns:
+            Set[CitationResult]: People to be notified
+        """
+        await self.page.goto(f"O_N_esima_Audiencia.aspx?RecId={self.recid}")
+        results = []
+        for employee in await self.page.locator(
+            "#ctl00_Center_grdTrabajadores.grdRowStyle"
+        ).all():
+            first_name = await employee.locator("td").nth(0).inner_text()
+            last_name = await employee.locator("td").nth(1).inner_text()
+            results.append(
+                CitationResult(first_name + " " + last_name, is_employee=True)
+            )
+        for employer in await self.page.locator(
+            "#ctl00_Center_grdEmpleadores.grdRowStyle"
+        ).all():
+            results.append(
+                CitationResult(
+                    await employer.locator("td").first.inner_text(), is_employee=False
+                )
+            )
+        return set(results)
+
+    @retry
+    async def create_new_citation(
+        self: Self, items: Set[CitationResult], date: datetime
+    ):
         """
         Receives a modified items set with the appropiate result
         and notification data, plus a date, and registers a new citation.
@@ -790,95 +750,57 @@ class SECLOCitationManager(SECLOAccessor):
             items (Set[CitationResult]): The set provided by getItems with attributes set.
             date: The date and time requested for the new citation.
         """
-        self.items = list(items)
-        self.__set_items(True)
-        absent_citation = False
-        self.progress.increase_progress("Setting new citation date")
-        for item in self.items:
-            if item.absent:
-                absent_citation = True
+
+        await self.progress.increase_progress("Setting new citation date")
+        absent_citation = any(x.absent for x in items)
         if absent_citation:
-            self.driver.find_element(
-                By.ID, "ctl00_Center_btnNuevaIncomparecencia"
-            ).click()
+            await self.page.goto(f"/O_Incomparecencia.aspx?RecId={self.recid}")
         else:
-            self.driver.find_element(By.ID, "ctl00_Center_btnNuevaAudiencia").click()
-        self.__fill_date_input("ctl00$Center$txtFecha$txtFecha", date)
+            await self.page.goto(f"/O_N_esima_Audiencia.aspx?RecId={self.recid}")
+        await self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", date)
 
-        Select(
-            self.driver.find_element(By.ID, "ctl00_Center_cmbHoras")
-        ).select_by_visible_text(f"{date.hour:02}")
-        Select(
-            self.driver.find_element(By.ID, "ctl00_Center_cmbMinutos")
-        ).select_by_visible_text(f"{(date.minute - date.minute % 5):02}")
+        await self.page.locator("#ctl00_Center_cmbHoras").select_option(
+            label=f"{date.hour:02}"
+        )
+        await self.page.locator("#ctl00_Center_cmbMinutos").select_option(
+            f"{(date.minute - date.minute % 5):02}"
+        )
 
-        for row in self.driver.find_element(
-            By.ID, "ctl00_Center_grdTrabajadores"
-        ).find_elements(By.CLASS_NAME, "grdRowStyle"):
-            for entry in self.items:
-                if (
-                    row.find_elements(By.TAG_NAME, "td")[0].text in entry.get_person()
-                    and row.find_elements(By.TAG_NAME, "td")[1].text
-                    in entry.get_person()
-                ):
+        for row in await (
+            self.page.locator("#ctl00_Center_grdTrabajadores")
+            .locator(".grdRowStyle")
+            .all()
+        ) + await (
+            self.page.locator("#ctl00_Center_grdEmpleadores")
+            .locator(".grdRowStyle")
+            .all()
+        ):
+            for entry in items:
+                for name in entry.person.split():
+                    if name not in await row.inner_text():
+                        break
+                else:
                     if entry.absent:
-                        (
-                            row.find_elements(By.TAG_NAME, "td")[2]
-                            .find_element(By.TAG_NAME, "input")
-                            .click()
-                        )
-                    if entry.notify:
-                        if absent_citation:
-                            (
-                                row.find_elements(By.TAG_NAME, "td")[3]
-                                .find_element(By.TAG_NAME, "input")
-                                .click()
-                            )
-                        (
-                            Select(
-                                row.find_elements(By.TAG_NAME, "td")[
-                                    4 if absent_citation else 2
-                                ].find_element(By.TAG_NAME, "select")
-                            ).select_by_value(entry.notif_method.value)
-                        )
+                        await row.locator("input").nth(0).click()
+                    if absent_citation:
+                        await row.locator("input").nth(1).click()
+                    await row.locator("select").select_option(
+                        value=entry.notification.value
+                    )
                     break
-        for row in self.driver.find_element(
-            By.ID, "ctl00_Center_grdEmpleadores"
-        ).find_elements(By.CLASS_NAME, "grdRowStyle"):
-            for entry in self.items:
-                if row.find_elements(By.TAG_NAME, "td")[0].text in entry.get_person():
-                    if entry.absent:
-                        (
-                            row.find_elements(By.TAG_NAME, "td")[1]
-                            .find_element(By.TAG_NAME, "input")
-                            .click()
-                        )
-                    if entry.notify:
-                        if absent_citation:
-                            (
-                                row.find_elements(By.TAG_NAME, "td")[2]
-                                .find_element(By.TAG_NAME, "input")
-                                .click()
-                            )
-                        (
-                            Select(
-                                row.find_elements(By.TAG_NAME, "td")[
-                                    3 if absent_citation else 1
-                                ].find_element(By.TAG_NAME, "select")
-                            ).select_by_value(entry.notif_method.value)
-                        )
 
         if not DEBUGMODE:
-            self.driver.find_element(By.ID, "ctl00_Center_btnGrabar").click()
-            self.__validation_error_checker()
+            await self._save_standard(self.page.locator("#ctl00_Center_btnGrabar"))
+            await self.__validation_error_checker()
         else:
             logger.warning(
                 "DEBUG MODE WON'T PERSIST NEW CITATION. "
                 + "However, this citation will be 'completed' rather than 'pending'"
             )
-        self.progress.set_completion("Done new citation request")
+        await self.progress.set_completion("Done new citation request")
 
-    def close_case(self: Self, items: set[CitationResult]):
+    @retry
+    async def close_case(self: Self, items: set[AgreementResult]):
         """
         Sets the claim results based on the items and then closes the case.
         This method will render this instance useless, as it will destroy the webdriver.
@@ -886,26 +808,31 @@ class SECLOCitationManager(SECLOAccessor):
             items (set[CitationResult]): The modified set provided by getItems with results set.
         """
         self.items = list(items)
-        if self.multiple:
-            while self.comb_selector_index < self.comb_selector_length:
-                self.__set_items(False)
-                self.progress.increase_progress("Closing partial claim")
-                if not DEBUGMODE:
-                    self.driver.find_element(
-                        By.ID, "ctl00_Center_btnGrabarTotal"
-                    ).click()
-                    WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-                    self.driver.switch_to.alert.accept()
-        else:
-            self.__set_items(False)
-            self.progress.increase_progress("Closing claim")
+        has_comb = len(self.comb_objects) > 0
+        self.progress.set_steps(
+            self.progress.total_steps + (len(self.comb_objects) if has_comb else 1)
+        )
+        while True:
+            await self.__set_items(self.comb_objects.pop(0) if has_comb else None)
+            await self.progress.increase_progress(
+                f"Closing {'partial ' if has_comb else ''}claim"
+            )
             if not DEBUGMODE:
-                self.driver.find_element(By.ID, "ctl00_Center_btnGrabarTotal").click()
-                WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-                self.driver.switch_to.alert.accept()
+                await self._save_standard(
+                    self.page.locator(
+                        "#ctl00_Center_btnGrabar"
+                        if await self.page.locator(
+                            "#ctl00_Center_btnGrabar"
+                        ).is_visible()
+                        else "#ctl00_Center_btnGrabarTotal"
+                    )
+                )
             else:
                 logger.warning("DEBUG MODE WON'T SUBMIT CLOSE REQUEST.")
-        self.progress.set_completion("Done closing claim")
+            if len(self.comb_objects) == 0:
+                break
+
+        await self.progress.set_completion("Done closing claim")
 
 
 class SECLOFileManager(SECLOAccessor):
@@ -915,50 +842,44 @@ class SECLOFileManager(SECLOAccessor):
     uploading new ones, or uploading records.
 
     Parameters:
-        credentials: The wrapper object containing the login information.
-        recid: Tha claim number to bind to this instance.
+        session (SECLOSession): The SECLO session used to process these commands.
+        recid (int): Tha claim number to bind to this instance.
     """
 
-    def __init__(
-        self: Self, credentials: SECLOLoginCredentials, recid: Optional[int] = None
-    ):
-        super().__init__(credentials, recid)
-        self.file_list = self.__get_files()
+    def __init__(self: Self, session: SECLOSession, recid: Optional[int] = None):
+        super().__init__(session, recid)
 
-    def __get_files(self: Self):
-        """
-        Populates internal object storage with the current files in rec.
-        idc about congruency, this is a throwaway object that expires quickly.
-        """
-        self.driver.get(
-            f"https://conciliadores.trabajo.gob.ar/Documentacion_Adjunta.aspx?RecId={self.recid}"
-        )
-        files: List[Tuple[str, str, datetime]] = []
-        for row in self.driver.find_element(By.ID, "grdDocumentos").find_elements(
-            By.CLASS_NAME, "grdRowStyle"
-        ):
-            files.append(
-                (
-                    row.find_elements(By.TAG_NAME, "td")[0].text,
-                    row.find_elements(By.TAG_NAME, "td")[1].text,
-                    self.__shit_date_to_datetime(
-                        row.find_elements(By.TAG_NAME, "td")[2].text
-                    ),
-                )
-            )
-            logger.debug(files[-1])
-        return files
+    async def __aenter__(self: Self) -> Self:
+        await super().__aenter__()
+        return self
 
-    def get_files(self: Self) -> List[Tuple[str, str, datetime]]:
+    @retry
+    async def get_files(self: Self) -> List[Tuple[str, str, datetime]]:
         """
         Gets a list of all the registered files currently uploaded to this rec.
 
         Returns:
             files (Tuple[str, str, datetime]): (type, description, date)
         """
-        return self.file_list[:]
+        await self.page.goto(f"Documentacion_Adjunta.aspx?RecId={self.recid}")
+        files: List[Tuple[str, str, datetime]] = []
+        for row in (
+            await self.page.locator("#grdDocumentos").locator(".grdRowStyle").all()
+        ):
+            files.append(
+                (
+                    await row.locator("td").first.inner_text(),
+                    await row.locator("td").nth(1).inner_text(),
+                    self.__shit_date_to_datetime(
+                        await row.locator("td").nth(2).inner_text()
+                    ),
+                )
+            )
+            logger.debug(files[-1])
+        return files
 
-    def get_file(self: Self, index: int) -> Path:
+    @retry
+    async def get_file(self: Self, index: int) -> Path:
         """
         Request a given file from the list of uploaded file.
 
@@ -968,178 +889,165 @@ class SECLOFileManager(SECLOAccessor):
             Nothing currently, but hopefully later a handle to the downloaded file.
             It's downloaded to a temp directory so you can go look for it tho.
         """
-
-        if index >= len(self.file_list) or index < 0:
+        file_list = await self.get_files()
+        if index >= len(file_list) or index < 0:
             raise IndexError("Requesting a file beyond bounds")
-        self.get_files()
         logger.debug("Downloading file")
-        download = (
-            self.driver.find_element(By.ID, "grdDocumentos")
-            .find_elements(By.CLASS_NAME, "grdRowStyle")[index]
-            .find_elements(By.TAG_NAME, "td")[3]
-            .find_element(By.TAG_NAME, "input")
+        download_button = (
+            self.page.locator("#grdDocumentos")
+            .locator(".grdRowStyle")
+            .nth(index)
+            .locator("input[type=image]")
         )
-        logger.info(download.get_attribute("title"))
-        # Hardcoded name (for this page at least)
-        # Selenium doesn't really offer a solution for downloading files
-        # and curl is useless for this (bc asp stuff, why is it like this??).
-        downloadfile = self.downloadpath / "Reporte.pdf"
-        downloadfile.unlink(True)
-        download.click()
-        for _ in range(0, 200):
-            if downloadfile.exists():
-                return downloadfile
-            else:
-                sleep(0.1)
-        raise FileDownloadTimeoutException(
-            "Timeout while trying to download file, try again later."
-        )
+        download_path = self.session.downloadpath / f"{uuid.uuid4()}.pdf"
+        logger.info(await download_button.get_attribute("title"))
+        download_event = self.page.wait_for_event("download")
+        await download_button.click()
+        await (await download_event).save_as(download_path)
+        return download_path
 
-    def upload_file(
+    async def __get_files_upload(self: Self) -> List[Tuple[str, str, str, bool]]:
+        """Gets the current files listed in upload window.
+        Window must be already open, as to count temp files.
+
+        Returns:
+            List[Tuple[str, str, str, bool]]:
+                List of (file name, file type, extension, is_deletable (a.k.a. is_temp))
+        """
+        files: List[Tuple[str, str, str, bool]] = []
+        for row in (
+            await self.page.locator("#grdArchivos")
+            .locator("tr")
+            .filter(has=self.page.locator("input[type=image]"))
+            .all()
+        ):
+            column = row.locator("td")
+            files.append(
+                (
+                    await column.nth(2).inner_text(),
+                    await column.nth(3).inner_text(),
+                    await column.nth(4).inner_text(),
+                    await column.nth(1).locator("input[type=image]").is_visible(),
+                )
+            )
+        return files
+
+    @retry
+    async def upload_file(
         self: Self,
-        file: str,
+        file: Path,
         filetype: SECLOFileType,
         description: Optional[str] = None,
     ) -> None:
         """
         Uploads a file. Works for everything except records,
-        which are uploaded using the uploadRecord method because
-        its completely different for some godforsaken reason.
+        which are uploaded using the upload_record method because
+        it's completely different for some godforsaken reason.
         Parameters:
             file (str): The path to the file to be uploaded. Must be a PDF.
             filetype: The given filetype to upload, from the enum.
             description: Only used when uploading a 'other' type of file.
         """
-        self.driver.get(
-            "https://conciliadores.trabajo.gob.ar/"+\
-            f"Documentacion_ParaAdjuntar.aspx?RecId={self.recid}"
+        await self.page.goto(f"/Documentacion_ParaAdjuntar.aspx?RecId={self.recid}")
+        old_files_len = len(await self.__get_files_upload())
+        await self.page.locator("#Tipo_Documentacion").select_option(
+            value=filetype.value[0]
         )
-
-        Select(
-            WebDriverWait(self.driver, 3).until(
-                EC.element_to_be_clickable((By.ID, "Tipo_Documentacion"))
-            )
-        ).select_by_value(filetype.value[0])
-        if filetype.value[1] is True:
+        if filetype.value[1]:
             if description is None:
                 raise InvalidParameterException(
                     "Description cannot be null for this type of file"
                 )
-            (
-                WebDriverWait(self.driver, 5)
-                .until(EC.presence_of_element_located((By.ID, "txtDescripcion")))
-                .send_keys(description)
-            )
-        (
-            WebDriverWait(self.driver, 2)
-            .until(EC.element_to_be_clickable((By.ID, "Archivo")))
-            .send_keys(file)
-        )
-        (
-            WebDriverWait(self.driver, 2)
-            .until(EC.element_to_be_clickable((By.ID, "btnAgregar")))
-            .click()
-        )
+            await self.page.locator("#txtDescripcion").fill(description)
+        await self.page.locator("#Archivo").set_input_files(file)
+        await self.page.locator("#btnAgregar").click()
+        await self.page.wait_for_load_state("load")
+        new_files = await self.__get_files_upload()
+        if old_files_len == len(new_files) or file.name not in [
+            x[0] for x in new_files
+        ]:
+            raise InvalidCaseStateException("File was not uploaded")
 
-        # Save button (why tf is it unlabeled?? This is some lousy website coding)
         if not DEBUGMODE:
-            save = WebDriverWait(self.driver, 2).until(
-                EC.element_to_be_clickable((By.ID, "Button1"))
-            )
-            save.click()
-            WebDriverWait(self.driver, 5).until(EC.staleness_of(save))
-            WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "Button1"))
-            )
-
+            await self.page.locator("#Button1").click()
+            await self.page.wait_for_event("response")
             error_str = (
-                self.driver.find_element(By.CLASS_NAME, "ingreso")
-                .find_elements(By.TAG_NAME, "tr")[1]
-                .text.strip()
+                await self.page.locator(".ingreso").locator("tr").nth(1).inner_text()
             )
+            error_str = error_str.strip()
             if error_str:
                 raise ValidationException(f"Error uploading file: {error_str}")
         else:
             logger.warning("FILE WON'T BE SAVED IN DEBUG MODE!")
-        self.__get_files()
 
-    def upload_record(
-        self: Self, file: str, agreement: bool, override: bool = False
-    ) -> None:
+    async def __get_record_file_id(self: Self, row: Locator) -> Optional[int]:
+        img_script = (
+            await row.locator("input[type=image]").get_attribute("onclick") or ""
+        )
+        search = re.search(r"Documento_ID=\d+", img_script)
+        if search:
+            return int(search.group(0)[13:])
+        return None
+
+    @retry
+    async def upload_record(
+        self: Self, file: Path, agreement: bool, override: bool = False
+    ) -> Optional[int]:
         """
         Uploads a record to an already closed case.
         Parameters:
             file (str): Path to the desired record to upload.
             agreement (bool): Whether its an agreement or not,
                 because the way of uploading them is different for some godforsaken reason.
+            override (bool): In case there's a record already uploaded, whether to override
+                it with the current one or not.
+
+        Returns:
+            Optional[int]: Document ID for uploaded record (in case of success).
         """
         if not self.gde_id:
             if self.recid:
-                self.set_gde_id_from_rec_id(self.recid)
+                await self.set_gde_id_from_rec_id(self.recid)
             else:
                 raise InvalidParameterException("Missing recID and gdeID")
         logger.info(self.gde_id)
 
-        self.driver.get("https://conciliadores.trabajo.gob.ar/Novedades.aspx")
-        WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_btnActa"))
-        ).click()
-        load_next_page = WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_btnBuscar"))
-        )
+        await self.page.goto("/ActasCierres.aspx")
         if agreement:
-            self.driver.find_element(By.ID, "ctl00_Center_radTipo_0").click()
+            await self.page.locator("#ctl00_Center_radTipo_0").set_checked(True)
         else:
-            self.driver.find_element(By.ID, "ctl00_Center_radTipo_1").click()
-        load_next_page.click()
-
-        table = WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_grdReclamos"))
-        )
-        try:
-            record_list = table.find_elements(By.CLASS_NAME, "grdRowStyle")
-        except NoSuchElementException as e:
-            raise InvalidElementStateException(
+            await self.page.locator("#ctl00_Center_radTipo_1").set_checked(True)
+        await self.page.locator("#ctl00_Center_btnBuscar").click()
+        await self.page.wait_for_load_state("load")
+        table = self.page.locator("#ctl00_Center_grdReclamos")
+        if await table.locator(".grdEmptyStyle").is_visible():
+            raise InvalidCaseStateException(
                 "There are no elements available to upload records here. That sucks, man."
-            ) from e
-
-        for row in record_list:
-            if row.find_elements(By.TAG_NAME, "td")[0].text.strip() == self.gde_id:
-                try:
-                    row.find_elements(By.TAG_NAME, "td")[2].find_element(
-                        By.TAG_NAME, "input"
-                    )
-                    logger.warning(
-                        "Claim %s already has record uploaded (%s)",
-                        self.gde_id,
-                        "agreement" if agreement else "nonagreement",
-                    )
-                    if not override:
-                        return
-                except NoSuchElementException:
-                    # Expected if not uploaded
-                    continue
-                (
-                    row.find_elements(By.TAG_NAME, "td")[3]
-                    .find_element(By.TAG_NAME, "input")
-                    .send_keys(file)
+            )
+        row = table.locator(".grdRowStyle", has_text=self.gde_id)
+        if await row.is_visible():
+            if await row.locator("input[type=image]").is_visible():
+                logger.warning(
+                    "Claim %s already has record uploaded (%s)",
+                    self.gde_id,
+                    "agreement" if agreement else "nonagreement",
                 )
-                break
+                if not override:
+                    return await self.__get_record_file_id(row)
+            await row.locator("input[type=file]").set_input_files(file)
         else:
-            raise InvalidElementStateException(
+            raise InvalidCaseStateException(
                 "Given claim does not have record uploading enabled right now."
             )
 
         if not DEBUGMODE:
-            self.driver.find_element(By.ID, "ctl00_Center_btnGenerar").click()
-            WebDriverWait(self.driver, 15).until(EC.alert_is_present())
-            self.driver.switch_to.alert.accept()
-            WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_grdReclamos"))
-            )
-        else:
-            logger.warning("WON'T UPLOAD RECORD IN UPLOAD MODE!")
-        return
+            self.page.on("dialog", lambda x: x.accept())
+            await self.page.locator("#ctl00_Center_btnGenerar").click()
+            await self.page.wait_for_load_state("load")
+            return await self.__get_record_file_id(row)
+
+        logger.warning("WON'T UPLOAD RECORD IN UPLOAD MODE!")
+        return None
 
     def __shit_date_to_datetime(self: Self, date: str) -> datetime:
         """
@@ -1179,8 +1087,9 @@ class SECLORecData(SECLOAccessor):
     but the website is so shit I don't think it'll be reliable.
     """
 
-    def get_notification_data(
-        self: Self, gde_id: Optional[str] = None
+    @retry
+    async def get_notification_data(
+        self: Self, gde_id: Optional[str] = None, rec_id: Optional[int] = None
     ) -> List[SECLONotificationData]:
         """
         Gets the associated notification information for a given case.
@@ -1191,66 +1100,385 @@ class SECLORecData(SECLOAccessor):
         """
 
         if gde_id:
-            self.set_rec_id_from_gde_id(gde_id=gde_id)
+            await self.set_rec_id_from_gde_id(gde_id=gde_id)
         else:
-            self.driver.get(
-                "https://conciliadores.trabajo.gob.ar/O_ConsultaNotificaciones.aspx"
+            if rec_id:
+                self.recid = rec_id
+            await self.page.goto(
+                f"O_ConsultaNotificaciones.aspx?RecId={self.recid}", timeout=60000
             )
-            self._load_rec()
 
         self.progress.set_steps(1)
 
         results = []
-        table = WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.ID, "ctl00_Center_grdNotificaciones"))
-        )
-        for row in table.find_elements(By.CLASS_NAME, "grdRowStyle"):
+        table = self.page.locator("#ctl00_Center_grdNotificaciones")
+        for row in await table.locator(".grdRowStyle").all():
             results.append(
                 SECLONotificationData(
-                    id=int(row.find_elements(By.TAG_NAME, "td")[0].text),
-                    person=row.find_elements(By.TAG_NAME, "td")[1].text,
-                    citationType=row.find_elements(By.TAG_NAME, "td")[2].text,
-                    isEmployer=row.find_elements(By.TAG_NAME, "td")[3].text == "Emp",
+                    id=int(await row.locator("td").nth(0).inner_text()),
+                    person=await row.locator("td").nth(1).inner_text(),
+                    citationType=await row.locator("td").nth(2).inner_text(),
+                    isEmployer=await row.locator("td").nth(3).inner_text() == "Emp",
+                    isDH=await row.locator("td").nth(3).inner_text() == "DH",
                     notificationType=SECLONotificationType.notification_short_to_enum(
-                        row.find_elements(By.TAG_NAME, "td")[4].text
+                        await row.locator("td").nth(4).inner_text()
                     ),
                     generatedDate=datetime.strptime(
-                        row.find_elements(By.TAG_NAME, "td")[5].text, "%d/%m/%Y"
+                        await row.locator("td").nth(5).inner_text(), "%d/%m/%Y"
                     ),
                     notifiedDate=(
                         None
-                        if len(row.find_elements(By.TAG_NAME, "td")[6].text) == 0
+                        if not await row.locator("td").nth(6).inner_text()
                         else datetime.strptime(
-                            row.find_elements(By.TAG_NAME, "td")[6].text, "%d-%m-%Y"
+                            await row.locator("td").nth(6).inner_text(), "%d-%m-%Y"
                         )
                     ),
-                    notificationCode=row.find_elements(By.TAG_NAME, "td")[7].text,
-                    notificationStatus=row.find_elements(By.TAG_NAME, "td")[8].text,
-                    afipRead="Si" in row.find_elements(By.TAG_NAME, "td")[9].text,
+                    notificationCode=await row.locator("td").nth(7).inner_text(),
+                    notificationStatus=await row.locator("td").nth(8).inner_text(),
+                    afipRead="S" in await row.locator("td").nth(9).inner_text(),
                     citationDate=datetime.strptime(
-                        row.find_elements(By.TAG_NAME, "td")[10].text, "%d/%m/%Y %H:%M"
+                        await row.locator("td").nth(10).inner_text(), "%d/%m/%Y %H:%M"
                     ),
-                    citationStatus=row.find_elements(By.TAG_NAME, "td")[11].text,
+                    citationStatus=await row.locator("td").nth(11).inner_text(),
                 )
             )
 
-        self.progress.set_completion(f"Found notif data for {self.recid}")
+        await self.progress.set_completion(f"Found notif data for {self.recid}")
         return results
 
-    def __save_claim_data(self: Self):
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_lnkFinalizar"))
-        ).click()
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_btnAceptarRec"))
-        ).click()
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_btnSi"))
-        ).click()
-        WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-        self.driver.switch_to.alert.accept()
+    async def __save_claim_data(self: Self):
+        await self.page.locator("#ctl00_Center_lnkFinalizar").click()
+        await self.page.wait_for_load_state("load")
+        if await self.page.locator("#ctl00_Center_optTipoEnvio").is_visible():
+            raise InvalidCaseStateException(
+                f"On {self.recid}, while updating claim data, SECLO will try to create a new claim!"
+                + "That's not good. Claim ingress will not proceed until this is fixed, for safety."
+            )
+        await self.page.locator("#ctl00_Center_btnAceptarRec").click()
+        await self.page.wait_for_load_state()
+        if await self.page.locator("#ctl00_Center_btnSi").is_visible():
+            await self.page.locator("#ctl00_Center_btnSi").click()
+            await self.page.wait_for_load_state()
 
-    def get_claim_data(self: Self) -> SECLOClaimData:
+    async def __get_address(self: Self, tab: int = 0) -> SECLOAddressData:
+        return SECLOAddressData(
+            province=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtProvincia"
+            ).input_value(),
+            district=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtPartido"
+            ).input_value(),
+            county=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtLocalidad"
+            ).input_value(),
+            street=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtCalle"
+            ).input_value(),
+            number=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtNumero"
+            ).input_value(),
+            floor=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtPiso"
+            ).input_value(),
+            apt=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtDepart"
+            ).input_value(),
+            cpa=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtCPA"
+            ).input_value(),
+            bonus_data=await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_Domicilio_direc_txtAdicional"
+            ).input_value(),
+        )
+
+    async def __get_email(self: Self, tab: int = 0) -> str:
+        return (
+            await self.page.locator(
+                f"#ctl00_Center_ctl0{tab}_txtEmail_txt"
+            ).input_value()
+        ).strip()
+
+    async def __get_phone(self: Self, tab: int = 0) -> str:
+        return await self.page.locator(
+            f"#ctl00_Center_ctl0{tab}_txtTelefono_txt"
+        ).input_value()
+
+    async def __get_mobile_phone(self: Self, tab: int = 0) -> tuple[str, str]:
+        prefix = await self.page.locator(
+            f"#ctl00_Center_ctl0{tab}_txtCodArea_Numerico"
+        ).input_value()
+        phone = await self.page.locator(
+            f"#ctl00_Center_ctl0{tab}_txtCel_Numerico"
+        ).input_value()
+        return prefix, phone
+
+    async def __get_employee_data(
+        self: Self, seclo_db_ok: bool
+    ) -> tuple[SECLOEmployeeData, bool]:
+        cuil = self.page.locator("#ctl00_Center_ctl00_cuit_txtC")
+        name = f'{await self.page
+                    .locator("#ctl00_Center_ctl00_txtApellido_txt").input_value()
+                } {await self.page
+                    .locator("#ctl00_Center_ctl00_txtNombre_txt").input_value()
+                }'
+
+        if await cuil.input_value() and seclo_db_ok and await cuil.is_enabled():
+            await cuil.click()
+            await cuil.press("Tab")
+            try:
+                await expect(
+                    self.page.locator("#ctl00_Center_ctl00_cuit_txtRS")
+                ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=60000)
+                validated_name = await self.page.locator(
+                    "#ctl00_Center_ctl00_cuit_txtRS"
+                ).input_value()
+                if "null null" in validated_name:
+                    seclo_db_ok = False
+                else:
+                    name = validated_name
+            except AssertionError:
+                seclo_db_ok = False
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl00_hdnId"
+        ).get_attribute("value")
+        employee = SECLOEmployeeData(
+            name=name,
+            dni=await self.page.locator(
+                "#ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS"
+            ).input_value(),
+            cuil=(await cuil.input_value()).replace("-", ""),
+            validated=seclo_db_ok,
+            internal_id=internal_id,
+        )
+        employee.add_address(await self.__get_address(0))
+        employee.add_birth_date(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtFecNacimiento_txt"
+            ).input_value()
+        )
+        employee.add_claim_amount(
+            await self.page.locator("#ctl00_Center_ctl00_txtImporte_txt").input_value()
+        )
+        employee.add_mail(await self.__get_email(0))
+        employee.add_mobile_phone(*await self.__get_mobile_phone(0))
+        employee.add_phone(await self.__get_phone(0))
+        employee.add_start_date(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtFecIngreso_txt"
+            ).input_value()
+        )
+        employee.add_end_date(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtFecEgreso_txt"
+            ).input_value()
+        )
+        employee.add_type(
+            cct=await self.page.locator(
+                "#ctl00_Center_ctl00_txtConvenioNum_txt"
+            ).input_value(),
+            category=await self.page.locator(
+                "#ctl00_Center_ctl00_txtCategoria_txt"
+            ).input_value(),
+        )
+        employee.add_wage(
+            await self.page.locator(
+                "#ctl00_Center_ctl00_txtRemuneracion_txt"
+            ).input_value()
+        )
+
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl00_btnAgregar").click()
+            await self.page.wait_for_load_state("load")
+        return employee, seclo_db_ok
+
+    async def __get_employer_data(
+        self: Self, seclo_db_ok: bool
+    ) -> tuple[SECLOEmployerData, bool]:
+        await expect(self.page.locator("#ctl00_Center_ctl01_cuit_txtRS")).to_have_value(
+            re.compile(".+", re.IGNORECASE), timeout=30000
+        )
+        name = (
+            await self.page.locator("#ctl00_Center_ctl01_cuit_txtRS").input_value()
+        ).replace('"', "")
+        if "null null" in name:
+            seclo_db_ok = False
+        cuil = (
+            await self.page.locator("#ctl00_Center_ctl01_cuit_txtC").input_value()
+        ).replace("-", "")
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl01_txtNroDocumento_txt"
+        ).input_value()
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl01_hdnId"
+        ).get_attribute("value")
+        employer = SECLOEmployerData(
+            name=name,
+            dni=dni,
+            cuil=cuil,
+            validated=seclo_db_ok and len(cuil) > 0,
+            internal_id=internal_id,
+        )
+        employer.add_address(await self.__get_address(1))
+        employer.add_mail(await self.__get_email(1))
+        for item in (
+            await self.page.locator("#ctl00_Center_ctl01_cmbTipoSociedad_cmb")
+            .locator("option")
+            .all()
+        ):
+            if await item.get_attribute("selected"):
+                employer.add_person_type(
+                    PersonType.from_string(await item.inner_text())
+                )
+                break
+        employer.add_phone(await self.__get_phone(1))
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
+            await self.page.wait_for_load_state("load")
+        return employer, seclo_db_ok
+
+    async def __get_lawyer_data(self: Self, seclo_db_ok: bool) -> SECLOLawyerData:
+        email = await self.__get_email(2)
+        phone = await self.__get_phone(2)
+        mobilephone = await self.__get_mobile_phone(2)
+
+        # name validation (unreliable!)
+        # folio = WebDriverWait(self.driver, 5).until(
+        #   EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt'))
+        # )
+        # foliovalue = folio.get_property('value')
+        # folio.send_keys(
+        #   Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT +
+        #   Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE +
+        #   '0' + Keys.TAB)
+        # WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+        # self.driver.switch_to.alert.accept()
+        # folio.send_keys(str(foliovalue))
+        # folio.send_keys(Keys.TAB)
+        self_validated = True
+        name: str = " ".join(
+            [
+                await self.page.locator(
+                    "#ctl00_Center_ctl02_txtNombre_lbl"
+                ).inner_text(),
+                await self.page.locator(
+                    "#ctl00_Center_ctl02_txtApellido_lbl"
+                ).inner_text(),
+            ]
+        )
+        # try:
+        #     WebDriverWait(self.driver, 5).until(
+        #         lambda driver: len(driver
+        #             .find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text)>0)
+        # except Exception:
+        #     try:
+        #         alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
+        #         self.driver.switch_to.alert.accept()
+        #     except Exception:
+        #         selfValidated = False
+        # if selfValidated:
+        #     name:str = " ".join([
+        #       self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtNombre_lbl").text,
+        #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
+
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl02_txtNroDocumento_lbl"
+        ).inner_text()
+        async with SECLOClaimValidationData(session=self.session) as data:
+            try:
+                lawyer_person_data = await data.validate_dni(dni)
+            except AttributeError, PlaywrightTimeoutError:
+                lawyer_person_data = None
+                seclo_db_ok = False
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl02_hdnId"
+        ).get_attribute("value")
+        lawyer = SECLOLawyerData(
+            name=name,
+            dni=dni,
+            cuil=lawyer_person_data.cuit if lawyer_person_data else None,
+            validated=seclo_db_ok and self_validated,
+            internal_id=internal_id,
+        )
+        lawyer.add_address(await self.__get_address(2))
+
+        for row in (
+            await self.page.locator("#ctl00_Center_ctl02_lstAsignados")
+            .locator("td")
+            .all()
+        ):
+            if await row.locator("input").is_checked():
+                name = (await row.inner_text()).replace(",", "")
+                lawyer.add_represented(
+                    is_employee=await self.page.locator(
+                        "#ctl00_Center_ctl02_chkRepresentantes_0"
+                    ).is_checked(),
+                    name=name,
+                )
+        lawyer.add_phone(phone)
+        lawyer.add_mobile_phone(*mobilephone)
+        lawyer.add_mail(email)
+        lawyer.add_tf(
+            t=await self.page.locator("#ctl00_Center_ctl02_txtTomo_txt").input_value(),
+            f=await self.page.locator("#ctl00_Center_ctl02_txtFolio_txt").input_value(),
+        )
+        return lawyer
+
+    async def __get_other_data(
+        self: Self, seclo_db_ok: bool
+    ) -> Tuple[SECLOBeneficiaryData, bool]:
+        dni = await self.page.locator(
+            "#ctl00_Center_ctl03_txtNroDocumento_txt"
+        ).input_value()
+        async with SECLOClaimValidationData(self.session) as data:
+            try:
+                person_data = await data.validate_dni(dni)
+            except AttributeError, PlaywrightTimeoutError:
+                person_data = None
+                seclo_db_ok = False
+        name = " ".join(
+            [
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtApellido_txt"
+                ).input_value(),
+                await self.page.locator(
+                    "#ctl00_Center_ctl03_txtNombre_txt"
+                ).input_value(),
+            ]
+        )
+        if seclo_db_ok and person_data:
+            if "null null" in person_data.name:
+                seclo_db_ok = False
+            else:
+                await self.page.locator("#ctl00_Center_ctl03_txtApellido_txt").fill("")
+                await self.page.locator("#ctl00_Center_ctl03_txtApellido_txt").fill(
+                    person_data.last_name
+                )
+                await self.page.locator("#ctl00_Center_ctl03_txtNombre_txt").fill("")
+                await self.page.locator("#ctl00_Center_ctl03_txtNombre_txt").fill(
+                    person_data.first_name
+                )
+                name = person_data.name
+        internal_id = await self.page.locator(
+            "#ctl00_Center_ctl03_hdnId"
+        ).get_attribute("value")
+        other = SECLOBeneficiaryData(
+            name=name,
+            dni=dni,
+            cuil=person_data.cuit if person_data else None,
+            internal_id=internal_id,
+            validated=seclo_db_ok,
+        )
+        other.add_address(await self.__get_address(3))
+        other.add_mail(await self.__get_email(3))
+        other.add_phone(await self.__get_phone(3))
+        other.add_mobile_phone(*await self.__get_mobile_phone(3))
+        if seclo_db_ok:
+            await self.page.locator("#ctl00_Center_ctl03_btnAgregar").click()
+            await self.page.wait_for_load_state("load")
+        return other, seclo_db_ok
+
+    @retry
+    async def get_claim_data(self: Self) -> SECLOClaimData:
         """
         Accesses the given claims initiation data.
         Useful to get names, IDs, employment parameters, etc.
@@ -1258,694 +1486,145 @@ class SECLORecData(SECLOAccessor):
         Returns:
             SECLOClaimData: an object that contains all claim data.
         """
-        attempts = 0
-        last_exception = None
-        while attempts < MAX_ATTEMPTS:
-            try:
-                self.progress.set_steps(1)
-                self.progress.set_progress(0, "Loading claim data form...")
-                WebDriverWait(self.driver, 1).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_lnkModificacion"))
-                ).click()
-                self._load_rec()
-                WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable(
-                        (By.ID, "ctl00_Center_ucReclamo_txtFecha")
-                    )
+        self.progress.set_steps(1)
+        await self.progress.set_progress(0, "Loading claim data form...")
+        await self.page.goto(
+            "/ingresoreclamos.aspx?paramEnc=AB3u3y2175MqNXK0296jtA==",
+            timeout=60000,
+        )
+        await self._load_rec()
+        seclo_db_ok = True
+        await self.page.wait_for_load_state(timeout=60000)
+        await expect(self.page.locator("#ctl00_Center_lstTrabajadores")).to_be_visible(
+            timeout=30000
+        )
+        total_items = (
+            await self.page.locator("#ctl00_Center_lstTrabajadores")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstEmpleadores")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstReprentantes")
+            .locator("li")
+            .count()
+        )
+        total_items += (
+            await self.page.locator("#ctl00_Center_lstDerechohabientes")
+            .locator("li")
+            .count()
+        )
+        self.progress.set_steps(2 + total_items)
+
+        # CLAIM
+        await self.progress.increase_progress("Getting claim data...")
+        claim_data = SECLOClaimData(
+            recid=self.recid or 0,
+            legal_stuff=await self.page.locator(
+                "#ctl00_Center_ucReclamo_txtComentario"
+            ).input_value(),
+            init_by_worker=await self.page.locator(
+                "#ctl00_Center_ucReclamo_optReclamante_0"
+            ).is_checked(),
+            gdeid=await self.page.locator(
+                "#ctl00_Center_ucReclamo_lblReclamo_GDEID"
+            ).inner_text(),
+        )
+        for row in (
+            await self.page.locator("#ctl00_Center_ucReclamo_chkObjetoReclamo")
+            .locator("td")
+            .all()
+        ):
+            if await row.locator("input").is_checked():
+                claim_data.add_claim_object(
+                    ClaimType.string_to_enum(await row.locator("label").inner_text())
                 )
-                seclo_db_ok = True
-                total_items = len(
-                    WebDriverWait(self.driver, 10)
-                    .until(
-                        EC.element_to_be_clickable(
-                            (By.ID, "ctl00_Center_lstTrabajadores")
-                        )
-                    )
-                    .find_elements(By.TAG_NAME, "li")
-                )
-                total_items += len(
-                    WebDriverWait(self.driver, 10)
-                    .until(
-                        EC.element_to_be_clickable(
-                            (By.ID, "ctl00_Center_lstEmpleadores")
-                        )
-                    )
-                    .find_elements(By.TAG_NAME, "li")
-                )
-                total_items += len(
-                    WebDriverWait(self.driver, 10)
-                    .until(
-                        EC.element_to_be_clickable(
-                            (By.ID, "ctl00_Center_lstReprentantes")
-                        )
-                    )
-                    .find_elements(By.TAG_NAME, "li")
-                )
-                try:
-                    total_items += len(
-                        WebDriverWait(self.driver, 1)
-                        .until(
-                            EC.element_to_be_clickable(
-                                (By.ID, "ctl00_Center_lstDerechohabientes")
-                            )
-                        )
-                        .find_elements(By.TAG_NAME, "li")
-                    )
-                except (NoSuchElementException, TimeoutException):
-                    pass
-                self.progress.set_steps(2 + total_items)
+        # EMPLOYEES
+        people_list = self.page.locator("#ctl00_Center_lstTrabajadores").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            employee, seclo_db_ok = await self.__get_employee_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Employee {employee.name} ({i+1} of {await people_list.count()})"
+            )
+            claim_data.add_employee(employee)
 
-                # CLAIM
-                self.progress.increase_progress("Getting claim data...")
-                init_by_employee = self.driver.find_element(
-                    By.ID, "ctl00_Center_ucReclamo_optReclamante_0"
-                ).get_attribute("checked")
-                claim_data = SECLOClaimData(
-                    recid=self.recid or 0,
-                    legal_stuff=self.driver.find_element(
-                        By.ID, "ctl00_Center_ucReclamo_txtComentario"
-                    ).get_attribute("value")
-                    or "",
-                    init_by_worker=init_by_employee == "true" or init_by_employee is True,
-                )
-                for row in self.driver.find_element(
-                    By.ID, "ctl00_Center_ucReclamo_chkObjetoReclamo"
-                ).find_elements(By.TAG_NAME, "td"):
-                    if row.find_element(By.TAG_NAME, "input").get_attribute("checked"):
-                        claim_data.add_claim_object(
-                            ClaimType.string_to_enum(
-                                row.find_element(By.TAG_NAME, "label").text
-                            )
-                        )
+        # EMPLOYERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstEmpleadores").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            employer, seclo_db_ok = await self.__get_employer_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Employer {employer.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_employer(employer)
 
-                # EMPLOYEES
-                count = len(
-                    self.driver.find_element(
-                        By.ID, "ctl00_Center_lstTrabajadores"
-                    ).find_elements(By.TAG_NAME, "li")
-                )
-                i = 0
-                while i < count:
-                    employees = WebDriverWait(self.driver, 5).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_lstTrabajadores")
-                        )
-                    )
-                    WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable(
-                            employees.find_elements(By.TAG_NAME, "li")[i].find_element(
-                                By.TAG_NAME, "a"
-                            )
-                        )
-                    ).click()
+        # LAWYERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstReprentantes").locator("li")
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            lawyer = await self.__get_lawyer_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Lawyer {lawyer.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_lawyer(lawyer)
 
-                    cuil = WebDriverWait(self.driver, 10).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_ctl00_cuit_txtC")
-                        )
-                    )
-                    name = f'{self.driver
-                              .find_element(By.ID, 'ctl00_Center_ctl00_txtApellido_txt')
-                              .get_attribute('value') or ""
-                            } {self.driver
-                              .find_element(By.ID, 'ctl00_Center_ctl00_txtNombre_txt')
-                              .get_attribute('value') or ""}'
-                    self.progress.increase_progress(
-                        f"Employee {name} ({i+1} of {count})"
-                    )
+        # OTHERS
+        await self.page.wait_for_load_state()
+        people_list = self.page.locator("#ctl00_Center_lstDerechohabientes").locator(
+            "li"
+        )
+        for i in range(await people_list.count()):
+            await people_list.nth(i).locator("a").click()
+            await self.page.wait_for_load_state()
+            other, seclo_db_ok = await self.__get_other_data(seclo_db_ok)
+            await self.progress.increase_progress(
+                f"Other {other.name} ({i+1} of {await people_list.count()})..."
+            )
+            claim_data.add_other(other)
 
-                    if (
-                        len(cuil.text) > 0
-                        and seclo_db_ok
-                        and not cuil.get_attribute("disabled")
-                    ):
-                        cuil.click()
-                        cuil.send_keys(Keys.TAB)
-                        (
-                            WebDriverWait(self.driver, 5).until(
-                                lambda driver: len(
-                                    driver.find_element(
-                                        By.ID, "ctl00_Center_ctl00_cuit_txtRS"
-                                    ).get_attribute("value")
-                                    or ""
-                                )
-                                > 0
-                            )
-                        )
-                        if "null null" not in (
-                            self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_cuit_txtRS"
-                            ).get_attribute("value")
-                            or ""
-                        ):
-                            name = (
-                                self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl00_cuit_txtRS"
-                                ).get_attribute("value")
-                                or ""
-                            )
-                        else:
-                            seclo_db_ok = False
-                    employee = SECLOEmployeeData(
-                        name=name,
-                        dni=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtNroDocumentoComplete_txtRS"
-                        ).get_attribute("value")
-                        or "",
-                        cuil=(cuil.get_attribute("value") or "").replace("-", ""),
-                        validated=seclo_db_ok,
-                    )
-                    employee.add_address(
-                        SECLOAddressData(
-                            province=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtProvincia"
-                            ).get_attribute("value")
-                            or "",
-                            district=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtPartido"
-                            ).get_attribute("value")
-                            or "",
-                            county=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtLocalidad"
-                            ).get_attribute("value")
-                            or "",
-                            street=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtCalle"
-                            ).get_attribute("value")
-                            or "",
-                            number=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtNumero"
-                            ).get_attribute("value"),
-                            floor=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtPiso"
-                            ).get_attribute("value"),
-                            apt=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtDepart"
-                            ).get_attribute("value"),
-                            cpa=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtCPA"
-                            ).get_attribute("value"),
-                            bonus_data=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl00_Domicilio_direc_txtAdicional"
-                            ).get_attribute("value"),
-                        )
-                    )
-                    employee.add_birth_date(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtFecNacimiento_txt"
-                        ).get_attribute("value")
-                        or ""
-                    )
-                    employee.add_claim_amount(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtImporte_txt"
-                        ).get_attribute("value")
-                        or ""
-                    )
-                    employee.add_mail(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtEmail_txt"
-                        ).get_attribute("value")
-                    )
-                    employee.add_mobile_phone(
-                        prefix=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtCodArea_Numerico"
-                        ).get_attribute("value")
-                        or "",
-                        phone=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtCel_Numerico"
-                        ).get_attribute("value")
-                        or "",
-                    )
-                    employee.add_phone(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtTelefono_txt"
-                        ).get_attribute("value")
-                    )
-                    employee.add_start_date(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtFecIngreso_txt"
-                        ).get_attribute("value")
-                        or ""
-                    )
-                    employee.add_end_date(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtFecEgreso_txt"
-                        ).get_attribute("value")
-                        or ""
-                    )
-                    employee.add_type(
-                        cct=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtConvenioNum_txt"
-                        ).get_attribute("value")
-                        or "",
-                        category=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtCategoria_txt"
-                        ).get_attribute("value"),
-                    )
-                    employee.add_wage(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl00_txtRemuneracion_txt"
-                        ).get_attribute("value")
-                        or ""
-                    )
-                    claim_data.add_employee(employee)
-                    if seclo_db_ok:
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (By.ID, "ctl00_Center_ctl00_btnAgregar")
-                            )
-                        ).click()
-                    i += 1
+        # END
+        await self.progress.set_completion("Done getting data.")
+        if seclo_db_ok and not DEBUGMODE:
+            await self.__save_claim_data()
+        return claim_data
 
-                # EMPLOYERS
-                count = len(
-                    self.driver.find_element(
-                        By.ID, "ctl00_Center_lstEmpleadores"
-                    ).find_elements(By.TAG_NAME, "li")
-                )
-                i = 0
-                while i < count:
-                    employers = WebDriverWait(self.driver, 5).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_lstEmpleadores")
-                        )
-                    )
-                    WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable(
-                            employers.find_elements(By.TAG_NAME, "li")[i].find_element(
-                                By.TAG_NAME, "a"
-                            )
-                        )
-                    ).click()
-
-                    WebDriverWait(self.driver, 5).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_ctl01_cuit_txtRS")
-                        )
-                    )
-                    name = (
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl01_cuit_txtRS"
-                        ).get_attribute("value")
-                        or ""
-                    ).replace('"', "")
-                    self.progress.increase_progress(
-                        f"Employer {name} ({i+1} of {count})..."
-                    )
-                    cuil = (
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl01_cuit_txtC"
-                        ).get_attribute("value")
-                        or ""
-                    ).replace("-", "")
-                    dni = self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl01_txtNroDocumento_txt"
-                    ).get_attribute("value")
-                    employer = SECLOEmployerData(
-                        name=name,
-                        dni=dni,
-                        cuil=cuil,
-                        validated=seclo_db_ok and (len(cuil) > 0),
-                    )
-                    employer.add_address(
-                        SECLOAddressData(
-                            province=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtProvincia"
-                            ).get_attribute("value")
-                            or "",
-                            district=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtPartido"
-                            ).get_attribute("value")
-                            or "",
-                            county=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtLocalidad"
-                            ).get_attribute("value")
-                            or "",
-                            street=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtCalle"
-                            ).get_attribute("value")
-                            or "",
-                            number=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtNumero"
-                            ).get_attribute("value"),
-                            floor=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtPiso"
-                            ).get_attribute("value"),
-                            apt=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtDepart"
-                            ).get_attribute("value"),
-                            cpa=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtCPA"
-                            ).get_attribute("value"),
-                            bonus_data=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtAdicional"
-                            ).get_attribute("value"),
-                        )
-                    )
-                    employer.add_mail(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl01_txtEmail_txt"
-                        ).get_attribute("value")
-                    )
-                    for item in self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl01_cmbTipoSociedad_cmb"
-                    ).find_elements(By.TAG_NAME, "option"):
-                        if item.get_attribute("selected"):
-                            employer.add_person_type(PersonType.from_string(item.text))
-                    employer.add_phone(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl01_txtTelefono_txt"
-                        ).get_attribute("value")
-                    )
-                    claim_data.add_employer(employer)
-                    if seclo_db_ok:
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable(
-                                (By.ID, "ctl00_Center_ctl01_btnAgregar")
-                            )
-                        ).click()
-                    i += 1
-
-                # LAWYERS
-                count = len(
-                    self.driver.find_element(
-                        By.ID, "ctl00_Center_lstReprentantes"
-                    ).find_elements(By.TAG_NAME, "li")
-                )
-                i = 0
-                while i < count:
-                    lawyers = WebDriverWait(self.driver, 5).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_lstReprentantes")
-                        )
-                    )
-                    WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable(
-                            lawyers.find_elements(By.TAG_NAME, "li")[i].find_element(
-                                By.TAG_NAME, "a"
-                            )
-                        )
-                    ).click()
-
-                    email = (
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl02_txtEmail_txt"
-                        ).get_attribute("value")
-                        or ""
-                    ).strip()
-                    phone = self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl02_txtTelefono_txt"
-                    ).get_attribute("value")
-                    mobileprefix = self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl02_txtCodArea_Numerico"
-                    ).get_attribute("value")
-                    mobilephone = self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl02_txtCel_Numerico"
-                    ).get_attribute("value")
-
-                    # name validation (unreliable!)
-                    # folio = WebDriverWait(self.driver, 5).until(
-                    #   EC.visibility_of_element_located((By.ID, 'ctl00_Center_ctl02_txtFolio_txt'))
-                    # )
-                    # foliovalue = folio.get_property('value')
-                    # folio.send_keys(
-                    #   Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT + Keys.ARROW_RIGHT +
-                    #   Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE + Keys.BACKSPACE +
-                    #   '0' + Keys.TAB)
-                    # WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-                    # self.driver.switch_to.alert.accept()
-                    # folio.send_keys(str(foliovalue))
-                    # folio.send_keys(Keys.TAB)
-                    self_validated = True
-                    name: str = " ".join(
-                        [
-                            self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_txtNombre_lbl"
-                            ).text,
-                            self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_txtApellido_lbl"
-                            ).text,
-                        ]
-                    )
-                    # try:
-                    #     WebDriverWait(self.driver, 5).until(
-                    #         lambda driver: len(driver
-                    #             .find_element(By.ID, 'ctl00_Center_ctl02_txtNombre_lbl').text)>0)
-                    # except Exception:
-                    #     try:
-                    #         alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-                    #         self.driver.switch_to.alert.accept()
-                    #     except Exception:
-                    #         selfValidated = False
-                    # if selfValidated:
-                    #     name:str = " ".join([
-                    #       self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtNombre_lbl").text,
-                    #    self.driver.find_element(By.ID,"ctl00_Center_ctl02_txtApellido_lbl").text])
-                    self.progress.increase_progress(
-                        f"Lawyer {name} ({i+1} of {count})..."
-                    )
-
-                    lawyer = SECLOLawyerData(
-                        name=name,
-                        dni=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl02_txtNroDocumento_lbl"
-                        ).text,
-                        validated=seclo_db_ok and self_validated,
-                    )
-                    lawyer.add_address(
-                        SECLOAddressData(
-                            province=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtProvincia"
-                            ).get_attribute("value")
-                            or "",
-                            district=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtPartido"
-                            ).get_attribute("value")
-                            or "",
-                            county=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtLocalidad"
-                            ).get_attribute("value")
-                            or "",
-                            street=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtCalle"
-                            ).get_attribute("value")
-                            or "",
-                            number=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtNumero"
-                            ).get_attribute("value"),
-                            floor=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtPiso"
-                            ).get_attribute("value"),
-                            apt=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtDepart"
-                            ).get_attribute("value"),
-                            cpa=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtCPA"
-                            ).get_attribute("value"),
-                            bonus_data=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl02_Domicilio_direc_txtAdicional"
-                            ).get_attribute("value"),
-                        )
-                    )
-
-                    for row in self.driver.find_element(
-                        By.ID, "ctl00_Center_ctl02_lstAsignados"
-                    ).find_elements(By.TAG_NAME, "td"):
-                        if row.find_element(By.TAG_NAME, "input").get_attribute(
-                            "checked"
-                        ):
-                            name = row.text.replace(",", "")
-                            lawyer.add_represented(
-                                is_employee=self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl02_chkRepresentantes_0"
-                                ).get_attribute("checked")
-                                is True,
-                                name=name,
-                            )
-                    lawyer.add_phone(phone)
-                    lawyer.add_mobile_phone(
-                        prefix=mobileprefix or "", phone=mobilephone or ""
-                    )
-                    lawyer.add_mail(email)
-                    lawyer.add_tf(
-                        t=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl02_txtTomo_txt"
-                        ).get_attribute("value")
-                        or "",
-                        f=self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl02_txtFolio_txt"
-                        ).get_attribute("value")
-                        or "",
-                    )
-                    claim_data.add_lawyer(lawyer)
-                    i += 1
-
-                # OTHERS
-                try:
-                    count = len(
-                        self.driver.find_element(
-                            By.ID, "ctl00_Center_lstDerechohabientes"
-                        ).find_elements(By.TAG_NAME, "li")
-                    )
-                except NoSuchElementException:
-                    pass
-                else:
-                    i = 0
-                    while i < count:
-                        employees = WebDriverWait(self.driver, 5).until(
-                            EC.visibility_of_element_located(
-                                (By.ID, "ctl00_Center_lstDerechohabientes")
-                            )
-                        )
-                        WebDriverWait(self.driver, 5).until(
-                            EC.element_to_be_clickable(
-                                employees.find_elements(By.TAG_NAME, "li")[
-                                    i
-                                ].find_element(By.TAG_NAME, "a")
-                            )
-                        ).click()
-                        WebDriverWait(self.driver, 5).until(
-                            EC.visibility_of_element_located(
-                                (By.ID, "ctl00_Center_ctl03_txtNombre_txt")
-                            )
-                        )
-                        name = " ".join(
-                            [
-                                self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl03_txtApellido_txt"
-                                ).get_attribute("value")
-                                or "",
-                                self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl03_txtNombre_txt"
-                                ).get_attribute("value")
-                                or "",
-                            ]
-                        )
-                        dni = self.driver.find_element(
-                            By.ID, "ctl00_Center_ctl03_txtNroDocumento_txt"
-                        ).get_attribute("value")
-                        self.progress.increase_progress(
-                            f"Other {name} ({i+1} of {count})..."
-                        )
-                        other = SECLOBeneficiaryData(name=name, dni=dni)
-                        other.add_address(
-                            SECLOAddressData(
-                                province=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtProvincia",
-                                ).get_attribute("value")
-                                or "",
-                                district=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtPartido",
-                                ).get_attribute("value")
-                                or "",
-                                county=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtLocalidad",
-                                ).get_attribute("value")
-                                or "",
-                                street=self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl03_Domicilio_direc_txtCalle"
-                                ).get_attribute("value")
-                                or "",
-                                number=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtNumero",
-                                ).get_attribute("value"),
-                                floor=self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl03_Domicilio_direc_txtPiso"
-                                ).get_attribute("value"),
-                                apt=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtDepart",
-                                ).get_attribute("value"),
-                                cpa=self.driver.find_element(
-                                    By.ID, "ctl00_Center_ctl03_Domicilio_direc_txtCPA"
-                                ).get_attribute("value"),
-                                bonus_data=self.driver.find_element(
-                                    By.ID,
-                                    "ctl00_Center_ctl03_Domicilio_direc_txtAdicional",
-                                ).get_attribute("value"),
-                            )
-                        )
-                        other.add_mail(
-                            self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl03_txtEmail_txt"
-                            ).get_attribute("value")
-                        )
-                        other.add_phone(
-                            self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl03_txtTelefono_txt"
-                            ).get_attribute("value")
-                        )
-                        other.add_mobile_phone(
-                            prefix=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl03_txtCodArea_Numerico"
-                            ).get_attribute("value")
-                            or "",
-                            phone=self.driver.find_element(
-                                By.ID, "ctl00_Center_ctl03_txtCel_Numerico"
-                            ).get_attribute("value")
-                            or "",
-                        )
-                        claim_data.add_other(other)
-                        i += 1
-
-                # END
-                self.progress.set_completion("Done getting data.")
-                if seclo_db_ok and not DEBUGMODE:
-                    self.__save_claim_data()
-                return claim_data
-            except (
-                NoSuchElementException,
-                TimeoutException,
-                StaleElementReferenceException,
-            ) as e:
-                attempts += 1
-                last_exception = e
-                logger.warning(e)
-                continue
-        raise AttemptsExceededException(last_exception)
-
-    def get_conciliador_data(self: Self) -> str:
+    @retry
+    async def get_conciliador_data(self: Self) -> str:
         """
         Returns the assigned conciliator for current case.
         """
-        self.driver.get(
-            f"https://conciliadores.trabajo.gob.ar/Conciliador_Reclamo.aspx?RecId={self.recid}"
-        )
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "rcNroExpediente"))
-        )
+        await self.page.goto(f"Conciliador_Reclamo.aspx?RecId={self.recid}")
+
         try:
-            return self.driver.find_element(By.ID, "rcConciliador").text
-        except NoSuchElementException:
+            return await self.page.locator("#rcConciliador").inner_text(timeout=10000)
+        except PlaywrightTimeoutError:
             return "UNKNOWN"
 
-    def __complete_address_field(self: Self, field: WebElement, text: str) -> None:
+    async def __complete_address_field(self: Self, field: Locator, text: str) -> None:
         if not field.get_attribute("readOnly"):
-            field.send_keys(text)
-            WebDriverWait(self.driver, 2).until(
-                EC.element_to_be_clickable((By.CLASS_NAME, "ui-widget-content"))
-            )
-            field.send_keys(Keys.ENTER + Keys.TAB)
-            try:
-                error_txt = (
-                    WebDriverWait(self.driver, 1)
-                    .until(
-                        EC.visibility_of_element_located(
-                            (By.CLASS_NAME, "divMensajeWarning")
-                        )
-                    )
-                    .text
+            await field.fill("")
+            await field.fill(text)
+            await self.page.locator(".ui-widget-content").is_visible()
+            await field.press("Enter")
+            await field.press("Tab")
+            error_loc = self.page.locator(".divMensajeWarning")
+            if await error_loc.is_visible(timeout=1000):
+                raise InvalidCaseStateException(
+                    f"Address error: {await error_loc.inner_text()}"
                 )
-                raise InvalidCaseStateException(f"Address error: {error_txt}")
-            except (NoSuchElementException, TimeoutException):
-                pass  # expected
 
-    def add_employer(self: Self, employer: SECLOEmployerData) -> Self:
+    @retry
+    async def add_employer(self: Self, employer: SECLOEmployerData) -> Self:
         """
         Attempts to expand a claim with the given employer.
         This can fail in many many ways, but we can try at least.
@@ -1953,136 +1632,105 @@ class SECLORecData(SECLOAccessor):
             employer (SECLOEmployerData): The employer to be added.
         """
         self.progress.set_steps(1)
-        self.progress.set_progress(0, "Loading claim data form...")
+        await self.progress.set_progress(0, "Loading claim data form...")
+        if not employer.address:
+            raise InvalidParameterException("Employer must have address")
 
         for _ in range(0, 5):
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_lnkModificacion"))
-            ).click()
-            self._load_rec()
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_ucReclamo_txtFecha"))
+            # Trying to get this bitch enabled. idk why this works but it does.
+            await self.page.goto(
+                "ingresoreclamos.aspx??paramEnc=AB3u3y2175MqNXK0296jtA==",
+                timeout=60000,
             )
-            WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_lnkEmpleadores"))
-            ).click()
-            cuit_box = WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_cuit_txtC"))
-            )
-            if cuit_box.is_enabled():
+            await self._load_rec()
+            await self.page.locator("#ctl00_Center_lnkEmpleadores").click()
+            cuit_box = self.page.locator("#ctl00_Center_ctl01_cuit_txtC")
+            if await cuit_box.is_enabled():
                 break
-            self.__save_claim_data()
+            await self.__save_claim_data()
         else:
             raise InvalidCaseStateException(
                 "Couldn't open employer edit menu, you might need to edit this manually"
             )
 
-        Select(
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_cmbTipoSociedad_cmb")
-                )
+        await self.page.locator(
+            "#ctl00_Center_ctl01_cmbTipoSociedad_cmb"
+        ).select_option(
+            value=str(
+                employer.person_type.value[0]
+                if employer.person_type is not None
+                else PersonType.PERSON.value[0]
             )
-        ).select_by_value(str(
-            employer.person_type.value[0] if employer.person_type is not None 
-            else PersonType.PERSON.value[0]))
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_cuit_txtC"))
-        ).send_keys(str(employer.cuil) + Keys.TAB)
-        Select(
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_cmbActividad_cmb")
-                )
-            )
-        ).select_by_value(
-            "22"
-        )  # Otra
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_txtActividad_txt"))
-        ).send_keys("alguna actividad misteriosa de la cual desconocemos" + Keys.TAB)
+        )
 
-        self.__complete_address_field(
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtProvincia")
-                )
-            ),
-            employer.address.province if employer.address else "",
+        await self.page.locator("#ctl00_Center_ctl01_cuit_txtC").fill(
+            str(employer.cuil)
         )
-        self.__complete_address_field(
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtPartido")
-                )
-            ),
-            employer.address.district if employer.address else "",
+        await self.page.locator("#ctl00_Center_ctl01_cuit_txtC").press("Tab")
+        await self.page.locator("#ctl00_Center_ctl01_cmbActividad_cmb").select_option(
+            # Hardcoded 'other' bc i really can't be bothered to implement this
+            # Never used this comb irl, and i won't start now.
+            # Worst menu, easily
+            value="22"
         )
-        self.__complete_address_field(
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtLocalidad")
-                )
-            ),
-            employer.address.county if employer.address else "",
+        await self.page.locator("#ctl00_Center_ctl01_txtActividad_txt").fill(
+            "alguna actividad misteriosa de la cual desconocemos"
         )
-        self.__complete_address_field(
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable(
-                    (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtCalle")
-                )
-            ),
-            employer.address.street if employer.address else "",
-        )
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable(
-                (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtNumero")
-            )
-        ).send_keys(
-            ((employer.address.number if employer.address else "") or "") + Keys.TAB
-        )
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable(
-                (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtPiso")
-            )
-        ).send_keys((employer.address.floor if employer.address else "") or "")
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable(
-                (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtDepart")
-            )
-        ).send_keys((employer.address.apt if employer.address else "") or "")
-        cpa = WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable(
-                (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtCPA")
-            )
-        )
-        if not cpa.get_attribute("value"):
-            cpa.send_keys((employer.address.cpa if employer.address else "") or "")
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable(
-                (By.ID, "ctl00_Center_ctl01_Domicilio_direc_txtAdicional")
-            )
-        ).send_keys((employer.address.bonus_data if employer.address else "") or "")
+        await self.page.locator("#ctl00_Center_ctl01_txtActividad_txt").press("Tab")
 
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_txtEmail_txt"))
-        ).send_keys(employer.mail or "")
-        WebDriverWait(self.driver, 1).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_txtTelefono_txt"))
-        ).send_keys(str(employer.phone) or "")
+        await self.__complete_address_field(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtProvincia"),
+            employer.address.province,
+        )
+        await self.__complete_address_field(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtPartido"),
+            employer.address.district,
+        )
+        await self.__complete_address_field(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtLocalidad"),
+            employer.address.county,
+        )
+        await self.__complete_address_field(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCalle"),
+            employer.address.street,
+        )
+        await self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtNumero").fill(
+            employer.address.number or ""
+        )
+        await self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtNumero").press(
+            "Tab"
+        )
+        await self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtPiso").fill(
+            employer.address.floor or ""
+        )
+        await self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtDepart").fill(
+            employer.address.apt or ""
+        )
+        await expect(
+            self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCPA")
+        ).to_have_value(re.compile(".+", re.IGNORECASE), timeout=30000)
+        cpa = self.page.locator("#ctl00_Center_ctl01_Domicilio_direc_txtCPA")
+        if not await cpa.input_value():
+            await cpa.fill(employer.address.cpa or "")
+        await self.page.locator(
+            "#ctl00_Center_ctl01_Domicilio_direc_txtAdicional"
+        ).fill(employer.address.bonus_data or "")
+
+        await self.page.locator("#ctl00_Center_ctl01_txtEmail_txt").fill(
+            employer.mail or ""
+        )
+        await self.page.locator("#ctl00_Center_ctl01_txtTelefono_txt").fill(
+            str(employer.phone or "")
+        )
 
         if not DEBUGMODE:
-            accept_button = WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_btnAgregar"))
-            )
-            accept_button.click()
-            WebDriverWait(self.driver, 5).until(EC.staleness_of(accept_button))
-            WebDriverWait(self.driver, 1).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_ctl01_btnAgregar"))
-            )
-            error_text = self.driver.find_element(
-                By.ID, "ctl00_Center_ctl01_ValidationSummary1"
-            ).text.strip()
+            await self.page.locator("#ctl00_Center_ctl01_btnAgregar").click()
+            await self.page.wait_for_event("load")
+            error_text = (
+                await self.page.locator(
+                    "#ctl00_Center_ctl01_ValidationSummary1"
+                ).inner_text()
+            ).strip()
             if error_text:
                 raise InvalidCaseStateException(error_text)
         return self
@@ -2094,30 +1742,29 @@ class SECLOInvoiceParser(SECLOAccessor):
     Basically for nonagreements.
     """
 
-    def list_invoices(self: Self) -> List[Dict[str, Any]]:
+    @retry
+    async def list_invoices(self: Self) -> List[Dict[str, Any]]:
         """
         Fetches available list of invoices to be selected
         Returns:
             invoices: {'id': int, 'date': datetime}
         """
-        WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_lnkConsultaLiquidacion"))
-        ).click()
-        invoices = []
-        for option in (
-            WebDriverWait(self.driver, 10)
-            .until(EC.element_to_be_clickable((By.ID, "ctl00_Center_cmbLiquidaciones")))
-            .find_elements(By.TAG_NAME, "option")
-        ):
+        await self.page.goto("/FF_ConsultaLiquidaciones.aspx", timeout=60000)
+        invoices: List[Dict[str, Any]] = []
+        options = self.page.locator("#ctl00_Center_cmbLiquidaciones").locator("option")
+        for option in await options.all():
             invoices.append(
                 {
-                    "id": int(option.get_attribute("value") or 0),
-                    "date": datetime.strptime(option.text.split()[0], "%d/%m/%Y"),
+                    "id": int(await option.get_attribute("value") or 0),
+                    "date": datetime.strptime(
+                        (await option.inner_text()).split()[0], "%d/%m/%Y"
+                    ),
                 }
             )
         return invoices
 
-    def get_invoice_details(self: Self, invoice: int) -> Dict:
+    @retry
+    async def get_invoice_details(self: Self, invoice: int) -> Dict:
         """
         Fetches detailed info for given invoice ID.
         Returns:
@@ -2131,40 +1778,35 @@ class SECLOInvoiceParser(SECLOAccessor):
                 ]
             }
         """
-        WebDriverWait(self.driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "ctl00_lnkConsultaLiquidacion"))
-        ).click()
-        Select(
-            WebDriverWait(self.driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Center_cmbLiquidaciones"))
-            )
-        ).select_by_value(str(invoice))
-        self.driver.find_element(By.ID, "ctl00_Center_btnBuscar").click()
+        await self.page.goto("/FF_ConsultaLiquidaciones.aspx")
+        await self.page.locator("#ctl00_Center_cmbLiquidaciones").select_option(
+            value=str(invoice)
+        )
+        await self.page.locator("#ctl00_Center_btnBuscar").click()
 
         result = []
-        table = WebDriverWait(self.driver, 10).until(
-            EC.visibility_of_element_located((By.ID, "ctl00_Center_grdMovimientos"))
-        )
-        for row in table.find_elements(By.CLASS_NAME, "grdRowStyle"):
+        table = self.page.locator("#ctl00_Center_grdMovimientos")
+        for row in await table.locator(".grdRowStyle").all():
             result.append(
                 {
-                    "gdeID": row.find_elements(By.TAG_NAME, "td")[2].text,
-                    "description": row.find_elements(By.TAG_NAME, "td")[3].text,
+                    "gdeID": await row.locator("td").nth(2).inner_text(),
+                    "description": await row.locator("td").nth(3).inner_text(),
                     "amount": Decimal(
-                        row.find_elements(By.TAG_NAME, "td")[4]
-                        .text[2:-1]
+                        (await row.locator("td").nth(4).inner_text())[
+                            2:-1
+                        ]  # Remove pesos sign and space
                         .replace(".", "")
                         .replace(",", ".")
                     ),
                     "date": datetime.strptime(
-                        row.find_elements(By.TAG_NAME, "td")[5].text, "%d/%m/%Y"
+                        await row.locator("td").nth(5).inner_text(), "%d/%m/%Y"
                     ),
                 }
             )
         return {
             "total": Decimal(
-                self.driver.find_element(By.ID, "ctl00_Center_lblTotal")
-                .text.split()[1]
+                (await self.page.locator("#ctl00_Center_lblTotal").inner_text())
+                .split()[1]
                 .replace(",", ".")
             ),
             "detail": result,
@@ -2178,203 +1820,183 @@ class SECLOCalendarParser(SECLOAccessor):
     or verifying citation consistency.
     """
 
-    def __iterate_calendar(self: Self, table: WebElement) -> List[int]:
+    def __init__(
+        self: Self,
+        session: SECLOSession,
+        weeks_before: int,
+        weeks_after: int,
+        progress: ProgressReport | None = None,
+    ):
+        super().__init__(session, None, progress)
+        self.weeks_before = weeks_before
+        self.weeks_after = weeks_after
+        self.current = 0
+        self.first_stage = ProgressReport()
+        self.second_stage = ProgressReport()
+        self.id_task: asyncio.Task
+        self.citation_tasks = []
+
+    async def __aenter__(self: Self) -> Self:
+        await super().__aenter__()
+        await self.first_stage.set_steps(
+            1 + (self.weeks_before + self.weeks_after)
+        ).set_message("Loading calendar")
+        await self.first_stage.set_progress(0, "Loading calendar")
+        self.second_stage.set_steps(1)
+        await self.second_stage.set_progress(0, "Loading citation data")
+        await self.progress.compose(self.first_stage, "Parsing weeks")
+        await self.progress.compose(self.second_stage, "Parsing citations")
+        await self.__load_calendar()
+        self.id_task: asyncio.Task = asyncio.get_event_loop().create_task(
+            self.__populate_calendar_ids()
+        )
+        return self
+
+    async def __aexit__(self: Self, exc_type, exc_val, exc_tb):
+        await super().__aexit__(exc_type, exc_val, exc_tb)
+
+    @retry
+    async def __load_calendar(self: Self) -> datetime:
+        await self.page.goto("/InicioConciliador.aspx")
+        await self.page.locator("#ctl00_Center_chkSusp").click()
+        await self.page.locator("#ctl00_Center_chkReal").click()
+        await self.page.wait_for_event("load")
+        return datetime.strptime(
+            await self.page.locator("#ctl00_Center_txtFecha_txt").input_value(),
+            "%d/%m/%Y",
+        )
+
+    async def __iterate_calendar_week(self: Self) -> List[int]:
+        table = self.page.locator("#ctl00_Center_DayPilotCalendar1").locator("tr")
         ids: List[int] = []
         # loop through days
         for day in (
-            table.find_elements(By.TAG_NAME, "table")[1]
-            .find_elements(By.TAG_NAME, "tr")[0]
-            .find_elements(By.TAG_NAME, "td")
+            await table.locator("table").nth(1).locator("tr").first.locator("td").all()
         ):
             # loop through cases in day
-            for case in day.find_element(By.TAG_NAME, "div").find_elements(
-                By.TAG_NAME, "div"
-            ):
-                aud_id = str(case.get_attribute("onclick"))
+            for case in await day.locator("div").locator("div").all():
+                aud_id = str(await case.get_attribute("onclick"))
                 if aud_id:
                     aud_id = re.search(r"PK:\d+", aud_id)
                     if aud_id:
                         ids.append(int(aud_id.group(0)[3:]))
+                        ids.sort()
         return ids
 
-    def get_calendar(
-        self: Self, weeks_before: int, weeks_after: int, date: Optional[datetime] = None
-    ) -> List[SECLOCitation]:
+    async def __advance_calendar(self: Self, date: datetime):
+        date_textbox = self.page.locator("#ctl00_Center_txtFecha_txt")
+        if datetime.strptime(await date_textbox.input_value(), "%d/%m/%Y") is not date:
+            await date_textbox.fill("")
+            await date_textbox.fill(date.strftime("%d/%m/%Y"))
+            await self.page.locator("#ctl00_Center_btnConsultar").click()
+            await self.page.wait_for_event("load")
+        return datetime.strptime(await date_textbox.input_value(), "%d/%m/%Y")
+
+    async def __iterate_calendar_range(self: Self) -> tuple[bool, list[int]]:
+        if self.current <= self.weeks_after and self.weeks_after >= 0:
+            await self.__advance_calendar(
+                datetime.now() + timedelta(weeks=self.current)
+            )
+            self.current += 1
+            citation_ids = await self.__iterate_calendar_week()
+            await self.first_stage.increase_progress(
+                f"{self.current} of {self.weeks_before + self.weeks_after}",
+            )
+            if self.current >= self.weeks_after:
+                self.weeks_after = -1
+                self.current = 0
+            return True, citation_ids
+        if self.current < self.weeks_before and self.weeks_before > 0:
+            self.current += 1
+            await self.__advance_calendar(
+                datetime.now() + timedelta(weeks=-self.current)
+            )
+            citation_ids = await self.__iterate_calendar_week()
+            await self.first_stage.increase_progress(
+                f"{self.current + self.weeks_after} of {self.weeks_before + self.weeks_after}",
+            )
+            if self.current >= self.weeks_before:
+                self.weeks_before = -1
+                self.current = 0
+            return True, citation_ids
+        await self.first_stage.set_completion("Done")
+        return False, []
+
+    @retry
+    async def __populate_calendar_ids(self: Self):
+        result = True
+        while result:
+            result, citation_ids = await self.__iterate_calendar_range()
+            self.citation_tasks.extend(
+                [
+                    asyncio.get_event_loop().create_task(self.__get_citation_info(id))
+                    for id in citation_ids
+                ]
+            )
+            self.second_stage.set_steps(
+                self.second_stage.total_steps + len(citation_ids)
+            )
+
+    def __aiter__(self: Self):
+        return self
+
+    async def __anext__(self: Self) -> SECLOCitation:
+        while len(self.citation_tasks) == 0 and not self.id_task.done():
+            await asyncio.sleep(0.01)
+
+        if len(self.citation_tasks) == 0 and self.id_task.done():
+            await self.second_stage.set_completion("Done")
+            raise StopAsyncIteration
+
+        async for task in asyncio.as_completed(self.citation_tasks):
+            self.citation_tasks.remove(task)
+            await self.second_stage.increase_progress()
+            return task.result()
+        else:
+            raise StopAsyncIteration  # Not really possible but complains otherwise
+
+    @retry
+    async def __get_citation_info(self: Self, citation_id: int) -> SECLOCitation:
+        # self.second_stage.increase_progress(f"{index + 1} of {len(ids)}")
+        async with SECLOAccessor(self.session) as session:
+            await session.page.goto(
+                f"Conciliador_Audiencia.aspx?AudId={citation_id}&esPortal=1",
+                timeout=60000,
+            )
+            gde_id_text = await session.page.locator("#rcNroExpediente").inner_text()
+            init_datetime_text = await session.page.locator("#rcFecha").inner_text()
+            init_datetime_text = (
+                init_datetime_text.split()[0]
+                + " "
+                + init_datetime_text.split()[1].split(":")[0]
+                + ":"
+                + init_datetime_text.split()[1].split(":")[1]
+            )
+            citation_date = await session.page.locator("#rcFechaA").inner_text()
+            citation_date = citation_date.split("a")[0]
+            return SECLOCitation(
+                gdeID=gde_id_text,
+                citationDate=datetime.strptime(citation_date, r"%d/%m/%Y - %H:%M "),
+                initDate=datetime.strptime(init_datetime_text, r"%d/%m/%Y %H:%M"),
+                citationID=citation_id,
+                citationType=await session.page.locator("#auTipoYEstado").inner_text(),
+                pdfString=base64.b64encode(await session.page.pdf()).decode("ascii"),
+            )
+
+    @retry
+    async def get_calendar(self: Self, date: datetime) -> List[SECLOCitation]:
         """
         Fetches the current calendar assignments from SECLO.
         Ideal entry point for claim registration and validating cases.
         Parameters:
-            weeks_before (int): How many weeks before now to load.
-            weeks_after (int): How many weeks after now to load.
             date (datetime): Override to load a specific week in absolute time.
         """
-        first_stage = ProgressReport()
-        second_stage = ProgressReport()
-        (
-            self.progress.compose(first_stage, "Parsing weeks").compose(
-                second_stage, "Parsing citations"
-            )
-        )
-        attempts = 0
-        last_exception = None
-        while attempts < MAX_ATTEMPTS:
-            try:
-                (
-                    first_stage.set_steps(
-                        1 + (1 if date else (weeks_before + weeks_after))
-                    ).set_message("Loading calendar")
-                )
-                first_stage.set_progress(0, "Loading calendar")
-                second_stage.set_steps(1)
-                second_stage.set_progress(0, "")
-                WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_btnAgenda"))
-                ).click()
+        await self.__advance_calendar(date)
+        ids = await self.__iterate_calendar_week()
+        return [await self.__get_citation_info(citation_id) for citation_id in ids]
 
-                WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_Center_chkSusp"))
-                ).click()
-                WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "ctl00_Center_chkReal"))
-                ).click()
-
-                ids = []
-                # Loop through weeks
-                if date:
-                    WebDriverWait(self.driver, 10).until(
-                        EC.element_to_be_clickable((By.ID, "ctl00_Center_txtFecha_txt"))
-                    ).send_keys(
-                        Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + Keys.ARROW_LEFT
-                        + date.strftime("%d/%m/%Y")
-                    )
-                    WebDriverWait(self.driver, 1).until(
-                        EC.element_to_be_clickable((By.ID, "ctl00_Center_btnConsultar"))
-                    ).click()
-                    first_stage.increase_progress(
-                        f'Week of {date.strftime("%d/%m/%Y")}'
-                    )
-                    WebDriverWait(self.driver, 10).until(
-                        EC.visibility_of_element_located(
-                            (By.ID, "ctl00_Center_DayPilotCalendar1")
-                        )
-                    )
-                    table = self.driver.find_element(
-                        By.ID, "ctl00_Center_DayPilotCalendar1"
-                    ).find_element(By.TAG_NAME, "tr")
-                    ids.extend(self.__iterate_calendar(table))
-                else:
-                    for i in range(0, weeks_after):
-                        first_stage.increase_progress(
-                            f"{i+1} of {weeks_before + weeks_after}"
-                        )
-                        WebDriverWait(self.driver, 10).until(
-                            EC.visibility_of_element_located(
-                                (By.ID, "ctl00_Center_DayPilotCalendar1")
-                            )
-                        )
-                        table = self.driver.find_element(
-                            By.ID, "ctl00_Center_DayPilotCalendar1"
-                        ).find_element(By.TAG_NAME, "tr")
-                        ids.extend(self.__iterate_calendar(table))
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.ID, "ctl00_Center_lnkDer"))
-                        ).click()
-                    if weeks_before > 0:
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.ID, "ctl00_btnAgenda"))
-                        ).click()
-
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.ID, "ctl00_Center_chkSusp"))
-                        ).click()
-                        WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.ID, "ctl00_Center_chkReal"))
-                        ).click()
-                        for i in range(0, weeks_before):
-                            first_stage.increase_progress(
-                                f"{i + weeks_after + 1} of {weeks_before + weeks_after}",
-                            )
-                            WebDriverWait(self.driver, 10).until(
-                                EC.visibility_of_element_located(
-                                    (By.ID, "ctl00_Center_DayPilotCalendar1")
-                                )
-                            )
-                            table = self.driver.find_element(
-                                By.ID, "ctl00_Center_DayPilotCalendar1"
-                            ).find_element(By.TAG_NAME, "tr")
-                            ids.extend(self.__iterate_calendar(table))
-                            WebDriverWait(self.driver, 10).until(
-                                EC.element_to_be_clickable(
-                                    (By.ID, "ctl00_Center_lnkIzq")
-                                )
-                            ).click()
-                second_stage.set_steps(len(ids))
-                second_stage.set_message("Loading citation data")
-                first_stage.set_completion("Done")
-                calendar_citations = []
-                for index, item in enumerate(ids):
-                    second_stage.increase_progress(f"{index + 1} of {len(ids)}")
-                    self.driver.get(
-                        "https://conciliadores.trabajo.gob.ar/Conciliador_Audiencia.aspx?"
-                        + f"AudId={item}&esPortal=1"
-                    )
-                    gde_id_text = (
-                        WebDriverWait(self.driver, 10)
-                        .until(
-                            EC.visibility_of_element_located((By.ID, "rcNroExpediente"))
-                        )
-                        .text
-                    )
-                    init_datetime_text = self.driver.find_element(By.ID, "rcFecha").text
-                    init_datetime_text = (
-                        init_datetime_text.split()[0]
-                        + " "
-                        + init_datetime_text.split()[1].split(":")[0]
-                        + ":"
-                        + init_datetime_text.split()[1].split(":")[1]
-                    )
-                    calendar_citations.append(
-                        SECLOCitation(
-                            gdeID=gde_id_text,
-                            citationDate=datetime.strptime(
-                                self.driver.find_element(By.ID, "rcFechaA").text.split(
-                                    "a"
-                                )[0],
-                                r"%d/%m/%Y - %H:%M ",
-                            ),
-                            initDate=datetime.strptime(
-                                init_datetime_text, r"%d/%m/%Y %H:%M"
-                            ),
-                            citationID=item,
-                            citationType=self.driver.find_element(
-                                By.ID, "auTipoYEstado"
-                            ).text,
-                            pdfString=self.driver.print_page(PRINT_OPTIONS),
-                        )
-                    )
-                second_stage.set_completion("Done")
-                return calendar_citations
-            except (
-                NoSuchElementException,
-                TimeoutException,
-                StaleElementReferenceException,
-            ) as e:
-                attempts += 1
-                last_exception = e
-                logger.warning(e, exc_info=True)
-                continue
-        raise AttemptsExceededException(last_exception)
-
-    def get_workable_days(
+    @retry
+    async def get_workable_days(
         self: Self, weeks_ahead: int = 20
     ) -> List[Tuple[datetime, bool, str]]:
         """
@@ -2387,65 +2009,46 @@ class SECLOCalendarParser(SECLOAccessor):
         """
         work_days: List[Tuple[datetime, bool, str]] = []
         self.progress.set_steps(weeks_ahead * 7)
-        self.progress.set_message("Loading calendar info...")
+        await self.progress.set_message("Loading calendar info...")
 
-        self.driver.get(
-            "https://conciliadores.trabajo.gob.ar/pa_Abogados_Audiencias.aspx"
-        )
-        Select(
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.ID, "ctl00_Principal_CmbFormato"))
-            )
-        ).select_by_value(
-            "1"
+        await self.page.goto("/pa_Abogados_Audiencias.aspx")
+        await self.page.locator("#ctl00_Principal_CmbFormato").select_option(
+            value="1"
         )  # per-day
         for day in range(1, weeks_ahead * 7):
             cal = (
-                WebDriverWait(self.driver, 10)
-                .until(
-                    EC.element_to_be_clickable(
-                        (By.ID, "ctl00_Principal_DayPilotCalendar1")
-                    )
-                )
-                .find_element(By.TAG_NAME, "tr")
-                .find_elements(By.TAG_NAME, "table")[1]
+                self.page.locator("#ctl00_Principal_DayPilotCalendar1")
+                .locator("tr")
+                .locator("table")
+                .nth(1)
             )
             date = datetime.strptime(
-                str(
-                    self.driver.find_element(
-                        By.ID, "ctl00_Principal_txtFecha_txtFecha"
-                    ).get_property("value")
-                    or ""
-                ),
+                await self.page.locator(
+                    "#ctl00_Principal_txtFecha_txtFecha"
+                ).input_value(),
                 "%d/%m/%Y",
             )
-            day = cal.find_elements(By.TAG_NAME, "tr")[2].find_element(
-                By.TAG_NAME, "td"
-            )
-            day_title = (
-                cal.find_elements(By.TAG_NAME, "tr")[1]
-                .find_element(By.TAG_NAME, "td")
-                .text
-            )
+            day = cal.locator("tr").nth(2).locator("td")
+            day_title = await cal.locator("tr").nth(1).locator("td").inner_text()
 
-            if "Feriado" in (day.get_attribute("title") or ""):
+            if "Feriado" in (await day.get_attribute("title") or ""):
                 work_days.append(
                     (
                         date,
                         False,
-                        " ".join((day.get_attribute("title") or "").split()[1:]),
+                        " ".join((await day.get_attribute("title") or "").split()[1:]),
                     )
                 )
             elif "dom" in day_title or "sáb" in day_title:
                 work_days.append((date, False, day_title))
             else:
                 work_days.append((date, True, ""))
-            self.progress.increase_progress(
+            await self.progress.increase_progress(
                 f"Obtained info for {date.strftime('%d/%m/%Y')}"
             )
-            self.driver.find_element(By.ID, "ctl00_Principal_lnkDer").click()
-            WebDriverWait(self.driver, 10).until(EC.staleness_of(cal))
-        self.progress.set_completion("Done getting cal info")
+            await self.page.locator("#ctl00_Principal_lnkDer").click()
+            await self.page.wait_for_event("load")
+        await self.progress.set_completion("Done getting cal info")
         return work_days
 
 
@@ -2457,66 +2060,86 @@ class SECLOClaimValidationData(SECLOAccessor):
     Stuff like cuit, dni and addresses
     """
 
-    def __create_request(self: Self, endpoint: str, data: str):
+    async def __create_request(self: Self, url: str, data: str) -> Dict:
         cookies = {}
-        cookie_list = self.driver.get_cookies()
+        cookie_list = await self.page.context.cookies(
+            urls="https://conciliadores.trabajo.gob.ar"
+        )
         for cookie in cookie_list:
-            cookies[cookie["name"]] = cookie["value"]
-        ua = self.driver.execute_script("return navigator.userAgent")
+            cookies[cookie["name"]] = cookie["value"]  # type: ignore
         headers = {
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Encoding": "gzip, deflate, br, zstd",
             "Accept-Language": "es-419,es-US;q=0.9,es;q=0.8",
+            "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "application/json; charset=UTF-8",
+            "Dnt": "1",
             "Host": "conciliadores.trabajo.gob.ar",
             "Origin": "https://conciliadores.trabajo.gob.ar",
             "Refererer": "https://conciliadores.trabajo.gob.ar/ingresoreclamos.aspx",
+            "Sec-Ch-Ua-Platform": "Windows",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua": 'Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151',
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
-            "User-Agent": ua,
+            "Sec-Gpc": "1",
+            "User-Agent": USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
         }
-        print(cookies)
-        req = requests.Request(
-            "POST", endpoint, data=data, headers=headers, cookies=cookies
-        )
-        req = req.prepare()
-        print(
-            "{}\n{}\r\n{}\r\n\r\n{}".format(
-                "-----------START-----------",
-                (req.method or "") + " " + (req.url or ""),
-                "\r\n".join(f"{k}: {v}" for k, v in req.headers.items()),
-                req.body,
-            )
-        )
-        return requests.Session().send(req).json()
 
-    def validate_cuit(self: Self, cuit: str):
+        ans = await self.page.request.fetch(
+            url, data=data.encode(), headers=headers, method="post"
+        )
+        return await ans.json()
+
+    async def validate_cuit(self: Self, cuit: str):
         """
         Tries to validate the given CUIT.
         """
-        return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCuit.aspx/GetDatosCOmpletosxCuit",
+        response = await self.__create_request(
+            "/ServicioCuit.aspx/GetDatosCOmpletosxCuit",
             "{'dato': '" + cuit + "'}",
         )
+        person = response["d"]
+        return SECLOPersonData(
+            cuit=cuit,
+            name=f"{person["Apellido"]} {person["Nombre"]}",
+            dni=int(person["NroDocumento"]),
+            birthday=datetime.strptime(person["FechaNacimiento"], "%d/%m/%Y"),
+            gender=person["SexoID"],
+            first_name=person["Nombre"],
+            last_name=person["Apellido"],
+        )
 
-    def validate_dni(self: Self, dni: str):
+    async def validate_dni(self: Self, dni: str) -> SECLOPersonData:
         """
         Tries to validate the given dni.
         """
-        return self.__create_request(
+        response = await self.__create_request(
             "https://conciliadores.trabajo.gob.ar/ServicioDocumento.aspx/getDatosxDenominacion",
-            "{'dato': '" + dni + "', 'tipo': 'E'}",
+            f"{{'dato': '{dni}', 'tipo': 'E'}}",
         )
+        for person in response["d"]:
+            if person["Estado"] == "ACREDITADO":
+                return SECLOPersonData(
+                    cuit=person["Cuit"],
+                    name=person["NombreApellido"],
+                    dni=int(person["Documento"]),
+                    birthday=datetime.strptime(person["FechaNacimiento"], "%d%m%Y"),
+                    gender=person["SexoID"],
+                    first_name=person["Nombre"],
+                    last_name=person["Apellido"],
+                )
+        raise AttributeError(f"Can't find person {dni}")
 
     def validate_district(self: Self, province: str, district: str):
         """
         Tries to validate the given district (for given province).
         """
         return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetPartidos",
+            "/ServicioCPA.aspx/GetPartidos",
             "{'dato': '" + district + "', 'prov': '" + province + "'}",
         )
 
@@ -2525,7 +2148,7 @@ class SECLOClaimValidationData(SECLOAccessor):
         Tries to validate the given county (for given province and district).
         """
         return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetLocalidades",
+            "/ServicioCPA.aspx/GetLocalidades",
             "{'dato': '"
             + county
             + "', 'prov': '"
@@ -2542,7 +2165,7 @@ class SECLOClaimValidationData(SECLOAccessor):
         Tries to validate the given street (for given province, district and county).
         """
         return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetCalles",
+            "/ServicioCPA.aspx/GetCalles",
             "{'dato': '"
             + street
             + "', 'prov': '"
@@ -2561,7 +2184,7 @@ class SECLOClaimValidationData(SECLOAccessor):
         Tries to get the CPA (for given province, district, county, address and number.
         """
         return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/getCPA",
+            "/ServicioCPA.aspx/getCPA",
             "{'prov': '"
             + province
             + "', 'part': '"
@@ -2586,13 +2209,12 @@ class SECLOClaimValidationData(SECLOAccessor):
         Tries to use street helper api to get possible places (?).
         """
         return self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioCPA.aspx/GetCallesHelper",
+            "/ServicioCPA.aspx/GetCallesHelper",
             "{"
             + f'\'prov\': \'{province}\', \'part\': \'{(district or "")}\', '
             + f'\'localidad\': \'{(county or "")}\', \'calle\': \'{street}\''
             + "}",
         )
 
-
-if __name__ == "__main__":
-    print("This script cannot be executed on its own")
+if __name__ == '__main__':
+    raise RuntimeError("This script cannot be run on its own")

@@ -34,3 +34,6 @@ pnpm-debug.log*
 *.pdf
 *.sql
 logs
+
+# Test scripts
+backend/test.py
