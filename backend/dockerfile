@@ -1,13 +1,37 @@
-FROM ghcr.io/astral-sh/uv:debian-slim
+FROM python:3.14.8-slim-trixie AS builder
 
-WORKDIR /usr/app/src
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_INSTALL_PYTHON=never
+
+WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv sync --no-cache
+RUN uv sync --no-dev --no-cache --locked --no-install-project --no-editable 
 
 COPY . .
 
+RUN uv sync --no-dev --locked --no-editable
+
+FROM python:3.14.8-slim-trixie
+
+# RUN groupadd -g 1000 nonroot \
+#  && useradd -g 1000 -u 1000 nonroot
+
+COPY --from=builder /app /app
+
+WORKDIR /app
+
+# USER nonroot
+
 EXPOSE 80/tcp
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/.venv/lib/python3.14/site-packages
+
 # escape=\
-CMD ["uv", "run", "fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0", "--forwarded-allow-ips=\"*\"", "--proxy-headers"]
+CMD ["uvicorn", "main:app", "--port", "80", "--host", "0.0.0.0", "--forwarded-allow-ips=\"*\"", "--proxy-headers"]

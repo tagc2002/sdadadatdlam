@@ -8,9 +8,9 @@ dependencies = [
     "asyncpg>=0.31.0",
     "email-validator>=2.3.0",
     "fastapi>=0.141.1",
-    "fastapi-cli>=0.0.32",
     "google-api-python-client>=2.199.0",
     "google-auth-oauthlib>=1.4.1",
+    "httptools>=0.8.0",
     "pillow>=12.3.0",
     "playwright>=1.62.0",
     "pwdlib>=0.3.1",
@@ -22,6 +22,9 @@ dependencies = [
     "python-multipart>=0.0.32",
     "redis>=8.1.0",
     "sqlalchemy>=2.0.52",
+    "uvicorn>=0.52.4",
+    "uvloop; sys_platform != 'win32' and platform_python_implementation == 'CPython'",
+    "websockets>=17.1",
 ]
 
 [dependency-groups]

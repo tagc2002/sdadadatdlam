@@ -160,7 +160,7 @@ class SECLOSession:
                     break
                 except PlaywrightError as ex:
                     last_exception = ex
-                    logger.debug(ex)
+                    logger.debug("".join(str(ex).splitlines(True)[:3]))
                     continue
             else:
                 raise last_exception  # type: ignore

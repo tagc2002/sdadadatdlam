@@ -28,8 +28,8 @@ services:
             redis:
                 condition: service_started
         volumes:
-            - ./logs:/usr/app/src/logs
-            - ./temp:/temp
+            - ./logs:/app/logs:rw
+            - ./temp:/temp:rw
             - /var/run/docker.sock:/var/run/docker.sock
         env_file: ".env.prod"
         secrets:
