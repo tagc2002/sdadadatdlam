@@ -29,7 +29,7 @@ class AgreementResult:
     ):
         self.__person = person
         self.__agreement = agreement
-        self.__amount = Decimal(amount) if isinstance(amount, str) else amount
+        self.__amount = Decimal(amount.replace(",", ".")) if isinstance(amount, str) else amount
         self.__enabled = enabled
 
     @property
@@ -57,7 +57,6 @@ class AgreementResult:
 
         Raises:
             InvalidParameterException: Agreement without amount.
-            InvalidParameterException: Amount for nonagreement.
             InvalidParameterException: Negative amount.
         """
         self.__agreement = agreement
@@ -70,10 +69,6 @@ class AgreementResult:
                 raise InvalidParameterException("Amount must be positive.")
             self.__amount = amount
         else:
-            if amount is not None:
-                raise InvalidParameterException(
-                    "Can't give an amount for a non-agreement result"
-                )
             self.__amount = None
 
     def __hash__(self: Self) -> int:
