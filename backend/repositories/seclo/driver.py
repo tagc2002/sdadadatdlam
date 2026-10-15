@@ -834,6 +834,64 @@ class SECLOCitationManager(SECLOAccessor):
 
         await self.progress.set_completion("Done closing claim")
 
+    @retry
+    async def get_workable_days(
+        self: Self, weeks_ahead: int = 20
+    ) -> List[Tuple[datetime, bool, str]]:
+        """
+        Fetches a list of workable and unworkable days.
+        Useful for estimating notification periods.
+        Parameters:
+            weeks_ahead (int): How many weeks to load
+        Returns:
+            list: (day, isWorkable, description)
+        """
+        work_days: List[Tuple[datetime, bool, str]] = []
+        self.progress.set_steps(weeks_ahead * 7)
+        await self.progress.set_message("Loading calendar info...")
+
+        await self.page.goto("/pa_Abogados_Audiencias.aspx")
+        await self.page.locator("#ctl00_Principal_CmbFormato").select_option(
+            value="1"
+        )  # per-day
+        await self.page.locator("#ctl00_Principal_btnConsultar").click()
+        await self.page.wait_for_load_state('load')
+        for day in range(1, weeks_ahead * 7):
+            cal = (
+                self.page.locator("#ctl00_Principal_DayPilotCalendar1")
+                .locator("tr")
+                .locator("table")
+                .nth(1)
+            )
+            date = datetime.strptime(
+                await self.page.locator(
+                    "#ctl00_Principal_txtFecha_txtFecha"
+                ).input_value(),
+                "%d/%m/%Y",
+            )
+            day = cal.locator("tr").nth(2).locator("td")
+            day_title = await cal.locator("tr").nth(1).locator("td").inner_text()
+
+            if "Feriado" in (await day.get_attribute("title") or ""):
+                work_days.append(
+                    (
+                        date,
+                        False,
+                        " ".join((await day.get_attribute("title") or "").split()[1:]),
+                    )
+                )
+            elif "dom" in day_title or "sáb" in day_title:
+                work_days.append((date, False, day_title))
+            else:
+                work_days.append((date, True, ""))
+            await self.progress.increase_progress(
+                f"Obtained info for {date.strftime('%d/%m/%Y')}"
+            )
+            await self.page.locator("#ctl00_Principal_lnkDer").click()
+            await self.page.wait_for_event("load")
+        await self.progress.set_completion("Done getting cal info")
+        return work_days
+
 
 class SECLOFileManager(SECLOAccessor):
     """
@@ -1995,62 +2053,6 @@ class SECLOCalendarParser(SECLOAccessor):
         ids = await self.__iterate_calendar_week()
         return [await self.__get_citation_info(citation_id) for citation_id in ids]
 
-    @retry
-    async def get_workable_days(
-        self: Self, weeks_ahead: int = 20
-    ) -> List[Tuple[datetime, bool, str]]:
-        """
-        Fetches a list of workable and unworkable days.
-        Useful for estimating notification periods.
-        Parameters:
-            weeks_ahead (int): How many weeks to load
-        Returns:
-            list: (day, isWorkable, description)
-        """
-        work_days: List[Tuple[datetime, bool, str]] = []
-        self.progress.set_steps(weeks_ahead * 7)
-        await self.progress.set_message("Loading calendar info...")
-
-        await self.page.goto("/pa_Abogados_Audiencias.aspx")
-        await self.page.locator("#ctl00_Principal_CmbFormato").select_option(
-            value="1"
-        )  # per-day
-        for day in range(1, weeks_ahead * 7):
-            cal = (
-                self.page.locator("#ctl00_Principal_DayPilotCalendar1")
-                .locator("tr")
-                .locator("table")
-                .nth(1)
-            )
-            date = datetime.strptime(
-                await self.page.locator(
-                    "#ctl00_Principal_txtFecha_txtFecha"
-                ).input_value(),
-                "%d/%m/%Y",
-            )
-            day = cal.locator("tr").nth(2).locator("td")
-            day_title = await cal.locator("tr").nth(1).locator("td").inner_text()
-
-            if "Feriado" in (await day.get_attribute("title") or ""):
-                work_days.append(
-                    (
-                        date,
-                        False,
-                        " ".join((await day.get_attribute("title") or "").split()[1:]),
-                    )
-                )
-            elif "dom" in day_title or "sáb" in day_title:
-                work_days.append((date, False, day_title))
-            else:
-                work_days.append((date, True, ""))
-            await self.progress.increase_progress(
-                f"Obtained info for {date.strftime('%d/%m/%Y')}"
-            )
-            await self.page.locator("#ctl00_Principal_lnkDer").click()
-            await self.page.wait_for_event("load")
-        await self.progress.set_completion("Done getting cal info")
-        return work_days
-
 
 class SECLOClaimValidationData(SECLOAccessor):
     """
@@ -2118,7 +2120,7 @@ class SECLOClaimValidationData(SECLOAccessor):
         Tries to validate the given dni.
         """
         response = await self.__create_request(
-            "https://conciliadores.trabajo.gob.ar/ServicioDocumento.aspx/getDatosxDenominacion",
+            "/ServicioDocumento.aspx/getDatosxDenominacion",
             f"{{'dato': '{dni}', 'tipo': 'E'}}",
         )
         for person in response["d"]:
