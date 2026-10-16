@@ -35,19 +35,6 @@ services:
         secrets:
             - google_creds
             - google_token
-    toywrong:
-        build: 
-            context: ./playwright
-        container_name: toywrong
-        networks: 
-            - playwright
-        depends_on: 
-            selenium:
-                condition: service_healthy
-
-        ports:
-            - "9222:9222"
-        env_file: ".env.prod"
     postgres:
         image: postgres:alpine
         container_name: prosgres
