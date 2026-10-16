@@ -78,7 +78,7 @@ class AgreementResult:
         return isinstance(other, AgreementResult) and self.person == other.person
 
     def __str__(self: Self) -> str:
-        return f'{self.person}: {self.__agreement} ({self.__amount}) {self.__enabled}'
+        return f'{self.person}: agreement:{self.__agreement} ({self.__amount}) enabled:{self.__enabled}'
 
 
 class CitationResult:
