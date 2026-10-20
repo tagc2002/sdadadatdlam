@@ -913,7 +913,7 @@ async def __update_notification(
                         local_notification.citation.rec_id,
                         # Can never be None if we have a notification!
                         datetime.strftime(
-                            local_notification.citation.citationDate,  # type: ignore
+                            local_notification.citation.date,  # type: ignore
                             "%d/%m/%Y %H:%M:%S",
                         ),
                     )
