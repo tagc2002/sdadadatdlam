@@ -694,7 +694,7 @@ class SECLOCitationManager(SECLOAccessor):
     async def __advance_result_form(self: Self):
         try:
             await self.__fill_date_input("ctl00_Center_txtFecha_txtFecha", self.date)
-            await self.page.locator("#ctl00_Center_btnSeguir4").click(timeout=1000)
+            await self.page.locator("#ctl00_Center_btnSeguir4").click(timeout=10000)
         except PlaywrightTimeoutError as e:
             raise InvalidCaseStateException("Error submitting form") from e
         await self.__validation_error_checker()
