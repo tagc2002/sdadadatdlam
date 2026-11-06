@@ -58,6 +58,8 @@ from repositories.seclo.driver import (
 )
 from repositories.seclo.progress import ProgressReport
 
+INGRESS_RATE_LIMIT = 12
+
 logger = logging.getLogger(__name__)
 
 downloadPath = os.getenv("TEMP_DOWNLOAD_PATH", "/temp")
@@ -140,7 +142,7 @@ async def batch_verify_agenda(
     await progress.compose(first_stage, "Acquiring calendar data")
     await progress.compose(second_stage, "Loading citation data")
 
-    citation_tasks = []
+    citation_tasks: List[asyncio.Task] = []
     async with SECLOSession(credentials=creds) as seclo:
         notifmanager = NotificationManager(seclo)
         async with SECLOCalendarParser(
@@ -151,6 +153,8 @@ async def batch_verify_agenda(
         ) as calendar:
             async for citation in calendar:
                 entry_progress = ProgressReport()
+                while len(citation_tasks) - sum(x.done() for x in citation_tasks) > INGRESS_RATE_LIMIT:
+                    await asyncio.sleep(0.25)
                 citation_tasks.append(
                     asyncio.get_event_loop().create_task(
                         __verify_agenda_citation(
